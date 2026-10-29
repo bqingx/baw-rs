@@ -5,7 +5,8 @@ use crate::{
     client::Client,
     defi,
     execution::{require_consent, OperationGuard},
-    limit_order, prediction, signing, trade, wallet_ops, x402,
+    leaderboard, limit_order, prediction, selfcheck, signal, signing, tracker, trade, wallet_ops,
+    x402,
 };
 use serde_json::{json, Value};
 
@@ -42,6 +43,15 @@ fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
         Command::X402Payment { command } if x402::is_mutation(command) => {
             Some(("x402-payment.sign", x402::mutation_payload(command)?))
         }
+        Command::Leaderboard { command } if leaderboard::is_mutation(command) => {
+            Some(("leaderboard", leaderboard::mutation_payload(command)?))
+        }
+        Command::Tracker { command } if tracker::is_mutation(command) => {
+            Some(("tracker", tracker::mutation_payload(command)?))
+        }
+        Command::Signal { command } if signal::is_mutation(command) => {
+            Some(("signal", signal::mutation_payload(command)?))
+        }
         Command::ContractCall { command } if signing::is_contract_mutating(command) => {
             Some(("contract-call.execute", signing::contract_intent(command)))
         }
@@ -67,6 +77,9 @@ pub fn preflight(cli: &Cli) -> Result<(), String> {
         || matches!(&cli.command, Command::Prediction { command } if prediction::is_mutation(command))
         || matches!(&cli.command, Command::Defi { command } if defi::is_mutation(command))
         || matches!(&cli.command, Command::X402Payment { command } if x402::is_mutation(command))
+        || matches!(&cli.command, Command::Tracker { command } if tracker::is_mutation(command))
+        || matches!(&cli.command, Command::Signal { command } if signal::is_mutation(command))
+        || matches!(&cli.command, Command::Leaderboard { command } if leaderboard::is_mutation(command))
         || matches!(&cli.command, Command::ContractCall { command } if signing::is_contract_mutating(command))
         || matches!(&cli.command, Command::SignMessage { command } if signing::is_message_mutating(command));
     if writes {
@@ -140,6 +153,11 @@ pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
         Command::Prediction { command } => prediction::run(client, command).await,
         Command::Defi { command } => defi::run(client, command).await,
         Command::X402Payment { command } => x402::run(client, command).await,
+        Command::Tracker { command } => tracker::run(client, command).await,
+        Command::Signal { command } => signal::run(client, command).await,
+        Command::Leaderboard { command } => leaderboard::run(client, command).await,
+        Command::CliCheck(args) => selfcheck::cli_check(client, args).await,
+        Command::SkillCheck(args) => selfcheck::skill_check(client, args).await,
         Command::Wallet { command } => client.execute(command).await,
         Command::MarketOrder { command } => trade::run(client, command).await,
         Command::ContractCall { command } => {

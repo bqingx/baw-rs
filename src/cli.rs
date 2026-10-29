@@ -216,6 +216,25 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::x402::X402Command,
     },
+    /// Wallet tracker: groups, addresses, monitors.
+    Tracker {
+        #[command(subcommand)]
+        command: crate::tracker::TrackerCommand,
+    },
+    /// Custom signal strategies and backtests.
+    Signal {
+        #[command(subcommand)]
+        command: crate::signal::SignalCommand,
+    },
+    /// Leaderboard, address analysis and alpha radar.
+    Leaderboard {
+        #[command(subcommand)]
+        command: crate::leaderboard::LeaderboardCommand,
+    },
+    /// Check whether the installed CLI meets a required version.
+    CliCheck(crate::selfcheck::CliCheckArgs),
+    /// Check whether a skill has a newer version available.
+    SkillCheck(crate::selfcheck::SkillCheckArgs),
     /// Read one JSON argv array per stdin line, retaining the in-memory session.
     Batch,
     /// Resident server: reuse one session and connection pool over a private socket.
