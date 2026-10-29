@@ -19,11 +19,10 @@ pub struct SpeedUpArgs {
     pub binance_chain_id: Option<String>,
 }
 
-/// `cli.rs` names this subcommand `cancel-tx`; the installed CLI calls it
-/// `wallet cancel`, so the installed spelling is registered as an alias here.
-/// Renaming the variant belongs in `cli.rs`.
+/// Leaf is `wallet cancel`; the spelling is declared once, on the `cli.rs` variant
+/// (`#[command(name = "cancel")]`). Do not add an alias here — clap rejects a name and
+/// alias that collide.
 #[derive(Args, Debug)]
-#[command(alias = "cancel")]
 pub struct CancelTxArgs {
     /// Transaction hash of the pending transaction (0x-prefixed, 66 characters)
     #[arg(value_name = "txHash")]
