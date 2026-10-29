@@ -1,5 +1,14 @@
 # BAW Rust v0.2 integration report
 
+> **Historical document — scope limited to v0.2.0.**
+> The gates quoted below ran on `v0.2.0` at `/root/baw-rs`. The source in this
+> repository is `0.2.2` and differs in 9 files, so **none of the counts or hashes in
+> this report describe the current tree**. They are retained as the record of that
+> earlier review pass. The shipped binary hash (`d0e203…`, 5,564,520 bytes) refers to a
+> build that was not included in the source drop and cannot be checked from here.
+> For the current tree see `verification/` (regenerate with `scripts/verify.sh`) and
+> `CHANGELOG.md`.
+
 ## Outcome
 
 Requested migration is integrated and offline-verified. Release version: **0.2.0**. All previously interrupted modules are compiled into the real CLI; no original CLI fallback, production stubs, todo!/unimplemented! paths, fake responses or live-wallet execution were introduced.

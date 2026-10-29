@@ -20,7 +20,7 @@ cargo test >verification/cargo-test.log 2>&1 && echo "exit=0" >>verification/car
 echo "[4/5] build --release"
 cargo build --release >verification/release-build.log 2>&1 && echo "exit=0" >>verification/release-build.log || { echo "exit=$?" >>verification/release-build.log; exit 1; }
 
-echo "[5/5] source manifest + release identity"
+echo "[5/6] source manifest + release identity"
 python3 scripts/source_manifest.py
 
 BIN="$CARGO_TARGET_DIR/release/baw-rs"
@@ -28,3 +28,6 @@ printf 'binary: %s\nsha256: %s\nbytes: %s\nversion: %s\ntoolchain: %s\n' \
   "$BIN" "$(sha256sum "$BIN" | cut -d' ' -f1)" "$(stat -c%s "$BIN")" \
   "$("$BIN" --version)" "$(rustc --version)" >verification/release-identity.txt
 cat verification/release-identity.txt
+
+echo "[6/6] leaf command inventory"
+python3 scripts/leaf_commands.py

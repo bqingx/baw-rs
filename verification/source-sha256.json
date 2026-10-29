@@ -1,0 +1,28 @@
+{
+  "_note": "Regenerate with scripts/verify.sh. Hashes describe the tree at 'commit'; dirty_source is true when tracked files differ from it.",
+  "commit": "83bfb1bd992b0afaf3cdf4a6069634ede1884680",
+  "dirty_source": false,
+  "files": {
+    "Cargo.toml": "7bf328e54a51e13f005005fef42393a007ded88037488a08de814aca776f82e2",
+    "Cargo.lock": "4b6ef0f54a1cc80fc53189ce6be40a7c9b4ae10638e5bdaa73a118bbb2d47c44",
+    "src/auth.rs": "9a3db5d15541c5869d7e6933c8bf333d552612429d7e67ba5bddf3acd9fc0034",
+    "src/auth_store.rs": "3cce772073d759d024bef6f0d8944c10956266688c4620e8c519e5ddcd1edeed",
+    "src/cli.rs": "9b1615271814a962b4f170df223dc896757d7da2b0a85aba35994d0d6f7a8651",
+    "src/client.rs": "368666431722832f297d1bd5b4889173abc730b4c017e80b5e7ac5e405e30104",
+    "src/dispatch.rs": "82c36055e73a0b32f383bd29466fc88a4dd4bdc61968e127df4bb24d396f0802",
+    "src/execution.rs": "4fc0e8dd889cd6df038ea8fd24456fef25a95a3b60a8afc461aea6e0da9f8117",
+    "src/lib.rs": "1eac8ee36f5bff7bdb9b7408976ffae1e1263cfb26925ac10f0ba09f2557d15c",
+    "src/main.rs": "265a224580b7db94da323377452bbd003b884a863f8652ec2e18d14fbefee544",
+    "src/policy.rs": "ebbc5111a3b9a3ca32c96ae8ad606a99d034d9d010c5e8c4ae214cdaaeaf0de7",
+    "src/portfolio.rs": "6079122fb4248aab87ee0a2557a55c6b8d17c80759e6e38998cdbcbdf46c56c1",
+    "src/rwa.rs": "f3ec8ce8f6439480a85b7c712b418325638d52bf6f9e626ca9b076f3ec09f811",
+    "src/session.rs": "efda88899346c11f3fd0b5702e84e5abde696148b65ae68a6fb966324d2b468e",
+    "src/signing.rs": "d60a1aac589adda5dfe2ba2666dc9a943eb08962dd0c7bfbfe9386958b1adc50",
+    "src/trade.rs": "290e8597034fd6925fc996e2ba4f6a3988b2e2f22557c721c96c37c52dfbc097",
+    "src/transport.rs": "dfa5d900a1cd377aae507f98cd1446f4fd70cc4a8e6f525dff4c16472fb65e1f",
+    "src/warm.rs": "0f7246db50f44af432b55a385b6fff0d443648749a3ae14e89d759b88c176f02",
+    "tests/cli.rs": "8b363afbf205279c4af52518fb2d45e8014af9db20b2d50606534d3a9006b3e5",
+    "tests/mutation_consent.rs": "73963f7928f890cd5b70201fc1b8b85b8d7ec5d652ca556f78f4511325a1d59a",
+    "tests/port_contract.rs": "a31fcd3a972da90d47d11346963de778542c20877fa7b79ff82e5503afd1ed4e"
+  }
+}

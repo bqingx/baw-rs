@@ -1,0 +1,28 @@
+# /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs --version: baw-rs 0.2.2
+auth signin
+auth verify
+auth signout
+market-order quote
+market-order swap
+market-order list
+contract-call preview
+contract-call execute
+contract-call run
+sign-message preview
+sign-message execute
+sign-message result
+sign-message history
+wallet status
+wallet address
+wallet chains
+wallet settings
+wallet gas-price
+wallet tx-lock
+wallet agent-id
+wallet balance
+wallet tx-history
+wallet left-quota
+wallet send
+batch
+serve
+# total: 26

@@ -2,6 +2,10 @@
 
 Native Rust BAW CLI, scoped to the installed `@binance/agentic-wallet` 1.12.0 wire protocol. This release completes the requested v0.1 omissions; it is **not the entire JavaScript CLI**. It neither invokes nor replaces the installed `baw`. Linux is the tested platform.
 
+No prebuilt binary is shipped in this repository. Build it yourself; only a build you
+produced has a hash you can check. `scripts/verify.sh` reproduces every gate artefact
+in `verification/` (fmt, clippy, test, release build, source manifest, leaf commands).
+
 ## Build and select a wallet
 
 ```sh
@@ -12,7 +16,30 @@ cargo build --release --target-dir /root/.hermes/cache/scratch/baw-integration-t
 
 Both selectors are required. Put them before the command, or use `BINANCE_BAW_DIR` and `BINANCE_INSTANCE_ID`. There is no implicit default wallet, MAC-derived encryption identity, global keyring access, or fallback to another session. The instance must match the identity that encrypted the selected file. Existing encrypted sessions and legacy plaintext client UUIDs load without migration writes. Only explicit signin may create a new identity in an absent selected directory.
 
+### `--instance-id` is a credential, not a machine identity
+
+The AES-256-GCM key for `session.json` is derived from that string alone:
+
+```text
+PBKDF2-HMAC-SHA256(password = instance, salt = "baw-agentic-wallet-v1:" + instance, 100k iters)
+```
+
+There is no keyring, no hardware root, no per-host secret. Consequences, all fail-closed:
+
+- **Lost instance string → the session is unrecoverable.** Nothing can re-derive the key.
+- **Instance string + `session.json` together → the login cookie is recoverable by anyone.**
+  Treat the instance string like a password: keep it in a 0600 file or an environment
+  variable, not in shell history or a command line that lands in `ps`.
+- Selecting a **different** instance against an existing directory fails with
+  `invalid encrypted credential` and leaves the file byte-identical — no repair, no
+  migration, no rewrite (covered by `fails_closed_on_wrong_instance_without_mutation`).
+
+
 ## Completed command inventory
+
+`verification/leaf-commands.txt` is the authoritative list, generated from the built
+binary by `scripts/leaf_commands.py` — currently **26 leaves**: the 24 below plus the
+`batch` and `serve` helpers. If this README and that file disagree, the file is right.
 
 ```text
 auth signin
