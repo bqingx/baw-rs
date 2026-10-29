@@ -26,7 +26,7 @@ fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
             command: WalletCommand::SpeedUp(args),
         } => Some(("wallet.speed-up", wallet_ops::speed_up_payload(args)?)),
         Command::Wallet {
-            command: WalletCommand::CancelTx(args),
+            command: WalletCommand::Cancel(args),
         } => Some(("wallet.cancel", wallet_ops::cancel_payload(args)?)),
         Command::Approvals { command } if approvals::is_mutation(command) => {
             Some(("approvals.revoke", approvals::mutation_payload(command)?))
@@ -69,7 +69,7 @@ pub fn preflight(cli: &Cli) -> Result<(), String> {
             | Command::Wallet {
                 command: WalletCommand::Send(_)
                     | WalletCommand::SpeedUp(_)
-                    | WalletCommand::CancelTx(_)
+                    | WalletCommand::Cancel(_)
             }
     ) || matches!(&cli.command, Command::MarketOrder { command } if trade::is_mutating(command))
         || matches!(&cli.command, Command::Approvals { command } if approvals::is_mutation(command))
@@ -143,7 +143,7 @@ pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
             command: WalletCommand::SpeedUp(args),
         } => wallet_ops::speed_up(client, args).await,
         Command::Wallet {
-            command: WalletCommand::CancelTx(args),
+            command: WalletCommand::Cancel(args),
         } => wallet_ops::cancel(client, args).await,
         Command::Wallet {
             command: WalletCommand::ResolveDomain(args),

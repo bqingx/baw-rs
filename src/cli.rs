@@ -261,10 +261,11 @@ pub enum WalletCommand {
     TxHistory(crate::portfolio::HistoryArgs),
     LeftQuota,
     Send(crate::trade::SendArgs),
-    /// Speed up a pending transaction.
+    /// Speed up a pending transaction by resubmitting with higher gas.
     SpeedUp(crate::wallet_ops::SpeedUpArgs),
-    /// Cancel a pending transaction.
-    CancelTx(crate::wallet_ops::CancelTxArgs),
+    /// Cancel a pending transaction by sending a replacement tx with higher gas.
+    #[command(name = "cancel")]
+    Cancel(crate::wallet_ops::CancelTxArgs),
     /// Resolve a domain name (.eth/.bnb/.ai Agent ID) to an address.
     ResolveDomain(crate::wallet_ops::ResolveDomainArgs),
 }
