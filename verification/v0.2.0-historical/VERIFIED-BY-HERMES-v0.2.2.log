@@ -1,0 +1,28 @@
+# Independent verification of baw-rs 0.2.2 source as shipped in the tarball
+date: 2026-10-29T17:36:27Z
+host: Linux 7.0.0-1012-aws x86_64
+toolchain: rustc 1.99.1 (58cf8f9c3 2026-10-13) / cargo 1.99.1 (5f94df478 2026-08-27)
+tree: /root/.hermes/cache/scratch/bawrs/baw-rs
+target_dir: /root/.hermes/cache/scratch/baw-rs-target
+
+## fmt
+cargo fmt --check exit=0
+
+## test
+     Running unittests src/lib.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-c9241e7600fbc754)
+test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 143.67s
+     Running unittests src/main.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-fc87997e1202be4d)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/cli.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/cli-8d8189d439d15d8f)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.56s
+     Running tests/mutation_consent.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/mutation_consent-1c00b6515b12a0e5)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/port_contract.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/port_contract-7776286be6381b6f)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## release
+-rwxr-xr-x 2 root root 5730544 Oct 29 17:35 /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs
+304efecc1efa81e88dfc8072513ad76424fc20300d165241fbced9e87529acc7  /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs
+
+## note: shipped verification/*.log and source-sha256.json were produced for v0.2.0 at /root/baw-rs and do NOT match this tree (9/19 hashes mismatch).
