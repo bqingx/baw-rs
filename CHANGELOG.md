@@ -9,6 +9,9 @@ the current source.
 
 Ownership changes after the 0.2.2 drop was reviewed and rebuilt independently.
 
+- Added `docs/SESSION-LIFECYCLE.md`: how the login state is generated, stored, read,
+  used on the wire, and invalidated, with the known gaps listed there.
+
 - Added `scripts/verify.sh`: one command regenerates fmt / clippy / test / release-build
   logs, `source-sha256.json` (now tagged with the git commit and a `dirty_source` flag)
   and `release-identity.txt`.
