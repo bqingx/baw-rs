@@ -191,6 +191,31 @@ pub enum Command {
         #[command(subcommand)]
         command: WalletCommand,
     },
+    /// Token approvals: list, detail, revoke.
+    Approvals {
+        #[command(subcommand)]
+        command: crate::approvals::ApprovalsCommand,
+    },
+    /// Limit orders: buy, sell, list, cancel.
+    LimitOrder {
+        #[command(subcommand)]
+        command: crate::limit_order::LimitOrderCommand,
+    },
+    /// Prediction markets: discovery, positions, trading.
+    Prediction {
+        #[command(subcommand)]
+        command: crate::prediction::PredictionCommand,
+    },
+    /// DeFi: protocols, opportunities, positions, deposit/redeem/LP/claim.
+    Defi {
+        #[command(subcommand)]
+        command: crate::defi::DefiCommand,
+    },
+    /// x402 payments: preview an HTTP 402 challenge, then sign an option.
+    X402Payment {
+        #[command(subcommand)]
+        command: crate::x402::X402Command,
+    },
     /// Read one JSON argv array per stdin line, retaining the in-memory session.
     Batch,
     /// Resident server: reuse one session and connection pool over a private socket.
@@ -217,6 +242,12 @@ pub enum WalletCommand {
     TxHistory(crate::portfolio::HistoryArgs),
     LeftQuota,
     Send(crate::trade::SendArgs),
+    /// Speed up a pending transaction.
+    SpeedUp(crate::wallet_ops::SpeedUpArgs),
+    /// Cancel a pending transaction.
+    CancelTx(crate::wallet_ops::CancelTxArgs),
+    /// Resolve a domain name (.eth/.bnb/.ai Agent ID) to an address.
+    ResolveDomain(crate::wallet_ops::ResolveDomainArgs),
 }
 
 #[derive(Parser)]

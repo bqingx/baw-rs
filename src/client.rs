@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 const ORIGIN: &str = "https://www.binance.com";
-const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
+pub(crate) const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 
 pub struct Client {
@@ -111,6 +111,9 @@ impl Client {
             };
         }
         match command {
+            WalletCommand::SpeedUp(_) | WalletCommand::CancelTx(_) | WalletCommand::ResolveDomain(_) => {
+                Err("wallet operation is routed by dispatch, not by client".into())
+            }
             WalletCommand::Status => {
                 let data = self
                     .request(Method::GET, &format!("{API}/login/query"), None)

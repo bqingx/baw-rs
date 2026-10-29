@@ -1,10 +1,11 @@
 //! Single guarded CLI dispatch. Batch cannot carry mutation authority.
 use crate::{
-    auth,
+    approvals, auth,
     cli::{Cli, Command, WalletCommand},
     client::Client,
+    defi,
     execution::{require_consent, OperationGuard},
-    signing, trade,
+    limit_order, prediction, signing, trade, wallet_ops, x402,
 };
 use serde_json::{json, Value};
 
@@ -20,6 +21,27 @@ fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
         Command::Wallet {
             command: WalletCommand::Send(args),
         } => Some(("wallet.send", trade::send_payload(args)?)),
+        Command::Wallet {
+            command: WalletCommand::SpeedUp(args),
+        } => Some(("wallet.speed-up", wallet_ops::speed_up_payload(args)?)),
+        Command::Wallet {
+            command: WalletCommand::CancelTx(args),
+        } => Some(("wallet.cancel", wallet_ops::cancel_payload(args)?)),
+        Command::Approvals { command } if approvals::is_mutation(command) => {
+            Some(("approvals.revoke", approvals::mutation_payload(command)?))
+        }
+        Command::LimitOrder { command } if limit_order::is_mutation(command) => {
+            Some(("limit-order", limit_order::mutation_payload(command)?))
+        }
+        Command::Prediction { command } if prediction::is_mutation(command) => {
+            Some(("prediction", prediction::mutation_payload(command)?))
+        }
+        Command::Defi { command } if defi::is_mutation(command) => {
+            Some(("defi", defi::mutation_payload(command)?))
+        }
+        Command::X402Payment { command } if x402::is_mutation(command) => {
+            Some(("x402-payment.sign", x402::mutation_payload(command)?))
+        }
         Command::ContractCall { command } if signing::is_contract_mutating(command) => {
             Some(("contract-call.execute", signing::contract_intent(command)))
         }
@@ -36,8 +58,15 @@ pub fn preflight(cli: &Cli) -> Result<(), String> {
         Command::Auth { .. }
             | Command::Wallet {
                 command: WalletCommand::Send(_)
+                    | WalletCommand::SpeedUp(_)
+                    | WalletCommand::CancelTx(_)
             }
     ) || matches!(&cli.command, Command::MarketOrder { command } if trade::is_mutating(command))
+        || matches!(&cli.command, Command::Approvals { command } if approvals::is_mutation(command))
+        || matches!(&cli.command, Command::LimitOrder { command } if limit_order::is_mutation(command))
+        || matches!(&cli.command, Command::Prediction { command } if prediction::is_mutation(command))
+        || matches!(&cli.command, Command::Defi { command } if defi::is_mutation(command))
+        || matches!(&cli.command, Command::X402Payment { command } if x402::is_mutation(command))
         || matches!(&cli.command, Command::ContractCall { command } if signing::is_contract_mutating(command))
         || matches!(&cli.command, Command::SignMessage { command } if signing::is_message_mutating(command));
     if writes {
@@ -97,6 +126,20 @@ pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
         Command::Wallet {
             command: WalletCommand::Send(args),
         } => trade::send(client, args).await,
+        Command::Wallet {
+            command: WalletCommand::SpeedUp(args),
+        } => wallet_ops::speed_up(client, args).await,
+        Command::Wallet {
+            command: WalletCommand::CancelTx(args),
+        } => wallet_ops::cancel(client, args).await,
+        Command::Wallet {
+            command: WalletCommand::ResolveDomain(args),
+        } => wallet_ops::resolve_domain(client, args).await,
+        Command::Approvals { command } => approvals::run(client, command).await,
+        Command::LimitOrder { command } => limit_order::run(client, command).await,
+        Command::Prediction { command } => prediction::run(client, command).await,
+        Command::Defi { command } => defi::run(client, command).await,
+        Command::X402Payment { command } => x402::run(client, command).await,
         Command::Wallet { command } => client.execute(command).await,
         Command::MarketOrder { command } => trade::run(client, command).await,
         Command::ContractCall { command } => {
