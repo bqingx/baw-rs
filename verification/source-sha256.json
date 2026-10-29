@@ -1,6 +1,6 @@
 {
   "_note": "Regenerate with scripts/verify.sh. Hashes describe the tree at 'commit'; dirty_source is true when tracked files differ from it.",
-  "commit": "83bfb1bd992b0afaf3cdf4a6069634ede1884680",
+  "commit": "80099517fc321649c543dbcd745158bee7c34231",
   "dirty_source": false,
   "files": {
     "Cargo.toml": "7bf328e54a51e13f005005fef42393a007ded88037488a08de814aca776f82e2",

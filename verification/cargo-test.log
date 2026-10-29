@@ -1,4 +1,4 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
      Running unittests src/lib.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-c9241e7600fbc754)
 
 running 105 tests
@@ -108,7 +108,7 @@ test transport::tests::rejects_failed_or_malformed_envelopes_without_echoing_sec
 test transport::tests::successful_api_response_returns_only_data ... ok
 test session::tests::rejects_unsafe_or_empty_authentication_values ... ok
 
-test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 141.61s
+test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 144.68s
 
      Running unittests src/main.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-fc87997e1202be4d)
 
@@ -120,12 +120,12 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 running 5 tests
 test batch_rejects_overrides_nested_batch_and_unbounded_inputs ... ok
-test executable_batch_rejects_invalid_input_without_writing_synthetic_wallet ... ok
+test executable_batch_exits_cleanly_on_broken_pipe ... ok
 test executable_errors_are_single_sanitized_json_without_session_access ... ok
 test explicit_wallet_selection_and_read_only_allowlist ... ok
-test executable_batch_exits_cleanly_on_broken_pipe ... ok
+test executable_batch_rejects_invalid_input_without_writing_synthetic_wallet ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.57s
 
      Running tests/mutation_consent.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/mutation_consent-1c00b6515b12a0e5)
 
