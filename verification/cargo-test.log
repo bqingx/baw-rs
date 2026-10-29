@@ -1,0 +1,147 @@
+   Compiling baw-rs v0.2.0 (/root/baw-rs)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.65s
+     Running unittests src/lib.rs (/root/.hermes/cache/scratch/baw-integration-target/debug/deps/baw_rs-9ae877323a87bc46)
+
+running 100 tests
+test auth::tests::connected_signin_only_queries_without_replacing_identity_or_persisting_rotation ... ok
+test auth::tests::expired_signin_can_start_new_auth_without_sending_expired_cookie ... ok
+test auth::tests::expired_verify_does_not_connect_or_commit ... ok
+test auth::tests::polling_deadline_cancels_inflight_request ... ok
+test auth::tests::failed_remote_signout_still_clears_local_and_explicitly_reports_uncertainty ... ok
+test auth::tests::signed_out_native_file_loads_as_unconnected_without_network ... ok
+test auth::tests::signin_refuses_active_pending_without_replacing_qr_or_connecting ... ok
+test auth::tests::signin_persists_five_minute_cap_even_across_verify_restarts ... ok
+test auth::tests::signout_bodyless_remote_success_clears_local_but_preserves_identity ... ok
+test auth::tests::signin_then_separate_verify_preserves_identity_and_commits_only_created_cookie ... ok
+test auth_store::tests::new_explicit_directory_gets_private_stable_encrypted_identity ... ok
+test auth_store::tests::malformed_existing_session_never_becomes_a_new_identity ... ok
+test auth_store::tests::persistence_replaces_inode_atomically_and_keeps_credentials_encrypted ... ok
+test cli::tests::bounded_reader_drains_oversized_and_invalid_utf8_lines_then_recovers ... ok
+test cli::tests::bounded_reader_processes_final_unterminated_line_and_empty_line ... ok
+test client::tests::address_uses_bodyless_post_first_wallet_only_and_network_names ... ok
+test client::tests::auth_session_replacement_validates_cookie_and_revives_client_only_explicitly ... ok
+test client::tests::auth_wrapper_codes_invalidate_in_memory_session ... ok
+test client::tests::authentication_errors_poison_all_followup_commands_and_never_echo_body ... ok
+test client::tests::batch_reuses_one_real_tcp_connection ... ok
+test client::tests::batch_runs_sequentially_rotates_session_and_never_caches_business_results ... ok
+test client::tests::display_checksum_matches_eip55_vectors ... ok
+test client::tests::failed_api_and_malformed_json_never_adopt_cookie_or_echo_messages ... ok
+test client::tests::native_status_rotates_cookie_only_in_memory_and_sends_exact_headers ... ok
+test client::tests::raw_wallet_queries_preserve_backend_data_and_exact_chain_body ... ok
+test client::tests::rejects_cookie_delimiters_before_building_requests ... ok
+test client::tests::rejects_redirects_without_following_location_or_changing_cookie ... ok
+test client::tests::responses_are_bounded_and_missing_sessions_never_connect ... ok
+test client::tests::settings_returns_lossless_documented_composite ... ok
+test dispatch::tests::send_dispatch_journals_before_http_preserves_precision_and_refuses_replay ... ok
+test dispatch::tests::signed_out_signing_queries_are_rejected_before_network ... ok
+test execution::tests::rejects_trailing_slash_directory_symlink_without_creating_files ... ok
+test execution::tests::requires_both_explicit_confirmation_and_unique_named_intent ... ok
+test execution::tests::terminal_record_keeps_recovery_ids_but_never_signature_or_backend_message ... ok
+test execution::tests::writes_intent_before_return_and_refuses_duplicate_even_after_drop ... ok
+test portfolio::filter_tests::filters_chain_symbol_address_and_threshold ... ok
+test portfolio::filter_tests::invalid_balance_args_before_requests ... ok
+test portfolio::history_mapping_tests::history_projection_base_units_rwa_status_and_optional_fields ... ok
+test portfolio::history_pending_tests::pending_history_default_ninety_days_and_encoded_query ... ok
+test portfolio::history_validation_tests::invalid_history_args_rejected_before_registry_or_status ... ok
+test portfolio::malformed_history_tests::malformed_pages_fail_cleanly_without_invented_history ... ok
+test portfolio::normalized_tests::balance_rwa_types_and_exact_value ... ok
+test portfolio::optional_history_tests::confirmed_marker_nonempty_routes_only_confirmed ... ok
+test portfolio::optional_history_tests::pending_explicit_null_cursor_not_absent ... ok
+test portfolio::optional_history_tests::preserve_null_nested_optional_fields ... ok
+test portfolio::pagination_tests::all_full_pending_continuation_stays_pending ... ok
+test portfolio::pagination_tests::all_history_pending_full_then_confirmed_marker ... ok
+test portfolio::pagination_tests::all_underfilled_pending_fills_confirmed_and_empty_pages ... ok
+test portfolio::pagination_tests::confirmed_only_uses_raw_cursor_and_preserves_absence ... ok
+test portfolio::quota_tests::left_quota_exact_subtraction_optional_date_and_zero_fallback ... ok
+test portfolio::tests::balance_raw_never_fetches_registry_or_normalizes ... ok
+test portfolio::tx_status_tests::tx_status_only_no_registry_defaults_or_list_requests ... ok
+test rwa::registry_tests::registry_validation_and_chain_specific_identity ... ok
+test rwa::tests::exact_rounding_and_large_amounts ... ok
+test session::tests::decrypts_python_aes_gcm_iv16_fixture ... ok
+test auth_store::tests::stale_login_cannot_overwrite_new_session ... ok
+test session::tests::derives_python_pbkdf2_key ... ok
+test session::tests::loads_encrypted_file_session ... ok
+test session::tests::fails_closed_on_wrong_instance_without_mutation ... ok
+test session::tests::rejects_fifo_without_blocking ... ok
+test session::tests::rejects_foreign_ownership ... ok
+test session::tests::rejects_insecure_permissions_without_repair ... ok
+test session::tests::loads_legacy_uuid_without_mutation ... ok
+test session::tests::rejects_missing_invalid_and_ambiguous_json ... ok
+test session::tests::rejects_symlink_session_paths ... ok
+test session::tests::rejects_malformed_or_tampered_ciphertext_with_redacted_errors ... ok
+test signing::tests::accepted_preview_is_consumed_even_when_wallet_revalidation_fails ... ok
+test signing::tests::cache_unknown_field_tampering_is_rejected_before_network ... ok
+test signing::tests::cached_preview_digest_wallet_action_chain_and_expiry_fail_closed ... ok
+test signing::tests::contract_preview_preserves_risks_binds_cache_and_executes_exact_review ... ok
+test signing::tests::evm_input_validation_rejects_bare_hex_and_bad_gas ... ok
+test signing::tests::execute_inner_backend_failure_is_error_and_request_stays_consumed ... ok
+test signing::tests::failed_execute_consumes_preview_and_never_posts_twice ... ok
+test signing::tests::message_preview_forwards_original_wrapper_and_executes_reviewed_authority_changes ... ok
+test signing::tests::preview_expiring_during_revalidation_never_executes ... ok
+test signing::tests::preview_without_server_expiry_uses_bounded_local_ttl ... ok
+test signing::tests::result_and_history_preserve_data_and_encode_original_query_names ... ok
+test signing::tests::risk_codes_are_preserved_not_mistaken_for_backend_failure ... ok
+test signing::tests::typed_wrapper_rejects_wrong_signer_domain_and_method ... ok
+test trade::tests::backend_numeric_decimals_preserve_full_json_precision ... ok
+test trade::tests::backend_recipient_confirmation_is_not_reported_as_sent ... ok
+test trade::tests::clap_defaults_intent_and_chain_addresses ... ok
+test trade::tests::exact_decimal_and_slippage_validation ... ok
+test trade::tests::explicit_slippage_mismatch_blocks_before_any_write ... ok
+test trade::tests::failed_order_code_never_echoes_backend_secrets ... ok
+test trade::tests::list_validates_filters_and_maps_actual_quantities_refunds_and_status ... ok
+test trade::tests::locked_expired_exhausted_or_unknown_settings_block_submission ... ok
+test trade::tests::normal_quote_tcp_preserves_metadata_without_float_rounding ... ok
+test trade::tests::rwa_quote_routes_and_converts_sell_up_and_buy_down ... ok
+test trade::tests::rwa_sell_rounding_clamp_and_oversell_are_exact ... ok
+test trade::tests::rwa_swap_buy_and_sell_use_original_routes_and_null_share_fields ... ok
+test trade::tests::send_intent_requires_exactly_amount_or_max_without_changing_input ... ok
+test trade::tests::send_tcp_fee_level_recipient_policy_and_rwa_share_handling ... ok
+test trade::tests::swap_requires_preflight_quote_and_preserves_submitted_not_filled ... ok
+test trade::tests::transfer_internal_failure_code_cannot_be_reported_as_submitted ... ok
+test trade::tests::unacknowledged_target_and_unsupported_protections_fail_closed ... ok
+test trade::tests::uncertain_writes_never_retry_timeout_http_or_disconnected_socket ... ok
+test transport::tests::rejects_failed_or_malformed_envelopes_without_echoing_secret_values ... ok
+test transport::tests::successful_api_response_returns_only_data ... ok
+test session::tests::rejects_unsafe_or_empty_authentication_values ... ok
+
+test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 142.67s
+
+     Running unittests src/main.rs (/root/.hermes/cache/scratch/baw-integration-target/debug/deps/baw_rs-c05616480caf2fc3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/root/.hermes/cache/scratch/baw-integration-target/debug/deps/cli-02f9e4a6c24eff8c)
+
+running 5 tests
+test batch_rejects_overrides_nested_batch_and_unbounded_inputs ... ok
+test executable_batch_rejects_invalid_input_without_writing_synthetic_wallet ... ok
+test executable_errors_are_single_sanitized_json_without_session_access ... ok
+test explicit_wallet_selection_and_read_only_allowlist ... ok
+test executable_batch_exits_cleanly_on_broken_pipe ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.61s
+
+     Running tests/mutation_consent.rs (/root/.hermes/cache/scratch/baw-integration-target/debug/deps/mutation_consent-020718ea35e17309)
+
+running 3 tests
+test batch_rejects_mutations_and_consent_overrides ... ok
+test blanket_batch_and_unreviewed_signing_fail_before_session_access ... ok
+test unauthorized_writes_fail_before_wallet_access ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/port_contract.rs (/root/.hermes/cache/scratch/baw-integration-target/debug/deps/port_contract-75bf3a0d47e8870c)
+
+running 1 test
+test recognizes_previously_missing_command_families ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests baw_rs
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

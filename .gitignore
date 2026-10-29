@@ -1,0 +1,3 @@
+target/
+.baw-rs-operations/
+*.sock

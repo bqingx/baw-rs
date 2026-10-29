@@ -1,0 +1,21 @@
+{
+  "Cargo.lock": "c4753b381bf7f89d2c77e2e07a97bf7830a2ff64c629db744105b0b18dd0063b",
+  "Cargo.toml": "96a42afe7f8ab9fd037cd45b6e6f8ec74e0044bd9fc74aff8779cdebf8ca98fc",
+  "src/auth.rs": "87cd9583cecfaf734e89f54a95e68e646f6e2309bb3bbcc8b86169ab88865c52",
+  "src/auth_store.rs": "3cce772073d759d024bef6f0d8944c10956266688c4620e8c519e5ddcd1edeed",
+  "src/cli.rs": "653e8f5ad7017763db2e975dc71634811bebcf34675c7d31372cd138bc1608c9",
+  "src/client.rs": "c1b00fc8b3de284f54fef19a1f6fb06f36f450c42051b767f84d810ad20b39b6",
+  "src/dispatch.rs": "bb0f772b09d759189a146657a5940fd2a7473a8784756bb318410044df8102e7",
+  "src/execution.rs": "4fc0e8dd889cd6df038ea8fd24456fef25a95a3b60a8afc461aea6e0da9f8117",
+  "src/lib.rs": "026442d29c50c6564c98cddcf2832cf7ffdc6f74bc63a3cd9eacb8e8b11557b3",
+  "src/main.rs": "fa69907f49dd125ab8bf6104f77619024df1f8bbfe1fd546189e7e7fca8f741c",
+  "src/portfolio.rs": "6079122fb4248aab87ee0a2557a55c6b8d17c80759e6e38998cdbcbdf46c56c1",
+  "src/rwa.rs": "f3ec8ce8f6439480a85b7c712b418325638d52bf6f9e626ca9b076f3ec09f811",
+  "src/session.rs": "efda88899346c11f3fd0b5702e84e5abde696148b65ae68a6fb966324d2b468e",
+  "src/signing.rs": "2c56cc61e89e2ddc562980773e2ff14ed0861b14ee5072b55b05e0d54e46e31c",
+  "src/trade.rs": "290e8597034fd6925fc996e2ba4f6a3988b2e2f22557c721c96c37c52dfbc097",
+  "src/transport.rs": "dfa5d900a1cd377aae507f98cd1446f4fd70cc4a8e6f525dff4c16472fb65e1f",
+  "tests/cli.rs": "8b363afbf205279c4af52518fb2d45e8014af9db20b2d50606534d3a9006b3e5",
+  "tests/mutation_consent.rs": "73963f7928f890cd5b70201fc1b8b85b8d7ec5d652ca556f78f4511325a1d59a",
+  "tests/port_contract.rs": "a31fcd3a972da90d47d11346963de778542c20877fa7b79ff82e5503afd1ed4e"
+}

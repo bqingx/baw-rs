@@ -1,0 +1,33 @@
+[package]
+name = "baw-rs"
+version = "0.2.2"
+edition = "2021"
+description = "Native BAW client with explicit wallet selection and durable mutation consent"
+
+[dependencies]
+aes = "0.8"
+aes-gcm = "0.10"
+base64 = "0.22"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+zeroize = "1.8"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time", "net"] }
+clap = { version = "4", features = ["derive", "env"] }
+rand = "0.8"
+url = "2"
+fs2 = "0.4"
+bigdecimal = "0.4"
+num-bigint = "0.4"
+chrono = "0.4"
+k256 = { version = "0.13", features = ["ecdh"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true
