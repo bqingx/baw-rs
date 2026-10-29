@@ -1,4 +1,3 @@
-# ba w CLI parity map (installed `baw` 1.12.0 → this crate)
 # baw CLI parity map (installed `baw` 1.12.0 → this crate)
 Generated from the installed CLI's own `--help` output. Authoritative for syntax: option names, required flags and defaults. Wire endpoints are mined separately from `dist/index.js`.
 
