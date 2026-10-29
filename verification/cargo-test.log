@@ -1,19 +1,39 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
-     Running unittests src/lib.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-c9241e7600fbc754)
+   Compiling baw-rs v0.3.0 (/root/baw-rs)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 50s
+     Running unittests src/lib.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-a163df8f1ebea95f)
 
-running 105 tests
+running 263 tests
+test approvals::tests::backend_error_envelope_is_sanitized ... ok
+test approvals::tests::approve_revoke_omits_permit2_contract ... ok
+test approvals::tests::invalid_arguments_never_reach_the_network ... ok
+test approvals::tests::detail_reads_wallet_detail_and_recent_records ... ok
+test approvals::tests::list_defaults_to_limit_twenty ... ok
+test approvals::tests::only_revoke_is_a_mutation_and_it_carries_its_intent ... ok
+test approvals::tests::list_sends_documented_query_and_returns_backend_data ... ok
+test approvals::tests::revoke_reads_detail_then_posts_fixed_fee_and_permit2_contract ... ok
+test auth::tests::connected_signin_only_queries_without_replacing_identity_or_persisting_rotation has been running for over 60 seconds
+test auth::tests::expired_signin_can_start_new_auth_without_sending_expired_cookie has been running for over 60 seconds
 test auth::tests::connected_signin_only_queries_without_replacing_identity_or_persisting_rotation ... ok
 test auth::tests::expired_signin_can_start_new_auth_without_sending_expired_cookie ... ok
+test auth::tests::expired_verify_does_not_connect_or_commit has been running for over 60 seconds
+test auth::tests::failed_remote_signout_still_clears_local_and_explicitly_reports_uncertainty has been running for over 60 seconds
 test auth::tests::expired_verify_does_not_connect_or_commit ... ok
 test auth::tests::polling_deadline_cancels_inflight_request ... ok
-test auth::tests::failed_remote_signout_still_clears_local_and_explicitly_reports_uncertainty ... ok
+test auth::tests::signed_out_native_file_loads_as_unconnected_without_network has been running for over 60 seconds
 test auth::tests::signed_out_native_file_loads_as_unconnected_without_network ... ok
+test auth::tests::failed_remote_signout_still_clears_local_and_explicitly_reports_uncertainty ... ok
+test auth::tests::signin_persists_five_minute_cap_even_across_verify_restarts has been running for over 60 seconds
+test auth::tests::signin_refuses_active_pending_without_replacing_qr_or_connecting has been running for over 60 seconds
 test auth::tests::signin_persists_five_minute_cap_even_across_verify_restarts ... ok
 test auth::tests::signin_refuses_active_pending_without_replacing_qr_or_connecting ... ok
+test auth::tests::signin_then_separate_verify_preserves_identity_and_commits_only_created_cookie has been running for over 60 seconds
+test auth::tests::signout_bodyless_remote_success_clears_local_but_preserves_identity has been running for over 60 seconds
 test auth::tests::signout_bodyless_remote_success_clears_local_but_preserves_identity ... ok
 test auth::tests::signin_then_separate_verify_preserves_identity_and_commits_only_created_cookie ... ok
+test auth_store::tests::malformed_existing_session_never_becomes_a_new_identity has been running for over 60 seconds
 test auth_store::tests::new_explicit_directory_gets_private_stable_encrypted_identity ... ok
 test auth_store::tests::malformed_existing_session_never_becomes_a_new_identity ... ok
+test auth_store::tests::persistence_replaces_inode_atomically_and_keeps_credentials_encrypted has been running for over 60 seconds
 test auth_store::tests::persistence_replaces_inode_atomically_and_keeps_credentials_encrypted ... ok
 test cli::tests::bounded_reader_drains_oversized_and_invalid_utf8_lines_then_recovers ... ok
 test cli::tests::bounded_reader_processes_final_unterminated_line_and_empty_line ... ok
@@ -31,12 +51,60 @@ test client::tests::rejects_cookie_delimiters_before_building_requests ... ok
 test client::tests::rejects_redirects_without_following_location_or_changing_cookie ... ok
 test client::tests::responses_are_bounded_and_missing_sessions_never_connect ... ok
 test client::tests::settings_returns_lossless_documented_composite ... ok
+test defi::tests::address_validation_matches_bundle_checksum_rules ... ok
+test defi::tests::backend_error_envelope_is_sanitized ... ok
+test defi::tests::claim_sends_uppercased_type_and_optional_identifiers ... ok
+test defi::tests::cli_surface_matches_documented_leaf_names_and_defaults ... ok
+test defi::tests::deposit_sends_identifiers_amount_and_normalized_gas ... ok
+test defi::tests::invalid_arguments_never_reach_the_network ... ok
+test defi::tests::investment_info_sends_investment_id ... ok
+test defi::tests::investment_list_sends_filters_and_required_type ... ok
+test defi::tests::lp_add_sends_range_and_omits_absent_position_fields ... ok
+test defi::tests::lp_remove_sends_nft_ratio_and_slippage ... ok
+test defi::tests::missing_required_option_is_rejected_before_any_call ... ok
+test defi::tests::mutation_payloads_distinguish_leaves_with_identical_amounts ... ok
+test defi::tests::only_writing_leaves_are_mutations ... ok
+test defi::tests::position_routes_refresh_to_its_own_path ... ok
+test defi::tests::preview_sends_action_scoped_body ... ok
+test defi::tests::protocol_info_sends_defi_protocol_id ... ok
+test defi::tests::protocol_list_sends_only_provided_filters ... ok
+test defi::tests::redeem_sends_exactly_one_of_amount_or_ratio ... ok
 test dispatch::tests::send_dispatch_journals_before_http_preserves_precision_and_refuses_replay ... ok
 test dispatch::tests::signed_out_signing_queries_are_rejected_before_network ... ok
 test execution::tests::rejects_trailing_slash_directory_symlink_without_creating_files ... ok
 test execution::tests::requires_both_explicit_confirmation_and_unique_named_intent ... ok
 test execution::tests::terminal_record_keeps_recovery_ids_but_never_signature_or_backend_message ... ok
 test execution::tests::writes_intent_before_return_and_refuses_duplicate_even_after_drop ... ok
+test leaderboard::tests::alpha_radar_posts_the_documented_body_and_returns_the_payload ... ok
+test leaderboard::tests::analyze_clamps_top_n_to_the_documented_range ... ok
+test leaderboard::tests::analyze_distinguishes_empty_leaderboard_from_an_unranked_address ... ok
+test leaderboard::tests::analyze_scans_pages_and_scores_the_match_locally ... ok
+test leaderboard::tests::analyze_skips_a_page_whose_head_was_already_scanned ... ok
+test leaderboard::tests::backend_error_envelope_is_sanitized ... ok
+test leaderboard::tests::missing_or_invalid_required_input_never_reaches_the_network ... ok
+test leaderboard::tests::mutation_classification_covers_every_leaf_exactly ... ok
+test leaderboard::tests::mutation_payload_rejects_config_that_is_not_a_json_array ... ok
+test leaderboard::tests::preset_list_posts_an_empty_object_and_returns_the_array ... ok
+test leaderboard::tests::preset_save_posts_the_parsed_array_and_reports_the_count ... ok
+test leaderboard::tests::query_missing_nested_data_is_an_empty_page_not_a_wire_failure ... ok
+test leaderboard::tests::query_sends_exact_get_query_and_returns_nested_rows ... ok
+test leaderboard::tests::radar_config_list_posts_only_the_chain_id ... ok
+test leaderboard::tests::radar_config_save_posts_chain_and_config_list ... ok
+test leaderboard::tests::scoring_matches_the_bundle_formula_on_edge_rows ... ok
+test leaderboard::tests::unsupported_chain_and_bad_filters_fail_before_connecting ... ok
+test limit_order::tests::buy_posts_limit_order_with_js_field_names_and_stripped_price ... ok
+test limit_order::tests::cancel_posts_numeric_strategy_id_and_reports_canceled ... ok
+test limit_order::tests::clap_surface_matches_the_js_leaf_options_and_defaults ... ok
+test limit_order::tests::data_level_code_becomes_sanitized_limit_order_error ... ok
+test limit_order::tests::envelope_failure_is_reported_without_backend_message ... ok
+test limit_order::tests::every_writing_leaf_is_a_mutation_and_list_is_not ... ok
+test limit_order::tests::invalid_required_arguments_never_reach_the_network ... ok
+test limit_order::tests::list_by_strategy_asks_for_one_row_and_non_numeric_never_calls_out ... ok
+test limit_order::tests::list_filters_routes_through_registry_and_maps_limit_fields ... ok
+test limit_order::tests::missing_session_fails_before_any_write ... ok
+test limit_order::tests::sell_uses_sell_side_and_forces_mev_off_on_unsupported_chains ... ok
+test limit_order::tests::timestamps_are_2020_bounded_and_ordered ... ok
+test limit_order::tests::validation_matches_js_regexes_and_bounds ... ok
 test policy::tests::accepts_only_the_exact_pinned_call_shape ... ok
 test policy::tests::blocks_unlisted_risks_and_authority_changes ... ok
 test policy::tests::calldata_digest_is_enforced_when_present ... ok
@@ -59,8 +127,44 @@ test portfolio::pagination_tests::confirmed_only_uses_raw_cursor_and_preserves_a
 test portfolio::quota_tests::left_quota_exact_subtraction_optional_date_and_zero_fallback ... ok
 test portfolio::tests::balance_raw_never_fetches_registry_or_normalizes ... ok
 test portfolio::tx_status_tests::tx_status_only_no_registry_defaults_or_list_requests ... ok
+test prediction::tests::backend_error_envelope_is_not_echoed ... ok
+test prediction::tests::category_list_posts_empty_body ... ok
+test prediction::tests::fixed_point_conversions_match_bundle_helpers ... ok
+test prediction::tests::market_detail_rejects_null_payload ... ok
+test prediction::tests::market_detail_sends_numeric_topic_id_and_returns_data ... ok
+test prediction::tests::market_last_trade_price_sends_only_market_id ... ok
+test prediction::tests::market_list_sends_filters_order_by_and_pagination ... ok
+test prediction::tests::market_order_book_sends_market_and_token_ids ... ok
+test prediction::tests::market_search_sends_query_and_top_k ... ok
+test prediction::tests::missing_required_option_never_reaches_network ... ok
+test prediction::tests::only_the_three_writing_trade_leaves_are_mutations ... ok
+test prediction::tests::order_history_sends_status_category_and_type_filters ... ok
+test prediction::tests::position_list_defaults_to_ongoing_tab ... ok
+test prediction::tests::position_pnl_sends_token_and_category_filters ... ok
+test prediction::tests::position_portfolio_posts_empty_body ... ok
+test prediction::tests::position_settled_history_maps_win_filter_to_result_one ... ok
+test prediction::tests::position_token_unwraps_position_key ... ok
+test prediction::tests::trade_cancel_sends_cancel_info_list_and_reports_outcomes ... ok
+test prediction::tests::trade_place_order_defaults_to_market_and_reports_order_id ... ok
+test prediction::tests::trade_quote_converts_amount_and_reshapes_response ... ok
+test prediction::tests::trade_quote_fetches_market_default_slippage_when_omitted ... ok
+test prediction::tests::trade_redeem_sends_token_ids_and_optional_chain ... ok
 test rwa::registry_tests::registry_validation_and_chain_specific_identity ... ok
 test rwa::tests::exact_rounding_and_large_amounts ... ok
+test selfcheck::tests::cli_check_equal_version ... ok
+test selfcheck::tests::cli_check_malformed_input_fails_closed ... ok
+test selfcheck::tests::cli_check_newer_required ... ok
+test selfcheck::tests::cli_check_older_required ... ok
+test selfcheck::tests::skill_check_current_skill_is_not_newer ... ok
+test selfcheck::tests::skill_check_fails_closed_on_error_status ... ok
+test selfcheck::tests::skill_check_fails_closed_on_redirect ... ok
+test selfcheck::tests::skill_check_fails_closed_when_registry_unreachable ... ok
+test selfcheck::tests::skill_check_rejects_missing_or_unparsable_version ... ok
+test selfcheck::tests::skill_check_rejects_oversized_document ... ok
+test selfcheck::tests::skill_check_rejects_unsafe_skill_name_without_network ... ok
+test selfcheck::tests::skill_check_reports_newer_skill ... ok
+test selfcheck::tests::skill_version_parser_matches_bundle_regex ... ok
+test selfcheck::tests::version_ordering_is_numeric_not_lexicographic ... ok
 test session::tests::decrypts_python_aes_gcm_iv16_fixture ... ok
 test auth_store::tests::stale_login_cannot_overwrite_new_session ... ok
 test session::tests::derives_python_pbkdf2_key ... ok
@@ -73,6 +177,33 @@ test session::tests::loads_legacy_uuid_without_mutation ... ok
 test session::tests::rejects_missing_invalid_and_ambiguous_json ... ok
 test session::tests::rejects_symlink_session_paths ... ok
 test session::tests::rejects_malformed_or_tampered_ciphertext_with_redacted_errors ... ok
+test signal::tests::backend_error_envelope_is_sanitized ... ok
+test signal::tests::backtest_detail_returns_info_and_token_list ... ok
+test signal::tests::backtest_list_all_walks_every_page ... ok
+test signal::tests::backtest_list_uses_documented_page_and_size_defaults ... ok
+test signal::tests::backtest_retry_sends_the_default_type_and_job_ids ... ok
+test signal::tests::backtest_schedule_configures_then_queries ... ok
+test signal::tests::credits_posts_an_empty_body ... ok
+test signal::tests::explore_returns_the_official_task_list ... ok
+test signal::tests::list_all_sources_queries_each_endpoint_tags_and_sorts ... ok
+test signal::tests::list_fails_when_every_source_fails ... ok
+test signal::tests::list_reports_partial_failures_without_echoing_backend_text ... ok
+test signal::tests::list_strategy_filter_narrows_all_to_the_user_source ... ok
+test signal::tests::list_time_range_and_max_gain_sort_apply_after_fan_in ... ok
+test signal::tests::list_user_source_forwards_filters_and_filters_by_strategy_type ... ok
+test signal::tests::missing_or_invalid_options_never_reach_the_network ... ok
+test signal::tests::mutation_classification_covers_every_leaf_both_ways ... ok
+test signal::tests::strategy_create_estimates_checks_limit_then_posts_definition ... ok
+test signal::tests::strategy_create_merges_wallet_group_and_backtest_flag ... ok
+test signal::tests::strategy_delete_confirms_then_posts_job_ids ... ok
+test signal::tests::strategy_follow_copies_a_hall_strategy_before_following ... ok
+test signal::tests::strategy_follow_follows_an_owned_strategy_directly ... ok
+test signal::tests::strategy_list_followed_returns_backend_follow_rows ... ok
+test signal::tests::strategy_list_walks_both_types_and_projects_owned_rows ... ok
+test signal::tests::strategy_unfollow_looks_up_follows_then_posts_strategy_id ... ok
+test signal::tests::strategy_update_posts_config_and_name ... ok
+test signal::tests::strategy_update_with_only_a_name_uses_update_job_name ... ok
+test signal::tests::wallet_group_requests_every_group ... ok
 test signing::tests::accepted_preview_is_consumed_even_when_wallet_revalidation_fails ... ok
 test signing::tests::cache_unknown_field_tampering_is_rejected_before_network ... ok
 test signing::tests::cached_preview_digest_wallet_action_chain_and_expiry_fail_closed ... ok
@@ -86,6 +217,30 @@ test signing::tests::preview_without_server_expiry_uses_bounded_local_ttl ... ok
 test signing::tests::result_and_history_preserve_data_and_encode_original_query_names ... ok
 test signing::tests::risk_codes_are_preserved_not_mistaken_for_backend_failure ... ok
 test signing::tests::typed_wrapper_rejects_wrong_signer_domain_and_method ... ok
+test tracker::tests::address_add_posts_import_envelope ... ok
+test tracker::tests::address_batch_posts_csv_and_json_lists ... ok
+test tracker::tests::address_delete_posts_group_and_address_list ... ok
+test tracker::tests::address_follow_posts_group_and_label ... ok
+test tracker::tests::address_link_posts_target_group ... ok
+test tracker::tests::address_list_posts_page_and_size ... ok
+test tracker::tests::address_search_posts_fuzzy_filters ... ok
+test tracker::tests::address_unfollow_posts_address ... ok
+test tracker::tests::address_update_failing_both_endpoints_is_a_static_error ... ok
+test tracker::tests::address_update_prefers_address_update_and_falls_back_to_label_update ... ok
+test tracker::tests::backend_error_envelope_is_sanitized ... ok
+test tracker::tests::clap_surface_matches_the_installed_help ... ok
+test tracker::tests::follow_posts_chain_and_returns_followings_losslessly ... ok
+test tracker::tests::group_create_posts_name_and_confirms_on_readback ... ok
+test tracker::tests::group_create_without_readback_confirmation_fails ... ok
+test tracker::tests::group_list_posts_include_all_group_both_ways ... ok
+test tracker::tests::group_update_posts_id_and_name_and_confirms_on_readback ... ok
+test tracker::tests::missing_or_invalid_options_never_reach_the_network ... ok
+test tracker::tests::mutation_classification_covers_every_leaf ... ok
+test tracker::tests::token_agent_mode_posts_group_monitor_and_enriches_rows ... ok
+test tracker::tests::token_public_mode_uses_public_prefix_and_numeric_tag ... ok
+test tracker::tests::tx_agent_mode_posts_filters_and_renames_to_address_label ... ok
+test tracker::tests::tx_public_mode_uses_public_prefix_and_keeps_group ... ok
+test tracker::tests::ws_is_explicitly_unimplemented_and_never_reaches_the_network ... ok
 test trade::tests::backend_numeric_decimals_preserve_full_json_precision ... ok
 test trade::tests::backend_recipient_confirmation_is_not_reported_as_sent ... ok
 test trade::tests::clap_defaults_intent_and_chain_addresses ... ok
@@ -106,17 +261,33 @@ test trade::tests::unacknowledged_target_and_unsupported_protections_fail_closed
 test trade::tests::uncertain_writes_never_retry_timeout_http_or_disconnected_socket ... ok
 test transport::tests::rejects_failed_or_malformed_envelopes_without_echoing_secret_values ... ok
 test transport::tests::successful_api_response_returns_only_data ... ok
+test wallet_ops::tests::backend_error_envelope_is_sanitized ... ok
+test wallet_ops::tests::cancel_posts_original_hash_and_chain_and_reports_submitted_only ... ok
+test wallet_ops::tests::invalid_arguments_never_reach_the_network ... ok
+test wallet_ops::tests::mutation_classification_matches_dispatch ... ok
+test wallet_ops::tests::resolve_domain_posts_name_and_chain_and_projects_the_js_shape ... ok
+test wallet_ops::tests::resolve_domain_without_address_fails_closed ... ok
+test wallet_ops::tests::speed_up_omits_auto_detected_chain_and_defaults_to_high ... ok
+test wallet_ops::tests::speed_up_posts_normalized_level_and_reports_submitted_only ... ok
+test wallet_ops::tests::submit_fail_is_a_static_sanitized_error ... ok
+test x402::tests::a_signed_option_is_consumed_once_even_after_failure ... ok
+test x402::tests::backend_error_envelope_is_sanitized ... ok
+test x402::tests::invalid_arguments_never_reach_the_network ... ok
+test x402::tests::only_sign_is_a_mutation_and_its_payload_is_deterministic ... ok
+test x402::tests::preview_posts_the_challenge_verbatim_to_the_preview_endpoint ... ok
+test x402::tests::sign_posts_payment_id_and_numeric_index_and_returns_the_header ... ok
+test session::tests::rejects_unsafe_or_empty_authentication_values has been running for over 60 seconds
 test session::tests::rejects_unsafe_or_empty_authentication_values ... ok
 
-test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 144.68s
+test result: ok. 263 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 751.52s
 
-     Running unittests src/main.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-fc87997e1202be4d)
+     Running unittests src/main.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-0f04072eb8b21b8e)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/cli.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/cli-8d8189d439d15d8f)
+     Running tests/cli.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/cli-9e18b0f1e40c3579)
 
 running 5 tests
 test batch_rejects_overrides_nested_batch_and_unbounded_inputs ... ok
@@ -125,28 +296,28 @@ test executable_errors_are_single_sanitized_json_without_session_access ... ok
 test explicit_wallet_selection_and_read_only_allowlist ... ok
 test executable_batch_rejects_invalid_input_without_writing_synthetic_wallet ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.57s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.20s
 
-     Running tests/mutation_consent.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/mutation_consent-1c00b6515b12a0e5)
+     Running tests/mutation_consent.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/mutation_consent-c760bdbd82b048c1)
 
 running 3 tests
 test batch_rejects_mutations_and_consent_overrides ... ok
 test blanket_batch_and_unreviewed_signing_fail_before_session_access ... ok
 test unauthorized_writes_fail_before_wallet_access ... ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.96s
 
-     Running tests/port_contract.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/port_contract-7776286be6381b6f)
+     Running tests/port_contract.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/port_contract-e25750b8e05916bc)
 
 running 1 test
 test recognizes_previously_missing_command_families ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
 
    Doc-tests baw_rs
 
 running 0 tests
 
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
 exit=0

@@ -1,4 +1,4 @@
-# /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs --version: baw-rs 0.2.2
+# /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs --version: baw-rs 0.3.0
 auth signin
 auth verify
 auth signout
@@ -23,6 +23,85 @@ wallet balance
 wallet tx-history
 wallet left-quota
 wallet send
+wallet speed-up
+wallet cancel
+wallet resolve-domain
+approvals list
+approvals detail
+approvals revoke
+limit-order buy
+limit-order sell
+limit-order list
+limit-order cancel
+prediction category list
+prediction market list
+prediction market detail
+prediction market search
+prediction market order-book
+prediction market last-trade-price
+prediction position list
+prediction position token
+prediction position settled-history
+prediction position pnl
+prediction position portfolio
+prediction order history
+prediction trade quote
+prediction trade place-order
+prediction trade cancel
+prediction trade redeem
+defi protocol-list
+defi protocol-info
+defi investment-list
+defi investment-info
+defi position
+defi deposit
+defi redeem
+defi lp-add
+defi lp-remove
+defi claim
+defi preview
+x402-payment preview
+x402-payment sign
+tracker token
+tracker tx
+tracker follow
+tracker group create
+tracker group list
+tracker group update
+tracker address add
+tracker address batch
+tracker address delete
+tracker address follow
+tracker address link
+tracker address list
+tracker address search
+tracker address unfollow
+tracker address update
+tracker ws
+signal list
+signal strategy create
+signal strategy update
+signal strategy delete
+signal strategy follow
+signal strategy unfollow
+signal strategy list
+signal strategy list-followed
+signal backtest list
+signal backtest detail
+signal backtest retry
+signal backtest schedule
+signal explore
+signal credits
+signal wallet-group
+leaderboard query
+leaderboard analyze
+leaderboard alpha-radar
+leaderboard preset list
+leaderboard preset save
+leaderboard alpha-radar-config list
+leaderboard alpha-radar-config save
+cli-check
+skill-check
 batch
 serve
-# total: 26
+# total: 105
