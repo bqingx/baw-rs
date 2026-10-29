@@ -26,6 +26,35 @@ Ownership changes after the 0.2.2 drop was reviewed and rebuilt independently.
   is the authoritative command list (26 leaves: 24 commands + `batch` + `serve`).
 - INTEGRATION-REPORT.md: marked as a v0.2.0 historical document.
 
+## 0.3.0 — full command parity with `baw` 1.12.0
+
+The crate now exposes every leaf the installed JavaScript CLI exposes, except
+`tracker ws` (WebSocket transport, needs a client dependency — see "Known gaps").
+
+- New families, each with its own clap enum, wire calls mined from the installed bundle
+  and unit tests: `approvals`, `limit-order`, `prediction`, `defi`, `x402-payment`,
+  `tracker`, `signal`, `leaderboard`, `cli-check`, `skill-check`, plus
+  `wallet speed-up|cancel|resolve-domain`.
+- Every endpoint literal in the tree was checked against the installed
+  `@binance/agentic-wallet` bundle; no path exists in the port that is not in the bundle.
+- Mutation classification (`is_mutation` + `mutation_payload`) is defined per leaf for
+  every family, so `--confirm` + a unique `--operation-id` is mandatory exactly on the
+  writing leaves, and the journal input is deterministic and credential-free.
+- `docs/JS-CLI-PARITY.md`: verbatim `--help` of every reference leaf, generated from the
+  installed CLI; `verification/leaf-commands.txt`: the authoritative list for this crate,
+  generated from the built binary.
+- Fixed a clap name/alias collision on `wallet cancel` that panicked every debug-mode CLI
+  parse.
+
+Known gaps, stated rather than papered over:
+
+- `tracker ws` parses but returns `tracker ws requires websocket support, not implemented`.
+- Some response shapes are passed through untouched because the minified bundle does not
+  reveal their fields (tracker monitor rows, leaderboard presets, prediction defaults);
+  each is commented in-file.
+- No live wallet operation has been performed: no QR signin, signature, swap, transfer or
+  DeFi position. Offline tests use loopback fixtures only.
+
 ## 0.2.2 — as received
 
 Source drop, no git history. Built and tested independently on rustc 1.99.1:

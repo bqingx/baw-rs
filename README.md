@@ -1,4 +1,4 @@
-# baw-rs 0.2.2
+# baw-rs 0.3.0
 
 Native Rust BAW CLI, scoped to the installed `@binance/agentic-wallet` 1.12.0 wire protocol. This release completes the requested v0.1 omissions; it is **not the entire JavaScript CLI**. It neither invokes nor replaces the installed `baw`. Linux is the tested platform.
 
@@ -38,8 +38,25 @@ There is no keyring, no hardware root, no per-host secret. Consequences, all fai
 ## Completed command inventory
 
 `verification/leaf-commands.txt` is the authoritative list, generated from the built
-binary by `scripts/leaf_commands.py` — currently **26 leaves**: the 24 below plus the
-`batch` and `serve` helpers. If this README and that file disagree, the file is right.
+binary by `scripts/leaf_commands.py`. Every leaf of the installed `baw` 1.12.0 is
+implemented except `tracker ws` (WebSocket transport). `docs/JS-CLI-PARITY.md` holds the
+reference `--help` for each one; family modules:
+
+| family | module | leaves |
+|---|---|---|
+| auth / wallet / market-order / contract-call / sign-message | `auth`, `client`, `trade`, `signing` | the original 24 |
+| approvals | `approvals` | list, detail, revoke |
+| limit-order | `limit_order` | buy, sell, list, cancel |
+| prediction | `prediction` | 15 leaves (category / market / position / order / trade) |
+| defi | `defi` | 11 leaves (protocol / investment / position / deposit / redeem / lp / claim / preview) |
+| x402-payment | `x402` | preview, sign |
+| wallet ops | `wallet_ops` | speed-up, cancel, resolve-domain |
+| tracker | `tracker` | 15 leaves (token / tx / follow / group / address) — `ws` parses, returns a clear unimplemented error |
+| signal | `signal` | 15 leaves (list / strategy / backtest / explore / credits / wallet-group) |
+| leaderboard | `leaderboard` | 7 leaves (query / analyze / alpha-radar / presets) |
+| self-checks | `selfcheck` | cli-check, skill-check |
+
+The original surface, unchanged:
 
 ```text
 auth signin
@@ -158,7 +175,12 @@ JSON is always emitted (`--json` is accepted). Each command produces `{"success"
 
 ## Deliberately outside this migration
 
-DeFi, prediction markets, limit orders, approvals, x402, Agent ID claims, domain resolution, speed-up/cancel, arbitrary endpoints, browser/UI/keyring integration, human terminal QR rendering, automatic order polling, a trading daemon and fee-price caps are **not** included. They were not requested v0.1 omissions; this release does not claim full original CLI parity. No unsupported path silently falls back to the original executable.
+`tracker ws` (WebSocket push subscriptions), arbitrary endpoints, browser/UI/keyring
+integration, human terminal QR rendering, automatic order polling, a trading daemon and
+fee-price caps are **not** included. `tracker ws` parses as a leaf and returns
+`tracker ws requires websocket support, not implemented` rather than silently doing
+nothing; making it work needs a WebSocket client dependency. No unsupported path
+silently falls back to the original executable.
 
 ## Verification boundaries
 
