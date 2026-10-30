@@ -1,13 +1,13 @@
    Compiling baw-rs v0.3.0 (/root/baw-rs)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.89s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.28s
      Running unittests src/lib.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-9e9554eb1ce564af)
 
-running 266 tests
+running 268 tests
 test approvals::tests::backend_error_envelope_is_sanitized ... ok
 test approvals::tests::approve_revoke_omits_permit2_contract ... ok
 test approvals::tests::invalid_arguments_never_reach_the_network ... ok
-test approvals::tests::list_defaults_to_limit_twenty ... ok
 test approvals::tests::detail_reads_wallet_detail_and_recent_records ... ok
+test approvals::tests::list_defaults_to_limit_twenty ... ok
 test approvals::tests::only_revoke_is_a_mutation_and_it_carries_its_intent ... ok
 test approvals::tests::list_sends_documented_query_and_returns_backend_data ... ok
 test approvals::tests::revoke_reads_detail_then_posts_fixed_fee_and_permit2_contract ... ok
@@ -17,8 +17,8 @@ test auth::tests::expired_verify_does_not_connect_or_commit ... ok
 test auth::tests::polling_deadline_cancels_inflight_request ... ok
 test auth::tests::signed_out_native_file_loads_as_unconnected_without_network ... ok
 test auth::tests::failed_remote_signout_still_clears_local_and_explicitly_reports_uncertainty ... ok
-test auth::tests::signin_refuses_active_pending_without_replacing_qr_or_connecting ... ok
 test auth::tests::signin_persists_five_minute_cap_even_across_verify_restarts ... ok
+test auth::tests::signin_refuses_active_pending_without_replacing_qr_or_connecting ... ok
 test auth::tests::signout_bodyless_remote_success_clears_local_but_preserves_identity ... ok
 test auth::tests::signin_then_separate_verify_preserves_identity_and_commits_only_created_cookie ... ok
 test auth_store::tests::new_explicit_directory_gets_private_stable_encrypted_identity ... ok
@@ -157,8 +157,10 @@ test selfcheck::tests::version_ordering_is_numeric_not_lexicographic ... ok
 test session::tests::decrypts_python_aes_gcm_iv16_fixture ... ok
 test auth_store::tests::stale_login_cannot_overwrite_new_session ... ok
 test session::tests::derives_python_pbkdf2_key ... ok
-test session::tests::loads_encrypted_file_session ... ok
+test session::tests::instance_file_must_be_private_single_link_and_non_empty ... ok
 test session::tests::fails_closed_on_wrong_instance_without_mutation ... ok
+test session::tests::instance_resolution_accepts_exactly_one_source ... ok
+test session::tests::loads_encrypted_file_session ... ok
 test session::tests::rejects_fifo_without_blocking ... ok
 test session::tests::rejects_foreign_ownership ... ok
 test session::tests::rejects_insecure_permissions_without_repair ... ok
@@ -270,7 +272,7 @@ test x402::tests::preview_posts_the_challenge_verbatim_to_the_preview_endpoint .
 test x402::tests::sign_posts_payment_id_and_numeric_index_and_returns_the_header ... ok
 test session::tests::rejects_unsafe_or_empty_authentication_values ... ok
 
-test result: ok. 266 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 152.41s
+test result: ok. 268 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 147.56s
 
      Running unittests src/main.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/baw_rs-40760582653c16c4)
 
@@ -282,12 +284,12 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 running 5 tests
 test batch_rejects_overrides_nested_batch_and_unbounded_inputs ... ok
-test executable_batch_rejects_invalid_input_without_writing_synthetic_wallet ... ok
+test executable_batch_exits_cleanly_on_broken_pipe ... ok
 test executable_errors_are_single_sanitized_json_without_session_access ... ok
 test explicit_wallet_selection_and_read_only_allowlist ... ok
-test executable_batch_exits_cleanly_on_broken_pipe ... ok
+test executable_batch_rejects_invalid_input_without_writing_synthetic_wallet ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.64s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
 
      Running tests/mutation_consent.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/mutation_consent-6d197ac2f0082322)
 
@@ -296,14 +298,14 @@ test batch_rejects_mutations_and_consent_overrides ... ok
 test blanket_batch_and_unreviewed_signing_fail_before_session_access ... ok
 test unauthorized_writes_fail_before_wallet_access ... ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
 
      Running tests/port_contract.rs (/root/.hermes/cache/scratch/baw-rs-target/debug/deps/port_contract-1b9eff962a91d53c)
 
 running 1 test
 test recognizes_previously_missing_command_families ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
 
    Doc-tests baw_rs
 
