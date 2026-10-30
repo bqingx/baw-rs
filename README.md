@@ -1,275 +1,180 @@
-# baw-rs 0.3.0
+# baw-rs
 
-用 Rust 原生实现的币安 Agentic Wallet 命令行工具，协议对齐已安装的 `@binance/agentic-wallet`
-1.12.0。已有命令清单包含参考 CLI 的 102 条叶子命令语法；**help 清单覆盖不等于全部功能等价或生产验证**。
-另有 `batch`、`serve`、`contract-call run`，以及新的原生多钱包控制面 `vaults`。
-它不调用、也不替换系统里已安装的 `baw`。测试平台为 Linux。
+**Rust 原生实现的币安 Agentic Wallet 客户端：全命令覆盖、原生多钱包、默认拒绝（fail-closed）。**
 
-仓库不提供预编译二进制——只有你自己构建出来的产物，哈希才是你可以核对的。`scripts/verify.sh`
-可一键重跑全部门禁并重建 `verification/` 下的证据（fmt、clippy、test、release 构建、源码清单、
-叶子命令清单）。
+面向需要在 Linux 上脚本化操作币安 Web3 钱包的人。官方 `baw` 由 Node 实现，本项目用 Rust 从零重写同一套
+协议：命令面与官方 1.12.0 对齐，并补上了官方没有的多钱包后台与常驻加速。
 
-## 构建与选择钱包
+> ⚠️ **非官方项目**，与 Binance 无隶属关系，协议通过逆向已安装的 npm 包还原。
+> 涉及真实资金，使用前请读[安全模型](#安全模型)与[项目状态](#项目状态)。
+
+## 目录
+
+- [特性](#特性)
+- [快速开始](#快速开始)
+- [多钱包](#多钱包一个后台管全部)
+- [安全模型](#安全模型)
+- [与官方 CLI 的关系](#与官方-cli-的关系)
+- [项目状态](#项目状态)
+- [文档](#文档)
+- [许可与免责](#许可与免责)
+
+## 特性
+
+| | |
+|---|---|
+| **命令面** | 官方 1.12.0 的 102 条叶子命令语法全覆盖，另有 `batch`（只读批处理）、`serve`（常驻）、`contract-call run`（策略约束执行） |
+| **交易** | swap、限价单、转账、合约调用与 EIP-712 签名，全部走「预览 → 确认 → 执行」三段式 |
+| **查询** | 余额、历史、额度、gas、授权（approvals）、Agent ID、会话到期时间 |
+| **DeFi** | 协议与机会发现、持仓、存取、LP、领取 |
+| **预测市场** | 类别、市场、持仓、下单、赎回 |
+| **其他** | 地址跟踪（含 WebSocket 实时推送）、自定义信号与回测、排行榜、x402 支付 |
+| **多钱包** | 一个后台进程管理多个具名钱包，各自独立登录，可并行 |
+| **常驻后台** | 后台进程持有全部会话；本机实测单次调用 0.10–0.17 s，与冷启动（0.09 s）接近——省掉了解密开销，但进程启动与本地 IPC 占主要时间 |
+
+## 快速开始
+
+需要 Rust 稳定版工具链（开发时用 1.99.1）。**仓库不发布预编译二进制**——只有你自己构建的产物，
+哈希才可核对。
 
 ```sh
-cargo build --release
-./target/release/baw-rs \
-  --wallet-dir /absolute/wallet-directory --instance-id EXACT-ENCRYPTION-IDENTITY --json wallet status
+git clone https://github.com/bqingx/baw-rs.git
+cd baw-rs && cargo build --release     # 产物：target/release/baw-rs
 ```
 
-两个选择器都必须显式给出，可写在子命令前，也可用环境变量 `BINANCE_BAW_DIR`、`BINANCE_INSTANCE_ID`。
-没有默认钱包、没有基于 MAC 的加密身份、没有系统钥匙串读取、也不会回退到别的会话。instance 必须
-和被选目录里加密时使用的那一个完全一致。已加密的会话与旧版明文 client UUID 都能读，读取路径不会
-做迁移写入。只有显式 `auth signin` 才可能在空目录里创建新身份。
-
-**优先用 `--instance-id-file` 而不是 `--instance-id`**：写在命令行上的口令会进入 `ps` 输出和
-shell 历史。
+### 1. 准备钱包目录与加密口令
 
 ```sh
 umask 077
-printf '%s' 'your passphrase' > ~/.baw-instance.key     # 0600，结尾不需要换行
-./baw-rs --wallet-dir /abs/wallet --instance-id-file ~/.baw-instance.key wallet status
+mkdir -m 700 ~/.baw
+printf '%s' 'your-passphrase' > ~/.baw-instance.key   # 0600
 ```
 
-该文件必须是 0600、属主本人、单硬链接的普通文件（禁止符号链接，≤4 KiB）；结尾一个换行会被忽略。
-两种选择器解析出同一个字符串、因而同一把密钥，所以已有钱包切换到文件方式不需要重新登录。同时给
-两种来源会直接报错，不做静默优先。
+这个口令文件是登录态的加密依据：**丢了会话就永久打不开**。详见[安全模型](#安全模型)。
 
-### `--instance-id` 是凭据，不是机器身份
-
-`session.json` 的 AES-256-GCM 密钥只由这个字符串推导：
-
-```text
-PBKDF2-HMAC-SHA256(password = instance, salt = "baw-agentic-wallet-v1:" + instance, 10 万轮)
-```
-
-没有钥匙串、没有硬件根、没有逐主机秘密。后果全部是 fail-closed：
-
-- **instance 字符串丢失 → 会话永久无法解开。** 没有任何途径能重新推导出密钥。
-- **instance 字符串 + `session.json` 同时泄露 → 登录 cookie 可被任何人解开。**
-  请把它当密码对待：放在 0600 文件或环境变量里，不要留在 shell 历史或会进 `ps` 的命令行。
-- 用**不同的** instance 去读已有目录会报 `invalid encrypted credential`，且文件字节保持不变 ——
-  不修复、不迁移、不重写（由 `fails_closed_on_wrong_instance_without_mutation` 覆盖）。
-
-## 命令清单
-
-`verification/leaf-commands.txt` 是原有业务命令的语法清单，由 `scripts/leaf_commands.py` 枚举生成；
-新的 `vaults` 独立控制面请使用 `baw-rs vaults --help`。清单不是端到端功能验证证明。
-`docs/JS-CLI-PARITY.md` 保存官方每条命令的原始 `--help` 文本。按功能分模块：
-
-| 功能族 | 模块 | 叶子命令 |
-|---|---|---|
-| auth / wallet / market-order / contract-call / sign-message | `auth`、`client`、`trade`、`signing` | 原有 24 条 |
-| approvals（授权管理） | `approvals` | list、detail、revoke |
-| limit-order（限价单） | `limit_order` | buy、sell、list、cancel |
-| prediction（预测市场） | `prediction` | 15 条（category / market / position / order / trade） |
-| defi | `defi` | 11 条（protocol / investment / position / deposit / redeem / lp / claim / preview） |
-| x402-payment | `x402` | preview、sign |
-| wallet 扩展 | `wallet_ops` | speed-up、cancel、resolve-domain |
-| tracker（地址跟踪） | `tracker` | 15 条（token / tx / follow / group / address）+ `ws` 推送订阅 |
-| signal（自定义信号） | `signal` | 15 条（list / strategy / backtest / explore / credits / wallet-group） |
-| leaderboard（榜单） | `leaderboard` | 7 条（query / analyze / alpha-radar / presets） |
-| 本地自检 | `selfcheck` | cli-check、skill-check |
-
-原有命令面（未变）：
-
-```text
-auth signin
-auth verify --qrCodeId QR_ID
-auth signout
-wallet status
-wallet address
-wallet chains
-wallet settings
-wallet gas-price --binanceChainId CHAIN
-wallet tx-lock --binanceChainId CHAIN
-wallet agent-id
-wallet balance [--raw] [--symbol SYMBOL] [--tokenAddress ADDRESS]
-               [--binanceChainId CHAIN] [--hideLowValue true|false]
-wallet tx-history [--type all|pending|confirmed] [--binanceChainId CHAIN]
-                  [--size 20] [--nextCursor CURSOR] [--tx HASH]
-                  [--startTime MILLISECONDS] [--endTime MILLISECONDS]
-wallet left-quota
-wallet send --binanceChainId CHAIN --tokenAddress TOKEN --recipient ADDRESS
-            (--amount DECIMAL | --max) [--gasLevel LOW|MEDIUM|HIGH]
-market-order quote --binanceChainId CHAIN --fromToken ADDRESS --toToken ADDRESS
-                   --fromTokenQty DECIMAL [--slippage auto|PERCENT]
-market-order swap --binanceChainId CHAIN --fromToken ADDRESS --toToken ADDRESS
-                  --fromTokenQty DECIMAL [--slippage auto|PERCENT]
-                  [--gasLevel LOW|MEDIUM|HIGH] [--mev true|false] [--acknowledge-token-risk]
-market-order list [--orderId ID] [--binanceChainId CHAIN] [--status PENDING|FINISHED|FAILED]
-                  [--fromToken ADDRESS] [--toToken ADDRESS] [--page 1] [--pageSize 20]
-                  [--startTime MILLISECONDS] [--endTime MILLISECONDS]
-contract-call preview --binanceChainId CHAIN --from ADDRESS
-                      [--to ADDRESS] [--value WEI] [--inputData HEX] [--gasLimit UNITS]
-                      [--unsignedTx SOLANA_BASE64]
-contract-call execute --requestId PREVIEW_ID
-contract-call run --binanceChainId CHAIN --from ADDRESS --to ADDRESS
-                  --policy /path/to/policy.json
-                  [--value WEI] [--inputData HEX] [--gasLimit UNITS]
-sign-message preview --binanceChainId CHAIN --signType EIP712 --message JSON_RPC_STRING
-sign-message execute --requestId PREVIEW_ID
-sign-message result --order-id ORDER_ID
-sign-message history [--binanceChainId CHAIN] [--limit 20] [--nextToken CURSOR]
-                     [--startTime MILLISECONDS] [--endTime MILLISECONDS] [--sortType ASC|DESC]
-batch
-```
-
-每条命令的精确语法以它自己的 `--help` 为准。EVM 合约预览必须给 `to`；Solana 必须给 `unsignedTx`
-且拒绝仅 EVM 可用的字段。EIP712 消息会保留原始 `eth_signTypedData_v4` JSON-RPC 包装字符串，并且
-必须让其签名者与域链同所选钱包一致。
-
-## 原生多钱包与常驻模式
-
-一个 daemon 直接管理多个命名钱包，各自持有客户端、cookie、连接池与队列；不同钱包可并行，同一钱包串行。
-注册只记录独立目录及固定 instance 文件路径，拒绝同目录别名重复注册，不复制会话，不改变加密规则。
-精确命令、登录/登出流程、生命周期、IPC 限制和验证边界见 [docs/MULTIWALLET.md](docs/MULTIWALLET.md)。
+### 2. 登录
 
 ```sh
-baw-rs vaults --registry /abs/private-registry register alice \
-  --wallet-dir /abs/wallet-alice --instance-id-file /abs/alice.instance
-baw-rs vaults --registry /abs/private-registry list
-baw-rs vaults --registry /abs/private-registry serve     # 前台，另开终端发请求
-baw-rs vaults --registry /abs/private-registry run alice -- wallet status
-baw-rs vaults --registry /abs/private-registry status
-baw-rs vaults --registry /abs/private-registry stop
+B=./target/release/baw-rs
+W="--wallet-dir $HOME/.baw --instance-id-file $HOME/.baw-instance.key"
+
+$B $W --confirm --operation-id login-1 --json auth signin
+# → {"urlForWeb":"https://app.binance.com/uni-qr/xxxx","qrCodeId":"...","pairingCode":"abc123","expireAt":...}
 ```
 
-命名命令必须指定名称，未知名称/连接失败/解密失败一律报错，不回退。服务运行时不能修改注册表。
-`batch`、`serve`、`tracker ws` 不允许经 IPC 运行，以免无限流阻塞其他命令或混入 daemon stdout。
-
-旧单钱包语法不变：
+把 `urlForWeb` 渲染成二维码（例如 `qrencode -o qr.png '<urlForWeb>'`）用手机确认，然后：
 
 ```sh
-./baw-rs --wallet-dir /abs/wallet --instance-id-file /abs/identity --json serve
-./baw-rs --wallet-dir /abs/wallet --instance-id-file /abs/identity --warm --json wallet status
+$B $W --confirm --operation-id login-2 --json auth verify --qrCodeId <上一步的 qrCodeId>
 ```
 
-旧 `serve` 也使用有界、异步、校验 UID 的 resident 引擎；旧 `--warm` 只有 socket 路径不存在时冷执行，
-已经尝试 IPC 后不会重复提交。每条命令重新核对磁盘会话，auth 完成后丢弃临时客户端状态。
-旧的进程全局 60 秒地址/开发者模式缓存已删除，不能再引用旧版本热调用性能数字。本次未测生产性能。
+`verify` 每 2 秒轮询一次，最长 5 分钟。成功即完成落盘。
 
-## 策略约束的无人值守执行
-
-`contract-call run` 在单进程内完成 preview 与 execute，无需人工复核摘要。它不靠
-`--accept-preview-sha256` 授权，而是靠一份 JSON 策略文件；仍然强制要求 `--confirm` 与唯一的
-`--operation-id`。策略不匹配会在**发出任何 preview 请求之前**被拒绝。
-
-```json
-{
-  "version": 1,
-  "chainId": "56",
-  "to": "0xContractAddress",
-  "valueWei": "0",
-  "selector": "0x1234abcd",
-  "calldataSha256": "完整 0x calldata 的 64 位小写十六进制（可选）",
-  "maxGasLimit": 300000,
-  "allowRisks": [],
-  "allowAuthorityChanges": false
-}
-```
-
-检查顺序：链 ID、目标地址（大小写不敏感）、精确 value（wei）、4 字节 selector、可选的全 calldata
-SHA-256、gas 上限，然后是返回的 preview 中风险码、`authorityChanges` 与 `allowanceChanges`。
-任何未被显式允许的项都会终止执行。不做重试：结果不明的 execute 只上报，绝不重发。仅支持 EVM。
-累计支出上限（`maxTotalWei`）已存在，但目前只接受零值调用。
-
-## 写操作授权与恢复
-
-**所有 auth 命令、swap、转账与签名 execute 都必须同时给 `--confirm` 和一次性的
-`--operation-id ID`。** 这两个全局参数可写在子命令前后。ID 由 1–64 个 ASCII 字母、数字、`-`、`_`
-组成。缺少授权会在读取会话或发出 HTTP 之前失败。新 ID 等于一次新授权，绝不是重试不确定操作的许可。
-
-任何写操作提交前，都会在所选目录的 `.baw-rs-operations/` 下同步一条私有的意图记录。记录里是意图
-哈希、动作、状态、时间戳和白名单化的成功响应恢复标识，不含凭据、原始签名消息或签名值。已用过的 ID
-永久拒绝，包括出错或崩溃之后。每个钱包一把私有锁，避免并发写操作互相踩。**不要删 journal 来重试**：
-先对账订单/交易/签名历史。`RESPONSE_RECEIVED` 只表示拿到了接口响应，**不代表成交或交易确认**，必须
-另查状态。`FAILED_OR_UNKNOWN` / `SUBMITTING` 需要对账。内层订单失败码一律报错，绝不报成功。swap/
-转账的传输层不确定失败会返回 `UNCERTAIN`、`retrySafe:false`，绝不自动重发。
-
-签名 execute 还额外要求 `--accept-preview-sha256 EXACT_DIGEST`（来自该次成功 preview 的输出）。
-接受之前请完整阅读输出，包括 `parsedTx`/`parsedMessage`、`risks` 和**全部 `authorityChanges`**。
-私有 preview 缓存把这份响应/输入绑定到请求、动作、客户端身份、所选钱包目录的 inode/设备、实际发送方
-和链。有效期最长 5 分钟，并进一步受开发者模式过期与服务端过期约束。execute 会复查当前开发者模式与
-钱包、在 POST 之前再查一次时间，并且在网络复查**之前**就消费掉已接受的 preview —— 即使这次尝试
-失败也不会退回。换一个 operation ID 也无法复用它。只有在一次不确定的提交完成对账之后，才去获取
-并复核新的 preview。
-
-`auth signin` 返回二维码 URL、ID 与配对码；它从不打开浏览器。`verify` 在原始二维码有效期内每 2 秒
-轮询一次，并受一条持久化的 5 分钟上限约束。只有在 `CONNECTED + CREATED` 之后才提交会话，且采用
-加密原子替换与陈旧写入保护。`signout` 即使远端登出失败也会清掉本地会话、保留客户端身份，并明确
-报告远端状态不确定。详见 [docs/AUTH.md](docs/AUTH.md) 与 [docs/SIGNING.md](docs/SIGNING.md)。
-
-## 只读批处理
+### 3. 日常使用
 
 ```sh
-printf '%s\n' '["wallet","status"]' '["wallet","balance"]' \
-  '["wallet","balance","--raw"]' '["wallet","tx-history","--type","pending"]' |
-  ./baw-rs --wallet-dir /absolute/wallet-directory --instance-id EXACT-ENCRYPTION-IDENTITY batch
+$B $W --json wallet status      # CONNECTED / UNCONNECTED
+$B $W --json wallet address     # 多链地址
+$B $W --json wallet balance     # 全部链资产
+$B $W --json wallet settings    # 会话到期时间、日限额、开发者模式
+
+# 只询价，不下单
+$B $W --json market-order quote --binanceChainId 56 \
+   --fromToken <代币地址> --toToken <代币地址> --fromTokenQty 1
 ```
 
-batch 只接受只读的 **wallet** 命令，每行一个 JSON argv 数组，复用同一份会话/客户端/连接池。
-所有写命令与逐行全局参数覆盖都被拒绝；顶层的 `batch --confirm`、operation ID、preview 接受参数同样
-被拒绝，因此不存在"一刀切授权"。错误按行返回，处理继续。单行上限 65,536 字节，超长行可恢复，严格
-校验 UTF-8 与字符串数组，末行无换行也能处理。全部成功才返回 0；stdout 管道断开时安静退出。
-`--timing` 只在 stderr 打印 `command_ms=...`，绝不打印参数或报文。
-
-## 输出与有意的兼容差异
-
-始终输出 JSON（接受 `--json`）。每条命令产出 `{"success":true,"data":...}` 或
-`{"success":false,"error":{"message":"清洗后的错误"}}`。
-
-- 默认余额会规范化 RWA 份额、价格、精确数值、EVM checksum 并做过滤；`--raw` 保留后端原始 tokenList，
-  跳过注册表加载/换算/过滤。原始数量**不一定**是 RWA 份额。规范化余额与额度金额是十进制字符串，
-  不是 JS 浮点数。后端 JSON 里的十进制数字同样保留任意精度。详见 [docs/PORTFOLIO.md](docs/PORTFOLIO.md)。
-- `settings` 有意保持原样的**无损组合** `{settings,tradingLimit,login}`，而不是官方那个改过名字、
-  做过强转的显示对象。gas price、tx-lock、Agent ID 返回后端数据。普通查询里的 cookie 轮换只在内存
-  生效，且需 HTTP/API 成功后才采纳；只有经过验证的 auth 提交才写盘。
-- Quote 保留 quoteId、feeDetail、gasDetails 与后端元数据。签名 preview 保留官方 CLI 丢弃的
-  `authorityChanges`。签名结果会有意返回用户请求的签名，且绝不写入日志或 journal。
-- RWA 注册表在每条需要规范化的命令里现取；没有官方的全局/陈旧磁盘缓存。失败会向上传播。Solana 地址
-  身份区分大小写。严格的输入校验会拒绝畸形金额、地址与含义不明的组合，而不是修剪或猜测。
-- Swap 会做 settings/额度/tx-lock 检查并取一份新报价；这**不是** quote-ID 绑定的执行。非原生代币目标
-  需要 `--acknowledge-token-risk`，它明确不是代币审计，也不是对后端策略的覆盖。默认滑点为 `auto`。
-  不支持的 MEV 选择会直接失败，而不是静默丢掉保护。Ondo 需要 `--mev false` 并采用默认 MEDIUM gas
-  选择（不承诺接口层的费率选择）。详见 [docs/TRADE.md](docs/TRADE.md)。
-- 交易受理表示 SUBMITTED，不是 FILLED。App 内确认停留在 PENDING_CONFIRMATION。历史/状态与链上确认
-  必须分别核对。后端受理仍然是权威；本地额度检查不能证明这笔交易落在美元上限之内。`gasLimit` 是
-  单位数，**不是 gas 价格或累计 gas 成本保护**；该协议没有提供费率上限字段。
-- 固定发布源为 `https://www.binance.com`；不支持 URL 覆盖、重定向、代理、子进程委托或写操作自动重试。
-  请求有 10 秒连接 / 30 秒总超时和 4 MiB 响应上限。只有测试构建能注入回环 HTTP。协议版本元数据固定
-  1.12.0；User-Agent 为 `baw-rs/0.3.0`。凭据文件要求目录 0700、普通文件 0600 且属主本人。错误的
-  instance 一律 fail-closed，不修复、不迁移。
-
-## 明确不做的部分
-
-任意 URL 端点、浏览器/UI/钥匙串集成、终端二维码渲染、订单自动轮询、交易守护进程、费率上限都**不包含**。
-任何不支持的路径都不会静默回退到官方可执行文件。
-
-`tracker ws` 已实现：先走 HTTPS 的 pre-subscribe，再连 `wss://web3-stream.binance.com/w3w/stream`，
-发送 `SUBSCRIBE`、每 30 秒 `PING`、`--duration` 到时 `UNSUBSCRIBE`；不设 duration 时按官方逻辑
-以 5 秒起步、翻倍到 120 秒封顶重连。socket 本身不带凭据，授权来自 pre-subscribe 返回的 `subKeys`。
-
-## 验证边界
-
-本次多钱包变更仅做合成数据/回环验证，没有接触真实钱包、key 或生产网络。
-当前证据位于 `verification/multiwallet/`，使用 `python3 scripts/verify_multiwallet.py` 重跑。
-根目录 `verification/` 的旧日志及历史集成报告不是本次源码的通过凭据。
-
-
-**离线**：`scripts/verify.sh` 一键重跑 fmt / clippy / test / release 构建，并重写
-`verification/` 下的日志、`source-sha256.json`（带 git 提交号与 `dirty_source` 标记）、
-`release-identity.txt` 与 `leaf-commands.txt`。测试全部使用回环 HTTP fixture 与合成会话文件。
+写操作（swap / 转账 / 签名执行 / signin / signout）**必须**同时给 `--confirm` 和唯一的 `--operation-id`：
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"
-CARGO_TARGET_DIR=/path/to/target sh scripts/verify.sh
+$B $W --confirm --operation-id send-1 --json wallet send \
+   --binanceChainId 56 --tokenAddress <代币地址> --recipient <收款地址> --amount 0.01
 ```
 
-**历史单钱包记录（本次未重新验证，不适用于多钱包改动）**：旧文档记录于 2026-10-30，用真实二维码完成了一次生产登录（`auth signin` → App 确认 → `auth verify`
-自动提交），随后只读验证通过：`wallet status`（CONNECTED）、`wallet address`（真实多链地址）、
-`wallet balance`（真实余额）、`wallet left-quota`、`wallet settings`（含 `sessionExpireTime` 等
-服务端时效字段）。会话有效期实测 48 小时。
+## 多钱包：一个后台管全部
 
-**未验证**：转账、swap、限价单、DeFi 存取、x402 签名、contract-call 执行等任何真实资金动作。
-这些路径只有离线测试覆盖，第一次在真实账户上执行前请自行评估风险。
+`vaults` 是独立入口（不需要 `--wallet-dir`）：一个进程管理多个命名钱包，**不**为每个钱包起子进程，
+也**不**调用官方 CLI。
+
+```sh
+B=./target/release/baw-rs
+R=/abs/accounts/registry
+
+# 注册两个已存在的独立钱包目录（各自 0700，各自口令文件 0600）
+$B vaults --registry $R register alice --wallet-dir /abs/accounts/alice --instance-id-file /abs/accounts/alice.key
+$B vaults --registry $R register bob   --wallet-dir /abs/accounts/bob   --instance-id-file /abs/accounts/bob.key
+
+$B vaults --registry $R list        # 注册表
+$B vaults --registry $R serve       # 前台常驻，一个进程服务全部钱包
+
+# 另开终端：每次必须写明钱包名，没有默认值、不回退
+$B vaults --registry $R run alice -- wallet status
+$B vaults --registry $R run bob   -- wallet address
+$B vaults --registry $R status
+$B vaults --registry $R stop
+```
+
+设计要点：
+
+- **不同钱包并行**：各自独立的客户端、连接池、会话与队列；一个钱包等网络不阻塞另一个。
+- **同一钱包串行**：命令按 FIFO 执行，写操作另有互斥锁与意图日志，避免并发覆盖。
+- **绝不串号**：名字写错、未登录、目录被替换都直接报错；命令里夹带 `--wallet-dir` / `--instance-id`
+  等选择器会被拒绝。
+- **注册表是启动快照**：运行期间不能修改，新增钱包需 `stop` → `register` → `serve`。
+
+完整语义见 [docs/MULTIWALLET.md](docs/MULTIWALLET.md)。
+
+## 安全模型
+
+原则：**默认拒绝，出错就停，能少给的权限绝不多给。**
+
+- **口令即凭据**：登录态用 AES-256-GCM 加密，密钥只由固定口令经 PBKDF2-HMAC-SHA256（10 万轮）推导。
+  不读主机名、网卡、机器码、系统钥匙串或 TPM —— 所以目录可以整体搬到另一台机器，配同一口令即可解密。
+  代价是口令丢失即永久打不开，口令与 `session.json` 同时泄露即等于登录态泄露。推荐 `--instance-id-file`
+  而不是命令行明文（后者会进 `ps` 与 shell 历史）。
+- **写操作三重门**：`--confirm` + 一次性 `--operation-id` + 提交前的意图日志。用过的 ID 永久拒绝，
+  崩溃后也不复用。`RESPONSE_RECEIVED` 只代表拿到接口响应，**不代表成交**。
+- **签名钉住预览**：`contract-call execute` / `sign-message execute` 还需 `--accept-preview-sha256`，
+  把执行绑定在你确认过的那份预览上，且只能消费一次。
+- **文件与网络**：目录 0700、凭据文件 0600、禁符号链接、校验属主；接口域名写死，禁止重定向、代理和
+  任意 URL 覆盖。
+- **不确定就不重发**：传输层失败返回 `UNCERTAIN` / `retrySafe:false`，必须人工对账后再决定。
+
+## 与官方 CLI 的关系
+
+- 命令名、参数名、默认值按官方 `--help` 逐条对齐，对照表见 [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md)。
+- 两者互不干扰：官方用 `BINANCE_BAW_DIR` 与系统钥匙串，本项目只读自己指定目录下的文件。
+- 有意的行为差异（例如余额默认做 RWA 规范化、`settings` 返回无损结构、交易结果区分 SUBMITTED 与 FILLED）
+  记录在 [CHANGELOG.md](CHANGELOG.md) 与各 `docs/*.md`。
+- `--help` 清单覆盖**不等于**功能等价，也不等于已实盘验证；真实状态见下节。
+
+## 项目状态
+
+- **版本**：0.3.0，主要测试平台 Linux
+- **测试**：290 项通过、0 失败（离线：回环 HTTP fixture + 合成会话文件）
+- **实盘验证**：完成过一次真实二维码登录，并通过 `status` / `address` / `balance` / `left-quota` /
+  `settings` 只读查询（会话有效期实测 48 小时）
+- **未验证**：转账、swap、限价单、DeFi 存取、x402 签名、contract-call 执行等**任何真实资金动作**。
+  这些路径目前只有离线测试覆盖；首次在真实账户上执行前请自行小额试跑
+- **可复现**：`sh scripts/verify.sh` 重跑 fmt / clippy / test / release 并重写 `verification/` 下的
+  日志与源码清单；多钱包专项证据在 `verification/multiwallet/`
+
+## 文档
+
+| 文件 | 内容 |
+|---|---|
+| [docs/AUTH.md](docs/AUTH.md) | 登录、验证、登出与本地存储 |
+| [docs/SESSION-LIFECYCLE.md](docs/SESSION-LIFECYCLE.md) | 登录态从生成到失效的全过程 |
+| [docs/TRADE.md](docs/TRADE.md) | swap、限价单与风控检查 |
+| [docs/SIGNING.md](docs/SIGNING.md) | 合约调用与消息签名的预览/执行绑定 |
+| [docs/PORTFOLIO.md](docs/PORTFOLIO.md) | 余额、历史与 RWA 规范化 |
+| [docs/MULTIWALLET.md](docs/MULTIWALLET.md) | 多钱包后台、IPC 与并发语义 |
+| [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md) | 与官方 CLI 的命令面逐条对照 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本变更与已知缺口 |
+
+## 许可与免责
+
+本仓库**尚未添加 `LICENSE` 文件**。公开分发前需补一个：作者倾向 MIT（宽松）或 AGPL-3.0（修改后须开源），
+转载或二次分发请先确认。
+
+本项目为第三方实现，**不提供任何担保**。链上交易不可撤销，代币与合约可能包含恶意逻辑，钱包授权可能被
+滥用。是否使用、用到什么程度，以及由此产生的任何损失，由使用者自行承担。
