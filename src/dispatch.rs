@@ -153,7 +153,7 @@ pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
         Command::Prediction { command } => prediction::run(client, command).await,
         Command::Defi { command } => defi::run(client, command).await,
         Command::X402Payment { command } => x402::run(client, command).await,
-        Command::Tracker { command } => tracker::run(client, command).await,
+        Command::Tracker { command } => tracker::run_with(client, command, cli.json).await,
         Command::Signal { command } => signal::run(client, command).await,
         Command::Leaderboard { command } => leaderboard::run(client, command).await,
         Command::CliCheck(args) => selfcheck::cli_check(client, args).await,

@@ -10,6 +10,10 @@ use std::time::Duration;
 
 const ORIGIN: &str = "https://www.binance.com";
 pub(crate) const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
+/// Bundle: `wss://${n.includes("qa") ? n.replace("www","nbstream") : n.replace("www","web3-stream")}/w3w/stream`
+/// where `n` is the API host. Derived from the client's own origin so tests can point at
+/// a loopback server; the production origin always yields the bundle's URL.
+const STREAM_PATH: &str = "/w3w/stream";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 
 pub struct Client {
@@ -74,6 +78,24 @@ impl Client {
 
     pub(crate) fn credentials(&self) -> &Credentials {
         &self.credentials
+    }
+
+    /// WebSocket endpoint for WSP pushes, derived from this client's origin.
+    ///
+    /// Mirrors the installed bundle: `https` → `wss`, `http` → `ws`, and the API host
+    /// `www.binance.com` becomes `web3-stream.binance.com` (`nbstream` on qa hosts).
+    /// Subscription authorisation comes from the pre-subscribe `subKeys`, not from the
+    /// session cookie, so no credentials are placed in the socket URL.
+    pub(crate) fn stream_url(&self) -> Result<String, String> {
+        let url = Url::parse(&self.origin).map_err(|_| "invalid fixed API endpoint")?;
+        let host = url.host_str().ok_or("invalid fixed API endpoint")?;
+        let derived = if host.contains("qa") {
+            host.replace("www", "nbstream")
+        } else {
+            host.replace("www", "web3-stream")
+        };
+        let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
+        Ok(format!("{scheme}://{derived}{STREAM_PATH}"))
     }
 
     /// Only explicit signin may replace an invalidated session with a fresh auth flow.

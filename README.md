@@ -51,7 +51,7 @@ reference `--help` for each one; family modules:
 | defi | `defi` | 11 leaves (protocol / investment / position / deposit / redeem / lp / claim / preview) |
 | x402-payment | `x402` | preview, sign |
 | wallet ops | `wallet_ops` | speed-up, cancel, resolve-domain |
-| tracker | `tracker` | 15 leaves (token / tx / follow / group / address) — `ws` parses, returns a clear unimplemented error |
+| tracker | `tracker` | 15 leaves (token / tx / follow / group / address) + `ws` push subscription |
 | signal | `signal` | 15 leaves (list / strategy / backtest / explore / credits / wallet-group) |
 | leaderboard | `leaderboard` | 7 leaves (query / analyze / alpha-radar / presets) |
 | self-checks | `selfcheck` | cli-check, skill-check |
@@ -175,12 +175,13 @@ JSON is always emitted (`--json` is accepted). Each command produces `{"success"
 
 ## Deliberately outside this migration
 
-`tracker ws` (WebSocket push subscriptions), arbitrary endpoints, browser/UI/keyring
-integration, human terminal QR rendering, automatic order polling, a trading daemon and
-fee-price caps are **not** included. `tracker ws` parses as a leaf and returns
-`tracker ws requires websocket support, not implemented` rather than silently doing
-nothing; making it work needs a WebSocket client dependency. No unsupported path
+Arbitrary endpoints, browser/UI/keyring integration, human terminal QR rendering, automatic
+order polling, a trading daemon and fee-price caps are **not** included. No unsupported path
 silently falls back to the original executable.
+
+`tracker ws` is implemented (pre-subscribe over HTTPS, then `wss://web3-stream.binance.com/w3w/stream`
+with `SUBSCRIBE`/`PING`/`UNSUBSCRIBE`, `--duration`, 5s→120s reconnect backoff while no
+duration is set). The socket carries no credentials: pre-subscribe `subKeys` authorise it.
 
 ## Verification boundaries
 

@@ -48,12 +48,16 @@ The crate now exposes every leaf the installed JavaScript CLI exposes, except
 
 Known gaps, stated rather than papered over:
 
-- `tracker ws` parses but returns `tracker ws requires websocket support, not implemented`.
 - Some response shapes are passed through untouched because the minified bundle does not
   reveal their fields (tracker monitor rows, leaderboard presets, prediction defaults);
   each is commented in-file.
 - No live wallet operation has been performed: no QR signin, signature, swap, transfer or
   DeFi position. Offline tests use loopback fixtures only.
+
+`tracker ws` is implemented as of this release: pre-subscribe (`/ws/pre-subscribe`,
+`bizKey: WALLET_TRACKER`) then a WebSocket to `/w3w/stream` with `SUBSCRIBE`, 30s `PING`,
+`UNSUBSCRIBE` on `--duration`, and 5s→120s reconnect backoff when no duration is set. It
+adds `tokio-tungstenite` + `futures-util` as dependencies.
 
 ## 0.2.2 — as received
 

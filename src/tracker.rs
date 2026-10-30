@@ -19,19 +19,46 @@
 //! deliberately reshapes the token/tx monitors and the write results, and those
 //! projections are reproduced (each one carries the quoted source line).
 //!
-//! `tracker ws` is intentionally not implemented: it needs a WebSocket client and
-//! this crate has no ws dependency. It fails with a static, explicit error.
+//! `tracker ws` subscribes over a WebSocket (`wss://web3-stream.binance.com/w3w/stream`)
+//! after a mandatory pre-subscribe HTTP call; the socket carries no credentials, the
+//! `subKeys` returned by pre-subscribe authorise the subscription.
 use crate::client::Client;
 use clap::Args;
+use futures_util::{SinkExt, StreamExt};
 use reqwest::Method;
 use serde_json::{json, Number, Value};
+use std::time::Duration;
 
 /// `ne="/bapi/defi/v1/public/wallet-direct/agent/tracker/wallet"` — agent tracker base.
 const TRACKER: &str = "/bapi/defi/v1/public/wallet-direct/agent/tracker/wallet";
 /// `ds="/bapi/defi/v1/public/wallet-direct/tracker/wallet"` — public SMY/KOL base.
 const TRACKER_PUBLIC: &str = "/bapi/defi/v1/public/wallet-direct/tracker/wallet";
 
-const WS_UNIMPLEMENTED: &str = "tracker ws requires websocket support, not implemented";
+/// `Sr="WALLET_TRACKER"` — bizKey carried by every pre-subscribe item.
+const WS_BIZ_KEY: &str = "WALLET_TRACKER";
+/// `Xl="/bapi/defi/v1/public/wallet-direct/ws/pre-subscribe"` (public variant; the
+/// bundle's private variant is never called, even for `--following`).
+const WS_PRE_SUBSCRIBE: &str = "/bapi/defi/v1/public/wallet-direct/ws/pre-subscribe";
+/// `wr=100` — address-list ceiling, and the inline `addressList` limit for followings.
+const WS_ADDRESS_LIMIT: usize = 100;
+/// `i=3e4` — PING interval in `connectAndListen`.
+const WS_PING: Duration = Duration::from_secs(30);
+/// `a=5e3` start and `l=12e4` cap of the reconnect backoff.
+const WS_BACKOFF_START: Duration = Duration::from_secs(5);
+const WS_BACKOFF_CAP: Duration = Duration::from_secs(120);
+/// `Cr={56:"BSC",1:"ETH",8453:"BASE",CT_501:"SOL",4663:"ROBINHOOD",5042:"ARC"}`.
+const WS_CHAIN_NAMES: [(&str, &str); 6] = [
+    ("56", "BSC"),
+    ("1", "ETH"),
+    ("8453", "BASE"),
+    ("CT_501", "SOL"),
+    ("4663", "ROBINHOOD"),
+    ("5042", "ARC"),
+];
+const WS_NO_FILTERS: &str = "No subscription filters specified";
+const WS_NO_SUBKEYS: &str = "Pre-subscribe returned empty subKeys";
+const WS_CONNECT_ERROR: &str = "WebSocket connection failed";
+const WS_CLOSED_UNEXPECTEDLY: &str = "WebSocket connection closed unexpectedly";
 
 /// `var Wa=new Set(["1","56","8453","CT_501","4663"])`, enforced by `function $(t)`.
 /// The bundle's own error text and the ws chain map
@@ -83,7 +110,36 @@ pub enum TrackerCommand {
         command: AddressCommand,
     },
     /// Subscribe to WSP push events via WebSocket
-    Ws,
+    Ws(WsArgs),
+}
+
+/// `tracker ws` filters. Names and defaults mirror the installed CLI's `--help`.
+#[derive(clap::Args, Debug)]
+pub struct WsArgs {
+    /// Listen to Smart Money events
+    #[arg(long)]
+    pub smy: bool,
+    /// Listen to KOL events (requires -c)
+    #[arg(long)]
+    pub kol: bool,
+    /// Listen to chain-level events (comma-separated: BSC,SOL,BASE,ETH)
+    #[arg(long, value_name = "chains")]
+    pub wallet: Option<String>,
+    /// Listen to current user followings (requires login + -c, mutually exclusive with others)
+    #[arg(long)]
+    pub following: bool,
+    /// Listen to specific address events (requires -c)
+    #[arg(long, value_name = "addr")]
+    pub address: Option<String>,
+    /// Batch address file, one per line (requires -c, max 100)
+    #[arg(long = "address-list", value_name = "file")]
+    pub address_list: Option<String>,
+    /// Chain ID (56=BSC, 1=ETH, 8453=BASE, CT_501=SOL)
+    #[arg(short = 'c', long = "chain-id", value_name = "chainId")]
+    pub chain_id: Option<String>,
+    /// Auto-disconnect after N seconds (0 or omit = no limit)
+    #[arg(long, value_name = "sec")]
+    pub duration: Option<u64>,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -369,7 +425,7 @@ pub fn is_mutation(command: &TrackerCommand) -> bool {
         TrackerCommand::Token(_)
         | TrackerCommand::Tx(_)
         | TrackerCommand::Follow(_)
-        | TrackerCommand::Ws => false,
+        | TrackerCommand::Ws(_) => false,
     }
 }
 
@@ -436,12 +492,20 @@ pub fn mutation_payload(command: &TrackerCommand) -> Result<Value, String> {
     }
 }
 
+/// Runs a leaf with `--json` off. `dispatch` calls [`run_with`] so the streaming
+/// `ws` leaf can honour the global `--json` flag.
 pub async fn run(client: &mut Client, command: &TrackerCommand) -> Result<Value, String> {
-    if matches!(command, TrackerCommand::Ws) {
-        return Err(WS_UNIMPLEMENTED.into());
-    }
+    run_with(client, command, false).await
+}
+
+pub async fn run_with(
+    client: &mut Client,
+    command: &TrackerCommand,
+    json_mode: bool,
+) -> Result<Value, String> {
     session(client)?;
     match command {
+        TrackerCommand::Ws(args) => ws(client, args, json_mode).await,
         TrackerCommand::Token(args) => token(client, args).await,
         TrackerCommand::Tx(args) => tx(client, args).await,
         TrackerCommand::Follow(args) => followings(client, args).await,
@@ -461,14 +525,350 @@ pub async fn run(client: &mut Client, command: &TrackerCommand) -> Result<Value,
             AddressCommand::Unfollow(args) => address_unfollow(client, args).await,
             AddressCommand::Update(args) => address_update(client, args).await,
         },
-        // Returned above; kept so the match stays exhaustive without `unreachable!`.
-        TrackerCommand::Ws => Err(WS_UNIMPLEMENTED.into()),
     }
 }
 
 // ---------------------------------------------------------------------------
-// reads
+// ws (WSP push subscription)
 // ---------------------------------------------------------------------------
+
+/// Subscription plan built purely from argv (plus, for `--following`, one HTTP read).
+#[derive(Debug)]
+struct WsPlan {
+    /// `streams` — `w3w@…` names, e.g. `w3w@signal_smart_money`.
+    streams: Vec<String>,
+    /// `preSubscribeItems` — `{id,bizKey,subParamList}` objects.
+    items: Vec<Value>,
+    /// `filterChainId` — only set by `--following` when the list is too long to inline.
+    filter_chain_id: Option<String>,
+}
+
+fn ws_chain_name(chain: &str) -> Option<&'static str> {
+    WS_CHAIN_NAMES
+        .iter()
+        .find(|(id, _)| *id == chain)
+        .map(|(_, name)| *name)
+}
+
+/// `buildSubscribeParams` — argv-only part. Reads the address-list file when asked.
+fn ws_plan(args: &WsArgs) -> Result<WsPlan, String> {
+    let mutually_exclusive = args.smy
+        || args.kol
+        || args.wallet.is_some()
+        || args.address.is_some()
+        || args.address_list.is_some();
+    if args.following && mutually_exclusive {
+        return Err(
+            "--following is mutually exclusive with --smy/--kol/--wallet/--address/--address-list"
+                .into(),
+        );
+    }
+
+    let mut streams = Vec::new();
+    let mut items = Vec::new();
+    let mut next_id = 1u64;
+    let mut filter_chain_id = None;
+
+    if args.following {
+        let chain = args
+            .chain_id
+            .as_deref()
+            .ok_or("--following requires --chain-id")?;
+        if ws_chain_name(chain).is_none() {
+            return Err(INVALID_CHAIN.into());
+        }
+        filter_chain_id = Some(chain.to_string());
+    }
+    if args.smy {
+        // `e.smy&&n.push("w3w@signal_smart_money")`
+        streams.push("w3w@signal_smart_money".to_string());
+    }
+    if args.kol {
+        let chain = args
+            .chain_id
+            .as_deref()
+            .ok_or("--kol requires --chain-id")?;
+        // `n.push(`w3w@tracker@address@KOL@${e.chainId}`)`
+        streams.push(format!("w3w@tracker@address@KOL@{chain}"));
+    }
+    if let Some(wallet) = &args.wallet {
+        for raw in wallet.split(',') {
+            let name = raw.trim().to_ascii_uppercase();
+            if !WS_CHAIN_NAMES.iter().any(|(_, n)| *n == name) {
+                return Err(format!(
+                    "Invalid wallet chain: {name}. Valid: BSC, ETH, BASE, SOL, ROBINHOOD, ARC"
+                ));
+            }
+            // `n.push(`w3w@tracker@wallet@${l}`)`
+            streams.push(format!("w3w@tracker@wallet@{name}"));
+        }
+    }
+    if let Some(address) = &args.address {
+        args.chain_id
+            .as_deref()
+            .ok_or("--address requires --chain-id")?;
+        items.push(json!({
+            "id": next_id,
+            "bizKey": WS_BIZ_KEY,
+            "subParamList": [{"paramKey": "address", "op": "EQ", "val": address}],
+        }));
+        next_id += 1;
+    }
+    if let Some(path) = &args.address_list {
+        args.chain_id
+            .as_deref()
+            .ok_or("--address-list requires --chain-id")?;
+        let raw = std::fs::read_to_string(path)
+            .map_err(|_| "Cannot read address list file".to_string())?;
+        let list: Vec<&str> = raw
+            .split('\n')
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        if list.is_empty() {
+            return Err("Address list file is empty".into());
+        }
+        if list.len() > WS_ADDRESS_LIMIT {
+            return Err(format!(
+                "Address list exceeds {WS_ADDRESS_LIMIT} limit: {}",
+                list.len()
+            ));
+        }
+        items.push(json!({
+            "id": next_id,
+            "bizKey": WS_BIZ_KEY,
+            "subParamList": [{"paramKey": "addressList", "op": "EQ", "val": list.join(",")}],
+        }));
+    }
+    if streams.is_empty() && items.is_empty() {
+        return Err(WS_NO_FILTERS.into());
+    }
+    Ok(WsPlan {
+        streams,
+        items,
+        filter_chain_id,
+    })
+}
+
+/// `prepare()` — resolve `--following` into an inline address list (or a chain stream
+/// when the list exceeds the 100-address inline limit), then pre-subscribe.
+async fn ws_prepare(
+    client: &mut Client,
+    args: &WsArgs,
+) -> Result<(Vec<String>, Option<String>), String> {
+    let mut plan = ws_plan(args)?;
+    if args.following {
+        let chain = plan
+            .filter_chain_id
+            .clone()
+            .ok_or("--following requires --chain-id")?;
+        // `vl=ne+"/address/followings"`; keys of `data` are the followed addresses.
+        let data = client
+            .request(
+                Method::POST,
+                &format!("{TRACKER}/address/followings"),
+                Some(json!({ "chainId": chain })),
+            )
+            .await?;
+        let mut addresses: Vec<String> = data
+            .as_object()
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default();
+        if addresses.is_empty() {
+            return Err("No following addresses found for this chain".into());
+        }
+        if addresses.len() <= WS_ADDRESS_LIMIT {
+            plan.items.push(json!({
+                "id": 1,
+                "bizKey": WS_BIZ_KEY,
+                "subParamList": [{"paramKey": "addressList", "op": "EQ", "val": addresses.join(",")}],
+            }));
+            plan.filter_chain_id = None;
+        } else if let Some(name) = ws_chain_name(&chain) {
+            // Too many to inline: subscribe to the whole chain and filter client-side.
+            addresses.clear();
+            plan.streams.push(format!("w3w@tracker@wallet@{name}"));
+        }
+    }
+
+    let mut params = plan.streams.clone();
+    if !plan.items.is_empty() {
+        // `preSubscribePublic({subscribeList:e.preSubscribeItems})`
+        let data = client
+            .request(
+                Method::POST,
+                WS_PRE_SUBSCRIBE,
+                Some(json!({ "subscribeList": plan.items })),
+            )
+            .await?;
+        let keys = match data.get("subKeys").and_then(Value::as_object) {
+            Some(map) if !map.is_empty() => map.clone(),
+            _ => return Err(WS_NO_SUBKEYS.into()),
+        };
+        for item in &plan.items {
+            let id = item["id"]
+                .as_u64()
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let key = keys
+                .get(&id)
+                .ok_or_else(|| format!("Pre-subscribe missing subKeys for ids: {id}"))?;
+            match key {
+                Value::String(text) => params.push(text.clone()),
+                other => params.push(other.to_string()),
+            }
+        }
+    }
+    if params.is_empty() {
+        return Err(WS_NO_SUBKEYS.into());
+    }
+    Ok((params, plan.filter_chain_id))
+}
+
+async fn ws(client: &mut Client, args: &WsArgs, json_mode: bool) -> Result<Value, String> {
+    let (params, filter_chain_id) = ws_prepare(client, args).await?;
+    let url = client.stream_url()?;
+    let duration = args.duration.filter(|secs| *secs > 0);
+    let limit = duration.map(Duration::from_secs);
+    let messages = listen(&url, &params, filter_chain_id.as_deref(), json_mode, limit).await?;
+    Ok(json!({
+        "status": "CLOSED",
+        "messages": messages,
+        "subscriptions": params.len(),
+    }))
+}
+
+/// `connectAndListen`. With `limit` set the loop disconnects after that long (sending
+/// `UNSUBSCRIBE` first) and an unexpected close is an error; without a limit it
+/// reconnects forever with 5s→120s backoff, like the reference.
+async fn listen(
+    url: &str,
+    params: &[String],
+    filter_chain_id: Option<&str>,
+    json_mode: bool,
+    limit: Option<Duration>,
+) -> Result<u64, String> {
+    use tokio_tungstenite::tungstenite::Message;
+
+    let started = tokio::time::Instant::now();
+    let mut backoff = WS_BACKOFF_START;
+    let mut messages = 0u64;
+    let mut next_id = 2u64;
+
+    loop {
+        let remaining = match limit {
+            Some(limit) => Some(
+                limit
+                    .checked_sub(started.elapsed())
+                    .ok_or_else(|| WS_CLOSED_UNEXPECTEDLY.to_string())?,
+            ),
+            None => None,
+        };
+        let (mut socket, _) = match remaining {
+            Some(left) => {
+                match tokio::time::timeout(left, tokio_tungstenite::connect_async(url)).await {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(_)) => return Err(WS_CONNECT_ERROR.into()),
+                    Err(_) => return Ok(messages),
+                }
+            }
+            None => tokio_tungstenite::connect_async(url)
+                .await
+                .map_err(|_| WS_CONNECT_ERROR.to_string())?,
+        };
+
+        let subscribe = json!({"method": "SUBSCRIBE", "params": params, "id": 1});
+        socket
+            .send(Message::Text(subscribe.to_string().into()))
+            .await
+            .map_err(|_| WS_CONNECT_ERROR.to_string())?;
+
+        let mut ping = tokio::time::interval(WS_PING);
+        ping.tick().await;
+        let deadline_at = limit.map(|limit| started + limit);
+        let mut closed = false;
+
+        while !closed {
+            let deadline = async {
+                match deadline_at {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            tokio::select! {
+                () = deadline => {
+                    let unsubscribe = json!({"method": "UNSUBSCRIBE", "params": params, "id": next_id});
+                    let _ = socket.send(Message::Text(unsubscribe.to_string().into())).await;
+                    let _ = socket.close(None).await;
+                    return Ok(messages);
+                }
+                _ = ping.tick() => {
+                    next_id += 1;
+                    let ping_frame = json!({"method": "PING", "id": next_id});
+                    if socket.send(Message::Text(ping_frame.to_string().into())).await.is_err() {
+                        closed = true;
+                    }
+                }
+                frame = socket.next() => match frame {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(event) = parse_ws_event(&text, filter_chain_id) {
+                            messages += 1;
+                            print_ws_event(&event, json_mode);
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => closed = true,
+                    Some(Err(_)) => closed = true,
+                    Some(Ok(_)) => {}
+                },
+            }
+        }
+
+        if limit.is_some() {
+            // With `--duration` the reference treats an unexpected close as an error.
+            return Err(WS_CLOSED_UNEXPECTEDLY.into());
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(WS_BACKOFF_CAP);
+        let _ = &mut next_id;
+    }
+}
+
+/// Returns the event when it is a `{stream,data}` push (acks and control frames are
+/// dropped), after applying the `--following` chain filter.
+fn parse_ws_event(text: &str, filter_chain_id: Option<&str>) -> Option<Value> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    let object = value.as_object()?;
+    // `if("result"in ge&&"id"in ge)return;` — request/response acks.
+    if object.contains_key("result") && object.contains_key("id") {
+        return None;
+    }
+    if !object.contains_key("stream") || !object.contains_key("data") {
+        return None;
+    }
+    if let Some(chain) = filter_chain_id {
+        if let Some(event_chain) = object["data"].get("chainId").and_then(Value::as_str) {
+            if event_chain != chain {
+                return None;
+            }
+        }
+    }
+    Some(value)
+}
+
+fn print_ws_event(event: &Value, json_mode: bool) {
+    if json_mode {
+        println!("{event}");
+        return;
+    }
+    let ts = event["data"]
+        .get("ts")
+        .and_then(Value::as_i64)
+        .and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| "-".to_string());
+    println!("[{ts}] stream={}", event["stream"]);
+    println!("  {}", event["data"]);
+}
 
 async fn token(client: &mut Client, args: &TokenArgs) -> Result<Value, String> {
     let chain = chain_id(&args.chain_id)?;
@@ -1914,20 +2314,151 @@ mod tests {
         handle.join().unwrap();
     }
 
+    fn ws_args() -> WsArgs {
+        WsArgs {
+            smy: false,
+            kol: false,
+            wallet: None,
+            following: false,
+            address: None,
+            address_list: None,
+            chain_id: None,
+            duration: None,
+        }
+    }
+
+    #[test]
+    fn ws_plan_rejects_conflicting_or_missing_filters_before_any_network() {
+        assert_eq!(ws_plan(&ws_args()).unwrap_err(), WS_NO_FILTERS);
+
+        let mut kol_without_chain = ws_args();
+        kol_without_chain.kol = true;
+        assert_eq!(
+            ws_plan(&kol_without_chain).unwrap_err(),
+            "--kol requires --chain-id"
+        );
+
+        let mut bad_wallet = ws_args();
+        bad_wallet.wallet = Some("BSC,DOGE".into());
+        assert!(ws_plan(&bad_wallet)
+            .unwrap_err()
+            .starts_with("Invalid wallet chain: DOGE"));
+
+        let mut following_with_others = ws_args();
+        following_with_others.following = true;
+        following_with_others.chain_id = Some("56".into());
+        following_with_others.smy = true;
+        assert!(ws_plan(&following_with_others)
+            .unwrap_err()
+            .contains("mutually exclusive"));
+
+        let mut streams = ws_args();
+        streams.smy = true;
+        let plan = ws_plan(&streams).unwrap();
+        assert_eq!(plan.streams, vec!["w3w@signal_smart_money".to_string()]);
+        assert!(plan.items.is_empty());
+
+        let mut address = ws_args();
+        address.chain_id = Some("56".into());
+        address.address = Some("0xabc".into());
+        let plan = ws_plan(&address).unwrap();
+        assert_eq!(
+            plan.items[0]["subParamList"][0]["paramKey"],
+            json!("address")
+        );
+        assert_eq!(plan.items[0]["bizKey"], json!(WS_BIZ_KEY));
+    }
+
     #[tokio::test]
-    async fn ws_is_explicitly_unimplemented_and_never_reaches_the_network() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
+    async fn ws_prepare_posts_pre_subscribe_and_extends_params_with_sub_keys() {
+        let (base, requests, handle) =
+            mock(vec![response(json!({"subKeys": {"1": "sub-key-one"}}))]);
         let mut client = Client::test_client(credentials(), &base).unwrap();
+        let mut args = ws_args();
+        args.chain_id = Some("56".into());
+        args.address = Some("0x0000000000000000000000000000000000000001".into());
+        let (params, filter) = ws_prepare(&mut client, &args).await.unwrap();
+        let request = requests.recv().unwrap();
+        handle.join().unwrap();
+        assert!(request.starts_with("POST /bapi/defi/v1/public/wallet-direct/ws/pre-subscribe"));
+        let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(body["subscribeList"][0]["bizKey"], json!(WS_BIZ_KEY));
         assert_eq!(
-            run(&mut client, &TrackerCommand::Ws).await.unwrap_err(),
-            "tracker ws requires websocket support, not implemented"
+            body["subscribeList"][0]["subParamList"][0]["paramKey"],
+            json!("address")
         );
+        assert_eq!(params, vec!["sub-key-one".to_string()]);
+        assert!(filter.is_none());
+    }
+
+    #[tokio::test]
+    async fn ws_prepare_fails_closed_when_pre_subscribe_returns_no_sub_keys() {
+        let (base, _requests, handle) = mock(vec![response(json!({"subKeys": {}}))]);
+        let mut client = Client::test_client(credentials(), &base).unwrap();
+        let mut args = ws_args();
+        args.chain_id = Some("56".into());
+        args.address = Some("0x0000000000000000000000000000000000000001".into());
         assert_eq!(
-            listener.accept().unwrap_err().kind(),
-            std::io::ErrorKind::WouldBlock
+            ws_prepare(&mut client, &args).await.unwrap_err(),
+            WS_NO_SUBKEYS
         );
+        handle.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn listen_subscribes_filters_acks_and_closes_at_the_deadline() {
+        use tokio_tungstenite::tungstenite::Message;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            // First frame must be our SUBSCRIBE with both params.
+            let first = socket.next().await.unwrap().unwrap();
+            let subscribe = first.to_text().unwrap().to_string();
+            // Ack (dropped), one event, one event on another chain (filtered out).
+            socket
+                .send(Message::Text(r#"{"result":null,"id":1}"#.into()))
+                .await
+                .unwrap();
+            socket
+                .send(Message::Text(
+                    r#"{"stream":"w3w@tracker@wallet@BSC","data":{"chainId":"56","ts":1700000000000}}"#
+                        .into(),
+                ))
+                .await
+                .unwrap();
+            socket
+                .send(Message::Text(
+                    r#"{"stream":"w3w@tracker@wallet@ETH","data":{"chainId":"1"}}"#.into(),
+                ))
+                .await
+                .unwrap();
+            // Idle until the client disconnects at its deadline.
+            while let Some(frame) = socket.next().await {
+                if frame.is_err() {
+                    break;
+                }
+            }
+            subscribe
+        });
+
+        let url = format!("ws://{addr}/w3w/stream");
+        let params = vec!["w3w@tracker@wallet@BSC".to_string()];
+        let messages = listen(
+            &url,
+            &params,
+            Some("56"),
+            true,
+            Some(std::time::Duration::from_secs(1)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(messages, 1, "only the in-chain event may be counted");
+        let subscribe = server.await.unwrap();
+        assert!(subscribe.contains("\"method\":\"SUBSCRIBE\""));
+        assert!(subscribe.contains("w3w@tracker@wallet@BSC"));
     }
 
     // --- classification, journal and error handling -------------------------
@@ -1952,7 +2483,7 @@ mod tests {
             TrackerCommand::Address {
                 command: AddressCommand::Search(search_args()),
             },
-            TrackerCommand::Ws,
+            TrackerCommand::Ws(ws_args()),
         ];
         for read in &reads {
             assert!(!is_mutation(read), "{read:?} must be a read");
