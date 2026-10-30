@@ -1,5 +1,5 @@
 binary: /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs
-sha256: ba82dbbe2bf99dc3da9047f10e6a6d2aaeef04efcba172d9291950b76dbe3749
-bytes: 7711368
+sha256: b747a092d72c16ccbf2b9d0d592e9c4729fde1ca08882aa6e9338720cf7ddf91
+bytes: 8597096
 version: baw-rs 0.3.0
 toolchain: rustc 1.99.1 (58cf8f9c3 2026-10-13)
