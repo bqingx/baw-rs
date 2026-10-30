@@ -6,6 +6,80 @@ pub struct Credentials {
     pub session_id: Zeroizing<String>,
 }
 
+/// Resolves the instance identity from exactly one source.
+///
+/// The identity is a credential (it derives the session key), so a file is the safer
+/// source: it never lands in `ps` output or shell history. The file must be a private
+/// single-link regular file owned by the caller, mirroring the session store's rules, and
+/// a single trailing newline is ignored so an editor-written file behaves like the CLI.
+pub fn resolve_instance(inline: String, file: Option<&std::path::Path>) -> Result<String, String> {
+    match (file, inline.is_empty()) {
+        (Some(_), false) => Err(
+            "provide only one of --instance-id, BINANCE_INSTANCE_ID or --instance-id-file".into(),
+        ),
+        (None, true) => {
+            Err("explicit instance identity required (--instance-id or --instance-id-file)".into())
+        }
+        (None, false) => validate_instance(inline),
+        (Some(path), true) => validate_instance(read_instance_file(path)?),
+    }
+}
+
+/// Reads an instance file: 0600, owner-only, single link, regular, at most 4 KiB, UTF-8,
+/// no symlinks. Every failure is a static string.
+fn read_instance_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| "cannot open instance-id file (symlinks forbidden)".to_string())?;
+    let meta = file
+        .metadata()
+        .map_err(|_| "cannot inspect instance-id file".to_string())?;
+    if !meta.is_file()
+        || meta.uid() != unsafe { libc::geteuid() }
+        || meta.mode() & 0o7777 != 0o600
+        || meta.nlink() != 1
+        || meta.len() > 4096
+    {
+        return Err(
+            "instance-id file must be a private (0600), owned, single-link regular file".into(),
+        );
+    }
+    let mut bytes = Zeroizing::new(Vec::new());
+    (&mut file)
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read instance-id file".to_string())?;
+    if bytes.len() > 4096 {
+        return Err("instance-id file is too large".into());
+    }
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|_| "instance-id file is not valid UTF-8".to_string())?;
+    // A trailing newline is what an editor writes; anything after the first line is not
+    // silently ignored, so a multi-line file fails validation below.
+    Ok(text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+        .unwrap_or(&text)
+        .to_string())
+}
+
+/// Rejects empty or control-character-laden identities; everything else is a valid
+/// passphrase and maps to a key via [`derive_key`].
+fn validate_instance(value: String) -> Result<String, String> {
+    if value.is_empty() {
+        return Err("explicit instance identity required".into());
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err("instance identity must not contain control characters".into());
+    }
+    Ok(value)
+}
+
 /// Derive the CLI-compatible key; the instance identity must match session creation.
 pub fn derive_key(instance: &str) -> Zeroizing<[u8; 32]> {
     let mut key = Zeroizing::new([0; 32]);
@@ -406,5 +480,78 @@ mod tests {
                 54, 25, 178, 201, 139, 156, 240, 225, 123, 82, 18, 66, 152
             ]
         );
+    }
+
+    // --- instance selector: inline vs private file -------------------------
+
+    fn instance_file(
+        dir: &std::path::Path,
+        name: &str,
+        mode: u32,
+        content: &str,
+    ) -> std::path::PathBuf {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        path
+    }
+
+    #[test]
+    fn instance_resolution_accepts_exactly_one_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = instance_file(dir.path(), "one.key", 0o600, "file-passphrase\n");
+
+        assert_eq!(
+            resolve_instance("inline-passphrase".into(), None).unwrap(),
+            "inline-passphrase"
+        );
+        // A single trailing newline (what an editor writes) is not part of the identity.
+        let from_file = resolve_instance(String::new(), Some(&path)).unwrap();
+        assert_eq!(from_file, "file-passphrase");
+        // Same string ⇒ same key, so a file-selector session is byte-identical to an
+        // inline-selector session: no re-login, no format change.
+        assert_eq!(*derive_key(&from_file), *derive_key("file-passphrase"));
+
+        assert!(resolve_instance("inline".into(), Some(&path))
+            .unwrap_err()
+            .contains("provide only one"));
+        assert!(resolve_instance(String::new(), None)
+            .unwrap_err()
+            .contains("explicit instance identity required"));
+        assert!(resolve_instance("with\u{0}nul".into(), None)
+            .unwrap_err()
+            .contains("control characters"));
+    }
+
+    #[test]
+    fn instance_file_must_be_private_single_link_and_non_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let loose = instance_file(dir.path(), "loose.key", 0o644, "passphrase");
+        assert!(resolve_instance(String::new(), Some(&loose))
+            .unwrap_err()
+            .contains("private (0600)"));
+
+        let empty = instance_file(dir.path(), "empty.key", 0o600, "");
+        assert!(resolve_instance(String::new(), Some(&empty)).is_err());
+
+        let proper = instance_file(dir.path(), "proper.key", 0o600, "passphrase");
+        let linked = dir.path().join("instance.link");
+        std::fs::hard_link(&proper, &linked).unwrap();
+        // nlink != 1 is refused even though the mode is unchanged.
+        assert!(resolve_instance(String::new(), Some(&linked)).is_err());
+
+        let symlink = dir.path().join("instance.symlink");
+        std::os::unix::fs::symlink(&proper, &symlink).unwrap();
+        assert!(resolve_instance(String::new(), Some(&symlink))
+            .unwrap_err()
+            .contains("symlinks forbidden"));
+
+        let multiline = instance_file(dir.path(), "multi.key", 0o600, "first\nsecond\n");
+        assert!(resolve_instance(String::new(), Some(&multiline))
+            .unwrap_err()
+            .contains("control characters"));
     }
 }

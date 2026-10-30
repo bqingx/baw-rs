@@ -7,6 +7,12 @@ the current source.
 
 ## Unreleased
 
+- Added `--instance-id-file PATH`: read the instance identity from a private 0600 file
+  instead of the command line, so the passphrase stays out of `ps` and shell history. Same
+  string ⇒ same key, so existing wallets keep working with no re-login; supplying both
+  `--instance-id` and the file is an error. The file is refused unless it is a 0600,
+  owner-only, single-link regular file (no symlinks, ≤ 4 KiB).
+
 Ownership changes after the 0.2.2 drop was reviewed and rebuilt independently.
 
 - Added `docs/SESSION-LIFECYCLE.md`: how the login state is generated, stored, read,

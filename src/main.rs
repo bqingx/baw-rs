@@ -29,11 +29,14 @@ fn warm_argv(raw: &[String]) -> Vec<String> {
             skip_next = false;
             continue;
         }
-        if arg == "--wallet-dir" || arg == "--instance-id" {
+        if arg == "--wallet-dir" || arg == "--instance-id" || arg == "--instance-id-file" {
             skip_next = true;
             continue;
         }
-        if arg.starts_with("--wallet-dir=") || arg.starts_with("--instance-id=") || arg == "--warm"
+        if arg.starts_with("--wallet-dir=")
+            || arg.starts_with("--instance-id=")
+            || arg.starts_with("--instance-id-file=")
+            || arg == "--warm"
         {
             continue;
         }
@@ -68,6 +71,16 @@ async fn run() -> io::Result<bool> {
         }
     };
     let start = Instant::now();
+    let mut cli = cli;
+    // Resolve the identity before anything opens a wallet path, so a missing or ambiguous
+    // selector never looks like a wallet error.
+    match session::resolve_instance(cli.instance_id.clone(), cli.instance_id_file.as_deref()) {
+        Ok(instance) => cli.instance_id = instance,
+        Err(message) => {
+            emit_json(&mut io::stdout().lock(), &envelope(Err(message)))?;
+            return Ok(false);
+        }
+    }
     if cli.warm {
         if let Some(response) = warm_request(&cli, &raw) {
             let success = response["success"] == true;

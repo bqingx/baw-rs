@@ -138,8 +138,11 @@ pub const MAX_BATCH_LINE: usize = 65_536;
 pub struct Cli {
     #[arg(long, env = "BINANCE_BAW_DIR", value_parser = nonempty_path)]
     pub wallet_dir: PathBuf,
-    #[arg(long, env = "BINANCE_INSTANCE_ID", value_parser = nonempty)]
+    #[arg(long, env = "BINANCE_INSTANCE_ID", default_value = "")]
     pub instance_id: String,
+    /// Read the instance identity from a private (0600) file instead of the command line.
+    #[arg(long = "instance-id-file", value_name = "PATH")]
+    pub instance_id_file: Option<PathBuf>,
     #[arg(long, global = true)]
     pub json: bool,
     #[arg(long, global = true)]

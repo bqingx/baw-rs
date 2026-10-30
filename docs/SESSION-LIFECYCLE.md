@@ -105,6 +105,9 @@ The consequences, stated plainly:
   here, which is only possible because no machine-specific input enters the key.
 - The flip side is unchanged and fail-closed: wrong instance ⇒ `invalid encrypted
   credential`, file untouched, no repair, no migration.
+- The instance can be supplied from a 0600 file with `--instance-id-file` instead of the
+  command line. Same string ⇒ same key, so an existing wallet keeps working; the file form
+  only keeps the passphrase out of `ps` and shell history.
 
 ## Known gaps (tracked, not yet fixed)
 

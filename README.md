@@ -16,6 +16,20 @@ cargo build --release --target-dir /root/.hermes/cache/scratch/baw-integration-t
 
 Both selectors are required. Put them before the command, or use `BINANCE_BAW_DIR` and `BINANCE_INSTANCE_ID`. There is no implicit default wallet, MAC-derived encryption identity, global keyring access, or fallback to another session. The instance must match the identity that encrypted the selected file. Existing encrypted sessions and legacy plaintext client UUIDs load without migration writes. Only explicit signin may create a new identity in an absent selected directory.
 
+Prefer `--instance-id-file` over `--instance-id`: a passphrase on the command line lands in
+`ps` output and shell history.
+
+```sh
+umask 077
+printf '%s' 'your passphrase' > ~/.baw-instance.key     # 0600, no trailing newline needed
+./baw-rs --wallet-dir /abs/wallet --instance-id-file ~/.baw-instance.key wallet status
+```
+
+The file must be a 0600, owner-only, single-link regular file (no symlinks, ≤4 KiB); one
+trailing newline is ignored. Both selectors resolve to the same string and therefore the
+same key, so switching an existing wallet to the file form needs no re-login. Supplying two
+sources is an error, never a silent precedence rule.
+
 ### `--instance-id` is a credential, not a machine identity
 
 The AES-256-GCM key for `session.json` is derived from that string alone:
