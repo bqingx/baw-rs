@@ -21,6 +21,8 @@ pub struct Client {
     origin: String,
     credentials: Credentials,
     invalidated: bool,
+    pub(crate) payment_consumed:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Client {
@@ -57,6 +59,7 @@ impl Client {
             origin: origin.into(),
             credentials,
             invalidated: false,
+            payment_consumed: Default::default(),
         })
     }
 

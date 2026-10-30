@@ -2,7 +2,7 @@
 use crate::{auth_store::Store, client::Client, session::Credentials};
 use serde_json::Value;
 use std::path::Path;
-#[derive(clap::Subcommand, Debug)]
+#[derive(clap::Subcommand, Debug, Clone)]
 pub enum AuthCommand {
     Signin,
     Verify {

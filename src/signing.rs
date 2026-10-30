@@ -215,32 +215,13 @@ fn timestamp(v: &Value) -> Option<u64> {
     let n = v.as_u64().or_else(|| v.as_str()?.parse().ok())?;
     Some(if n >= 1_000_000_000_000 { n / 1000 } else { n })
 }
-/// (sender, developer-mode expiry, fetched-at) per chain, resident mode only.
-type WalletProbe = (String, u64, u64);
-fn warm_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, WalletProbe>> {
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, WalletProbe>>,
-    > = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
 async fn check_wallet(
     client: &mut Client,
     chain: &str,
     expected: Option<&str>,
 ) -> Result<(String, u64), String> {
     nonempty(chain)?;
-    let warm = std::env::var("BAW_RS_WARM").as_deref() == Ok("1");
-    if warm {
-        let cached = warm_cache().lock().ok().and_then(|m| m.get(chain).cloned());
-        if let Some((sender, dev_expires, fetched)) = cached {
-            if fetched + 60 > now()? && dev_expires > now()? {
-                if expected.is_some_and(|e| !same_address(chain, e, &sender)) {
-                    return Err("sender does not match actual wallet on requested chain".into());
-                }
-                return Ok((sender, dev_expires));
-            }
-        }
-    }
+    // Always revalidate against this client; never use a process-global chain cache.
     let settings = client
         .request(Method::GET, &format!("{API}/settings/query"), None)
         .await?;
@@ -268,11 +249,6 @@ async fn check_wallet(
     address(chain, &actual)?;
     if expected.is_some_and(|e| !same_address(chain, e, &actual)) {
         return Err("sender does not match actual wallet on requested chain".into());
-    }
-    if warm {
-        if let Ok(mut map) = warm_cache().lock() {
-            map.insert(chain.to_owned(), (actual.clone(), expires, now()?));
-        }
     }
     Ok((actual, expires))
 }
@@ -773,29 +749,32 @@ pub async fn message(
             {
                 return Err("sortType must be ASC or DESC".into());
             }
-            let mut q = url::form_urlencoded::Serializer::new(String::new());
-            if let Some(chain) = &a.binance_chain_id {
-                nonempty(chain)?;
-                q.append_pair("binanceChainIds", chain);
-            }
-            q.append_pair("limit", &a.limit.to_string());
-            if let Some(token) = &a.next_token {
-                nonempty(token)?;
-                q.append_pair("nextToken", token);
-            }
-            if let Some(t) = a.start_time {
-                q.append_pair("startTime", &t.to_string());
-            }
-            if let Some(t) = a.end_time {
-                q.append_pair("endTime", &t.to_string());
-            }
-            if let Some(sort) = &a.sort_type {
-                q.append_pair("sortType", sort);
-            }
+            let query = {
+                let mut q = url::form_urlencoded::Serializer::new(String::new());
+                if let Some(chain) = &a.binance_chain_id {
+                    nonempty(chain)?;
+                    q.append_pair("binanceChainIds", chain);
+                }
+                q.append_pair("limit", &a.limit.to_string());
+                if let Some(token) = &a.next_token {
+                    nonempty(token)?;
+                    q.append_pair("nextToken", token);
+                }
+                if let Some(t) = a.start_time {
+                    q.append_pair("startTime", &t.to_string());
+                }
+                if let Some(t) = a.end_time {
+                    q.append_pair("endTime", &t.to_string());
+                }
+                if let Some(sort) = &a.sort_type {
+                    q.append_pair("sortType", sort);
+                }
+                q.finish()
+            };
             client
                 .request(
                     Method::GET,
-                    &format!("{API}/sign-message/history?{}", q.finish()),
+                    &format!("{API}/sign-message/history?{query}"),
                     None,
                 )
                 .await
@@ -994,6 +973,30 @@ mod tests {
     }
     fn preview() -> Value {
         json!({"requestId":"../unsafe/id","expiresAt":4102444800u64,"simulationSuccess":true,"risks":[{"level":"HIGH","detail":"review"}],"authorityChanges":[{"spender":"retain"}]})
+    }
+    #[tokio::test]
+    async fn warm_probe_never_crosses_wallet_clients() {
+        struct Restore(Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                if let Some(v) = &self.0 {
+                    std::env::set_var("BAW_RS_WARM", v);
+                } else {
+                    std::env::remove_var("BAW_RS_WARM");
+                }
+            }
+        }
+        let _restore = Restore(std::env::var("BAW_RS_WARM").ok());
+        std::env::set_var("BAW_RS_WARM", "1");
+        let (mut a, _, ta) = fixture(gates());
+        let mut other = gates();
+        let expected = "0x2222222222222222222222222222222222222222";
+        other[1][0]["subWalletList"][0]["addresses"][0]["address"] = json!(expected);
+        let (mut b, _, tb) = fixture(other);
+        assert_eq!(check_wallet(&mut a, "1", None).await.unwrap().0, FROM);
+        assert_eq!(check_wallet(&mut b, "1", None).await.unwrap().0, expected);
+        ta.join().unwrap();
+        tb.join().unwrap();
     }
     #[tokio::test]
     async fn contract_preview_preserves_risks_binds_cache_and_executes_exact_review() {

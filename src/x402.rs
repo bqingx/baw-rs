@@ -7,8 +7,6 @@ use crate::client::{Client, API};
 use clap::{Args, Subcommand};
 use reqwest::Method;
 use serde_json::{json, Value};
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
 
 /// The installed CLI forwards `--paymentRequirements` verbatim (it accepts either a
 /// base64 `PAYMENT-REQUIRED` header value or raw JSON), so we do not decode it; we
@@ -99,18 +97,11 @@ fn requirements(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// One-shot guard mirroring the consumed-preview marker in `src/signing.rs`: a signed
-/// option is never re-signed, even after an error, because the retry could double-pay.
-/// It is process-local — `x402::run` receives no wallet directory, so the durable
-/// one-shot record is the parent-owned operation journal (a unique `--operation-id`
-/// is never replayed). Reported as a known gap rather than guessed around.
-fn consumed() -> &'static Mutex<HashSet<String>> {
-    static CONSUMED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    CONSUMED.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-fn consume(key: String) -> Result<(), String> {
-    let mut set = consumed()
+/// One-shot guard scoped to this wallet client. The resident wallet retains this
+/// set across auth refresh; operation journals remain the durable replay guard.
+fn consume(client: &Client, key: String) -> Result<(), String> {
+    let mut set = client
+        .payment_consumed
         .lock()
         .map_err(|_| "payment signature guard unavailable")?;
     if !set.insert(key) {
@@ -149,7 +140,7 @@ async fn sign(client: &mut Client, args: &SignArgs) -> Result<Value, String> {
     payment_id(&args.payment_id)?;
     session(client)?;
     // Consume before the network call: an accepted attempt stays consumed on error.
-    consume(consume_key(client, args))?;
+    consume(client, consume_key(client, args))?;
     // dist/index.js: `static SIGN_ENDPOINT="/bapi/defi/v1/public/wallet-direct/agent-wallet/x402-payment/sign"`
     // and `sign({paymentId:e,selectedIndex:n})` with `{method:"POST",body:e}`; the JS
     // action passes `Number(e.selectedIndex)`, so the index is sent as a JSON number.
@@ -347,6 +338,24 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn independent_clients_do_not_share_consumed_payment_cache() {
+        let (base, requests, handle) = mock(vec![
+            response(json!({"ok":true})),
+            response(json!({"ok":true})),
+        ]);
+        let mut a = Client::test_client(credentials(), &base).unwrap();
+        let mut b = Client::test_client(credentials(), &base).unwrap();
+        let command = X402Command::Sign(sign_args("isolated-wallet-payment", 0));
+        assert!(run(&mut a, &command).await.is_ok());
+        assert!(
+            run(&mut b, &command).await.is_ok(),
+            "separate wallet clients shared consumed state"
+        );
+        requests.recv().unwrap();
+        requests.recv().unwrap();
+        handle.join().unwrap();
+    }
     #[tokio::test]
     async fn a_signed_option_is_consumed_once_even_after_failure() {
         let (base, requests, handle) =

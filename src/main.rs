@@ -45,12 +45,32 @@ fn warm_argv(raw: &[String]) -> Vec<String> {
     out
 }
 
-fn warm_request(cli: &Cli, raw: &[String]) -> Option<serde_json::Value> {
-    baw_rs::warm::send(&cli.wallet_dir, &warm_argv(raw))
+async fn warm_request(cli: &Cli, raw: &[String]) -> Option<serde_json::Value> {
+    baw_rs::warm::send(&cli.wallet_dir, &warm_argv(raw)).await
 }
 
 async fn run() -> io::Result<bool> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().is_some_and(|s| s == "vaults") {
+        let args = match baw_rs::vaults::Args::try_parse_from(raw.iter()) {
+            Ok(args) => args,
+            Err(e) if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) => {
+                e.print()?;
+                return Ok(true);
+            }
+            Err(_) => {
+                emit_json(
+                    &mut io::stdout().lock(),
+                    &envelope(Err("invalid vaults command; use vaults --help".into())),
+                )?;
+                return Ok(false);
+            }
+        };
+        let result = baw_rs::vaults::run(args).await;
+        let success = result.is_ok();
+        emit_json(&mut io::stdout().lock(), &envelope(result))?;
+        return Ok(success);
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
@@ -82,7 +102,7 @@ async fn run() -> io::Result<bool> {
         }
     }
     if cli.warm {
-        if let Some(response) = warm_request(&cli, &raw) {
+        if let Some(response) = warm_request(&cli, &raw).await {
             let success = response["success"] == true;
             emit_json(&mut io::stdout().lock(), &response)?;
             if cli.timing {
@@ -99,6 +119,12 @@ async fn run() -> io::Result<bool> {
     if let Err(message) = baw_rs::dispatch::preflight(&cli) {
         emit_json(&mut io::stdout().lock(), &envelope(Err(message)))?;
         return Ok(false);
+    }
+    if matches!(cli.command, Command::Serve) {
+        let result = baw_rs::warm::serve(&cli).await;
+        let success = result.is_ok();
+        emit_json(&mut io::stdout().lock(), &envelope(result))?;
+        return Ok(success);
     }
     let loaded = match &cli.command {
         Command::Auth { command } => {
@@ -123,12 +149,6 @@ async fn run() -> io::Result<bool> {
     let mut output = io::stdout().lock();
     let mut errors = io::stderr().lock();
     match &cli.command {
-        Command::Serve => {
-            let result = baw_rs::warm::serve(&cli).await;
-            let success = result.is_ok();
-            emit_json(&mut output, &envelope(result))?;
-            Ok(success)
-        }
         Command::Batch => {
             run_batch(
                 &mut client,

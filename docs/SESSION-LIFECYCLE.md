@@ -63,10 +63,13 @@ session.json 0644             -> session file must be private (0600)
 
 `src/main.rs` picks one of two paths per command: `auth *` → `auth::bootstrap`
 (may create), everything else → `session::load(dir, instance)` (never creates).
-`serve` loads once and keeps it in-process; `--warm` clients hit the socket and the
-server hands out the already-loaded session.
+The native resident engine (`serve` and named `vaults`) retains independent clients,
+but rechecks each selected wallet's disk session before every command. Auth commands
+rebuild from disk and discard transient client cookies after success or failure;
+subsequent commands reload committed auth state. See [MULTIWALLET.md](MULTIWALLET.md).
 
-`load` fails closed on: absolute/parent-dir components, any symlink, wrong owner,
+`load` accepts explicit absolute directories and fails closed on unsafe final path
+symlinks, wrong owner,
 non-`0700` dir, non-`0600`/multi-link/non-regular/oversized file, non-`{` first
 non-whitespace byte, undecryptable ciphertext, non-printable decrypted bytes, or a
 `clientId` that is not UUID-shaped. Nothing is repaired, migrated or guessed.
@@ -121,5 +124,6 @@ The consequences, stated plainly:
   ever run. Recovery today is `auth signout` or waiting out the cap.
 - **No renewal**: nothing proactively re-verifies an expired session; the operator must
   re-run `auth verify` after a new `auth signin`.
-- **Live path unverified**: no QR scan, no real signature, no swap/transfer has been
-  executed against a real account from this tree.
+- **Current multi-wallet changes are not production-verified.** Only synthetic wallets,
+  loopback HTTP and local IPC were exercised. Historical single-wallet observations in
+  README do not prove the current named-wallet path or any real money operation.

@@ -1,9 +1,9 @@
 # baw-rs 0.3.0
 
 用 Rust 原生实现的币安 Agentic Wallet 命令行工具，协议对齐已安装的 `@binance/agentic-wallet`
-1.12.0。命令面与官方 JavaScript CLI 对齐：官方 102 条叶子命令全部覆盖，另有 `batch`、
-`serve`、`contract-call run` 三条本实现独有的辅助命令。它不调用、也不替换系统里已安装的
-`baw`，两者互不影响。测试平台为 Linux。
+1.12.0。已有命令清单包含参考 CLI 的 102 条叶子命令语法；**help 清单覆盖不等于全部功能等价或生产验证**。
+另有 `batch`、`serve`、`contract-call run`，以及新的原生多钱包控制面 `vaults`。
+它不调用、也不替换系统里已安装的 `baw`。测试平台为 Linux。
 
 仓库不提供预编译二进制——只有你自己构建出来的产物，哈希才是你可以核对的。`scripts/verify.sh`
 可一键重跑全部门禁并重建 `verification/` 下的证据（fmt、clippy、test、release 构建、源码清单、
@@ -53,7 +53,8 @@ PBKDF2-HMAC-SHA256(password = instance, salt = "baw-agentic-wallet-v1:" + instan
 
 ## 命令清单
 
-`verification/leaf-commands.txt` 是权威清单，由 `scripts/leaf_commands.py` 从构建产物枚举生成；
+`verification/leaf-commands.txt` 是原有业务命令的语法清单，由 `scripts/leaf_commands.py` 枚举生成；
+新的 `vaults` 独立控制面请使用 `baw-rs vaults --help`。清单不是端到端功能验证证明。
 `docs/JS-CLI-PARITY.md` 保存官方每条命令的原始 `--help` 文本。按功能分模块：
 
 | 功能族 | 模块 | 叶子命令 |
@@ -118,20 +119,35 @@ batch
 且拒绝仅 EVM 可用的字段。EIP712 消息会保留原始 `eth_signTypedData_v4` JSON-RPC 包装字符串，并且
 必须让其签名者与域链同所选钱包一致。
 
-## 常驻加速模式
+## 原生多钱包与常驻模式
 
-`serve` 在单个进程内保持一份已解密的会话、一套连接池和一个 60 秒的开发者模式/钱包地址探测缓存，
-监听 `<wallet-dir>/.baw-rs.sock`（目录 0700、socket 0600、校验对端 UID）。给任意命令加 `--warm`
-即可走服务端；没有服务在跑时会静默回退到普通冷执行。
+一个 daemon 直接管理多个命名钱包，各自持有客户端、cookie、连接池与队列；不同钱包可并行，同一钱包串行。
+注册只记录独立目录及固定 instance 文件路径，拒绝同目录别名重复注册，不复制会话，不改变加密规则。
+精确命令、登录/登出流程、生命周期、IPC 限制和验证边界见 [docs/MULTIWALLET.md](docs/MULTIWALLET.md)。
 
 ```sh
-./baw-rs --wallet-dir /abs/wallet --instance-id ID --json serve &
-./baw-rs --wallet-dir /abs/wallet --instance-id ID --warm --json wallet status
+baw-rs vaults --registry /abs/private-registry register alice \
+  --wallet-dir /abs/wallet-alice --instance-id-file /abs/alice.instance
+baw-rs vaults --registry /abs/private-registry list
+baw-rs vaults --registry /abs/private-registry serve     # 前台，另开终端发请求
+baw-rs vaults --registry /abs/private-registry run alice -- wallet status
+baw-rs vaults --registry /abs/private-registry status
+baw-rs vaults --registry /abs/private-registry stop
 ```
 
-在本机、已登录真实钱包、0.3.0 产物上实测 `wallet status`：冷启动 **0.10 s**，走 `serve` 热调用
-**0.01–0.03 s**。热模式省掉的是进程启动、会话解密和连接建立；剩余开销仍以服务端为主。`serve` 与
-`batch` 不允许走 socket。
+命名命令必须指定名称，未知名称/连接失败/解密失败一律报错，不回退。服务运行时不能修改注册表。
+`batch`、`serve`、`tracker ws` 不允许经 IPC 运行，以免无限流阻塞其他命令或混入 daemon stdout。
+
+旧单钱包语法不变：
+
+```sh
+./baw-rs --wallet-dir /abs/wallet --instance-id-file /abs/identity --json serve
+./baw-rs --wallet-dir /abs/wallet --instance-id-file /abs/identity --warm --json wallet status
+```
+
+旧 `serve` 也使用有界、异步、校验 UID 的 resident 引擎；旧 `--warm` 只有 socket 路径不存在时冷执行，
+已经尝试 IPC 后不会重复提交。每条命令重新核对磁盘会话，auth 完成后丢弃临时客户端状态。
+旧的进程全局 60 秒地址/开发者模式缓存已删除，不能再引用旧版本热调用性能数字。本次未测生产性能。
 
 ## 策略约束的无人值守执行
 
@@ -236,6 +252,11 @@ batch 只接受只读的 **wallet** 命令，每行一个 JSON argv 数组，复
 
 ## 验证边界
 
+本次多钱包变更仅做合成数据/回环验证，没有接触真实钱包、key 或生产网络。
+当前证据位于 `verification/multiwallet/`，使用 `python3 scripts/verify_multiwallet.py` 重跑。
+根目录 `verification/` 的旧日志及历史集成报告不是本次源码的通过凭据。
+
+
 **离线**：`scripts/verify.sh` 一键重跑 fmt / clippy / test / release 构建，并重写
 `verification/` 下的日志、`source-sha256.json`（带 git 提交号与 `dirty_source` 标记）、
 `release-identity.txt` 与 `leaf-commands.txt`。测试全部使用回环 HTTP fixture 与合成会话文件。
@@ -245,7 +266,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 CARGO_TARGET_DIR=/path/to/target sh scripts/verify.sh
 ```
 
-**实盘**（2026-10-30）：用真实二维码完成了一次生产登录（`auth signin` → App 确认 → `auth verify`
+**历史单钱包记录（本次未重新验证，不适用于多钱包改动）**：旧文档记录于 2026-10-30，用真实二维码完成了一次生产登录（`auth signin` → App 确认 → `auth verify`
 自动提交），随后只读验证通过：`wallet status`（CONNECTED）、`wallet address`（真实多链地址）、
 `wallet balance`（真实余额）、`wallet left-quota`、`wallet settings`（含 `sessionExpireTime` 等
 服务端时效字段）。会话有效期实测 48 小时。

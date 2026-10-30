@@ -133,7 +133,8 @@ pub const MAX_BATCH_LINE: usize = 65_536;
 #[command(
     name = "baw-rs",
     version,
-    about = "Native wallet client with explicit consent and preview-bound signing"
+    about = "Native wallet client with explicit consent and preview-bound signing",
+    after_help = "Named multi-wallet daemon: baw-rs vaults --help (does not require --wallet-dir)."
 )]
 pub struct Cli {
     #[arg(long, env = "BINANCE_BAW_DIR", value_parser = nonempty_path)]
