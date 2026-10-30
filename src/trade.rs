@@ -254,8 +254,8 @@ async fn swap(c: &mut Client, a: &SwapArgs, r: &Registry) -> Result<Value, Strin
         .request(Method::POST, &format!("{D}/{endpoint}"), Some(body))
         .await;
     match result {
-        Err(_) => Ok(
-            json!({"status":"UNCERTAIN","retrySafe":false,"message":"submission outcome unknown; reconcile order history; never automatically resubmit","quote":quoted}),
+        Err(e) => Ok(
+            json!({"status":"UNCERTAIN","retrySafe":false,"cause":e,"message":"submission outcome unknown; reconcile order history; never automatically resubmit","quote":quoted}),
         ),
         Ok(data) => {
             let mut out = order_result(data, &q.from_token)?;
@@ -452,8 +452,8 @@ pub async fn send(c: &mut Client, a: &SendArgs) -> Result<Value, String> {
         .request(Method::POST, &format!("{A}/transfer"), Some(body))
         .await
     {
-        Err(_) => Ok(
-            json!({"status":"UNCERTAIN","retrySafe":false,"message":"transfer outcome unknown; reconcile transaction history; never automatically resubmit"}),
+        Err(e) => Ok(
+            json!({"status":"UNCERTAIN","retrySafe":false,"cause":e,"message":"transfer outcome unknown; reconcile transaction history; never automatically resubmit"}),
         ),
         Ok(data) => {
             if data.get("code").is_some_and(|code| {
