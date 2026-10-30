@@ -1,0 +1,1 @@
+{"error":{"message":"streaming and control commands are not allowed over daemon IPC"},"success":false}

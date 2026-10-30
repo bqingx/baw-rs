@@ -1,0 +1,16 @@
+Native named wallets; no implicit wallet or fallback
+
+Usage: vaults --registry <REGISTRY> <COMMAND>
+
+Commands:
+  register  
+  list      
+  status    
+  serve     
+  stop      
+  run       
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --registry <REGISTRY>  
+  -h, --help                 Print help
