@@ -61,3 +61,23 @@ command**), which is where a preview followed by its execute stops paying for th
 reads twice. The cache is dropped whenever the session changes (`set_session`,
 `begin_signin`, `invalidate`), is never shared between wallets, and never spans processes.
 Set `BAW_RS_CHECK_TTL_MS=0` in the server environment to restore strict per-command reads.
+
+## Skipping the pre-flight reads (`--skip-prechecks`)
+
+Two reads run before any guarded write will preview: `settings/query` (developer mode) and
+the wallet's chain addresses. Neither is required by the protocol — the backend rejects a
+write when developer mode is off (`351801` / `351802`) and binds the request to the session
+— so both are local conveniences: an earlier, clearer error, and the only guard that exists
+against signing with a wallet other than the one named in `--from`.
+
+`--skip-prechecks` (or `BAW_RS_SKIP_PRECHECKS=1`, or `--skip-prechecks` on the resident
+server to apply it to every request) removes both. When it is on:
+
+- `--from` becomes mandatory; an empty one fails before any network call
+- the sender is still format-validated locally, and the preview is bounded by the ordinary
+  five-minute window instead of the developer-mode expiry
+- a wrong `--from` is no longer caught locally: the request reaches the backend
+- measured cost of the two reads on this host: 0.51-0.54 s + 0.43-0.64 s
+
+It is off by default, on every command, and it is the only switch in this tool that removes
+a local safety check rather than adding one.

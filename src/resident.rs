@@ -95,6 +95,7 @@ impl Wallet {
         ) {
             return Err("streaming and control commands are not allowed over daemon IPC".into());
         }
+        crate::signing::apply_skip_prechecks(cli.skip_prechecks);
         crate::dispatch::preflight(&cli)?;
         let mut state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
             .await
@@ -267,6 +268,9 @@ async fn serve_inner(
     // Resident processes reuse the pre-write checks for a few seconds: a preview and the
     // execute that follows it then share one settings read and one address read instead of
     // paying four round trips. One-shot commands keep the strict default (no reuse).
+    crate::signing::set_skip_prechecks_default(
+        std::env::var("BAW_RS_SKIP_PRECHECKS").is_ok_and(|v| v == "1" || v == "true"),
+    );
     if std::env::var_os("BAW_RS_CHECK_TTL_MS").is_none() {
         std::env::set_var("BAW_RS_CHECK_TTL_MS", "3000");
     }

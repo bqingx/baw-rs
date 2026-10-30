@@ -135,6 +135,9 @@ $B vaults --registry $R stop
   崩溃后也不复用。`RESPONSE_RECEIVED` 只代表拿到接口响应，**不代表成交**。
 - **签名钉住预览**：`contract-call execute` / `sign-message execute` 还需 `--accept-preview-sha256`，
   把执行绑定在你确认过的那份预览上，且只能消费一次。
+- **默认校验发送方**：每次预览前都会核对 `--from` 与本钱包在该链上的真实地址，不一致直接报错不发请求。
+  显式传 `--skip-prechecks` 可移除这道检查（连同开发者模式检查）换取约 0.95 秒，此时 `--from` 必填，
+  写错地址由服务端报错 —— 这是本工具唯一一个「减少检查」的开关，默认关闭。
 - **文件与网络**：目录 0700、凭据文件 0600、禁符号链接、校验属主；接口域名写死，禁止重定向、代理和
   任意 URL 覆盖。
 - **不确定就不重发**：传输层失败返回 `UNCERTAIN` / `retrySafe:false`，必须人工对账后再决定。
@@ -150,7 +153,7 @@ $B vaults --registry $R stop
 ## 项目状态
 
 - **版本**：0.3.0，主要测试平台 Linux
-- **测试**：294 项通过、0 失败（离线：回环 HTTP fixture + 合成会话文件）
+- **测试**：296 项通过、0 失败（离线：回环 HTTP fixture + 合成会话文件）
 - **实盘验证**：完成过一次真实二维码登录，并通过 `status` / `address` / `balance` / `left-quota` /
   `settings` 只读查询（会话有效期实测 48 小时）
 - **未验证**：转账、swap、限价单、DeFi 存取、x402 签名、contract-call 执行等**任何真实资金动作**。

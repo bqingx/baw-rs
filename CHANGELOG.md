@@ -7,6 +7,11 @@ the current source.
 
 ## Unreleased
 
+- Added `--skip-prechecks` / `BAW_RS_SKIP_PRECHECKS=1`: skip the developer-mode and
+  wallet-address reads before a guarded write and trust `--from` (which becomes mandatory).
+  Saves the two measured reads (0.51-0.54 s + 0.43-0.64 s per call) at the cost of the only
+  local guard against sending from a wallet other than the one named. Off by default.
+
 - Added `contract-call fire`: preview then execute in a single process, with `--confirm` and
   a unique `--operation-id` but no policy file and no human digest review. The preview's
   risks and authority changes are returned so the caller can log them.

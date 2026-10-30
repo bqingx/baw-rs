@@ -72,7 +72,11 @@ async fn run() -> io::Result<bool> {
         return Ok(success);
     }
     let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
+        Ok(cli) => {
+            baw_rs::signing::set_skip_prechecks_default(cli.skip_prechecks);
+            baw_rs::signing::apply_skip_prechecks(cli.skip_prechecks);
+            cli
+        }
         Err(error)
             if matches!(
                 error.kind(),

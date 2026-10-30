@@ -157,6 +157,11 @@ pub struct Cli {
     /// Route this command through the resident warm server when it is running.
     #[arg(long, global = true)]
     pub warm: bool,
+    /// Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust
+    /// `--from` as the sender. Removes the local guard against sending from a wallet other
+    /// than the one named; the backend still enforces developer mode.
+    #[arg(long = "skip-prechecks", global = true, env = "BAW_RS_SKIP_PRECHECKS")]
+    pub skip_prechecks: bool,
     #[command(subcommand)]
     pub command: Command,
 }

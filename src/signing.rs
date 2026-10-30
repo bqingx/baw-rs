@@ -235,12 +235,48 @@ fn timestamp(v: &Value) -> Option<u64> {
     let n = v.as_u64().or_else(|| v.as_str()?.parse().ok())?;
     Some(if n >= 1_000_000_000_000 { n / 1000 } else { n })
 }
+/// When set, the two pre-flight reads are skipped and the caller's `--from` is trusted.
+/// Off unless `--skip-prechecks` or `BAW_RS_SKIP_PRECHECKS=1` asks for it.
+static SKIP_PRECHECKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+static SKIP_PRECHECKS_DEFAULT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_skip_prechecks(on: bool) {
+    SKIP_PRECHECKS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A resident server started with `--skip-prechecks` (or the env var) applies it to every
+/// request it serves; a request may still turn it on itself, never off.
+pub fn set_skip_prechecks_default(on: bool) {
+    SKIP_PRECHECKS_DEFAULT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn apply_skip_prechecks(requested: bool) {
+    let default = SKIP_PRECHECKS_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
+    set_skip_prechecks(default || requested);
+}
+
+pub fn skip_prechecks() -> bool {
+    SKIP_PRECHECKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 async fn check_wallet(
     client: &mut Client,
     chain: &str,
     expected: Option<&str>,
 ) -> Result<(String, u64), String> {
     nonempty(chain)?;
+    if skip_prechecks() {
+        // No settings read (the backend enforces developer mode anyway) and no address
+        // read (the caller asserts the sender). Format is still validated locally, and the
+        // preview is bounded by the ordinary five-minute window instead of the dev expiry.
+        let sender = expected
+            .ok_or("--from is required when pre-checks are skipped")?
+            .to_owned();
+        address(chain, &sender)?;
+        return Ok((sender, now()? + 300));
+    }
     // Revalidate against this client; the value is reused only for a few seconds inside
     // this process (BAW_RS_CHECK_TTL_MS, default 3000) and dropped on any session change.
     let settings = client.cached_settings().await?;
@@ -1147,6 +1183,70 @@ mod tests {
             !needs_accepted_digest(&fire),
             "fire has no reviewed preview to pin"
         );
+    }
+
+    /// Guards the two tests that flip the process-wide skip flag, so a concurrently
+    /// running test that expects the pre-flight reads cannot observe it mid-flight.
+    static SKIP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // The mutex serialises tests that flip a process-wide flag; holding it across awaits is
+    // the point, and the await never depends on another holder of the same lock.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn skip_prechecks_makes_no_reads_and_trusts_from() {
+        let _guard = SKIP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempwallet();
+        set_skip_prechecks(true);
+        let (mut client, seen, thread) = fixture(vec![preview()]);
+        let result = contract(
+            &mut client,
+            dir.path(),
+            &ContractCommand::Preview(ContractPreview {
+                binance_chain_id: "1".into(),
+                from: FROM.into(),
+                to: Some("0x2222222222222222222222222222222222222222".into()),
+                value: None,
+                input_data: Some("0x".into()),
+                unsigned_tx: None,
+                gas_limit: None,
+            }),
+            None,
+        )
+        .await;
+        set_skip_prechecks(false);
+        thread.join().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 1, "no settings read, no address read");
+        assert!(requests[0].contains("/contract-call/preview "));
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn skip_prechecks_still_requires_an_explicit_sender() {
+        let _guard = SKIP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempwallet();
+        set_skip_prechecks(true);
+        let (mut client, seen, thread) = fixture(vec![]);
+        let result = contract(
+            &mut client,
+            dir.path(),
+            &ContractCommand::Preview(ContractPreview {
+                binance_chain_id: "1".into(),
+                from: String::new(),
+                to: Some("0x2222222222222222222222222222222222222222".into()),
+                value: None,
+                input_data: Some("0x".into()),
+                unsigned_tx: None,
+                gas_limit: None,
+            }),
+            None,
+        )
+        .await;
+        set_skip_prechecks(false);
+        thread.join().unwrap();
+        assert!(result.is_err(), "empty --from must fail before any network");
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
