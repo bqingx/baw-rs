@@ -127,3 +127,24 @@ The consequences, stated plainly:
 - **Current multi-wallet changes are not production-verified.** Only synthetic wallets,
   loopback HTTP and local IPC were exercised. Historical single-wallet observations in
   README do not prove the current named-wallet path or any real money operation.
+
+## Resident reuse (daemon only)
+
+A one-shot command decrypts `session.json` on every invocation: PBKDF2-HMAC-SHA256 with
+100k rounds, then AES-256-GCM. That cost is paid per command, and it was measured at about
+70 ms on this host.
+
+The resident server keeps the decrypted credentials (`client_id`, `session_id`) and the
+client built from them. Before each request it stats `session.json` and compares
+`(device, inode, size, mtime_nsec)` with the values recorded at the last full load:
+
+- unchanged → reuse the credentials already in memory (measured: 84 ms -> 12 ms per command)
+- changed, missing, or an auth command → full reload, exactly as before
+
+The inode is what makes a swap detectable: replacing the file, even with a same-sized
+replacement, allocates a new inode. A caller who can rewrite the file and forge its mtime
+would evade the check, but such a caller can also read the directory, so the check is
+about detecting change, not about stopping a same-user attacker.
+
+On a failed command the client is dropped rather than cached (an uncertain outcome must not
+retain a possibly rotated cookie), which also forces the next request through the full load.

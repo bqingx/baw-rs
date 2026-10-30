@@ -28,6 +28,18 @@ const MAX_FRAME: usize = 65536;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const FRAME_TIMEOUT: Duration = Duration::from_secs(3);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(360);
+/// Cheap fingerprint of `session.json`, used to decide whether the cached credentials are
+/// still the ones on disk. A change of device, inode, size or mtime forces a full reload.
+type Stamp = (u64, u64, u64, i64);
+
+fn session_stamp(dir: &std::path::Path) -> Option<Stamp> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(dir.join("session.json")).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    Some((meta.dev(), meta.ino(), meta.size(), meta.mtime_nsec()))
+}
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Request {
@@ -38,6 +50,10 @@ pub enum Request {
 struct State {
     client: Option<Client>,
     persisted: Option<session::Credentials>,
+    /// Identity string the client was built with, reused by the fast path.
+    instance: Option<String>,
+    /// `(dev, ino, size, mtime_nsec)` of `session.json` at the last full load.
+    stamp: Option<Stamp>,
 }
 pub(crate) struct Wallet {
     entry: Entry,
@@ -59,6 +75,8 @@ impl Wallet {
             state: Mutex::new(State {
                 client: None,
                 persisted: None,
+                instance: None,
+                stamp: None,
             }),
             _lease: lease,
             consumed: Default::default(),
@@ -107,6 +125,35 @@ impl Wallet {
             _ => None,
         };
         let auth = auth_command.is_some();
+        // Revalidate the wallet directory itself (device, inode, owner) on every request;
+        // this is a stat, not a decrypt.
+        entry.check()?;
+        let stamp = session_stamp(&entry.dir);
+        // Fast path: the session file is byte-for-byte the one we last decrypted (same
+        // device, inode, size and mtime), so the credentials already in memory are reused
+        // instead of paying PBKDF2 (100k rounds) plus AES on every command. Any change to
+        // the file — including a swap with a same-sized replacement — changes the inode or
+        // mtime and forces the full load below. Auth commands always take the slow path.
+        if !auth && state.client.is_some() && stamp.is_some() && stamp == state.stamp {
+            let instance = state
+                .instance
+                .clone()
+                .ok_or("wallet instance unavailable in resident state")?;
+            cli.instance_id = instance;
+            let mut client = state.client.take().ok_or("wallet client unavailable")?;
+            let result =
+                tokio::time::timeout(COMMAND_TIMEOUT, crate::dispatch::execute(&mut client, &cli))
+                    .await;
+            // Same rule as the slow path: an uncertain outcome drops the client instead of
+            // retaining a possibly rotated cookie, and forces the next request to reload.
+            if result.is_ok() {
+                state.client = Some(client);
+            }
+            return result.map_err(|_| {
+                "command timed out; mutation outcome uncertain; inspect operation journal before retry"
+                    .to_owned()
+            })?;
+        }
         // Session preloading/PBKDF2 runs off-runtime, never under a global wallet lock.
         let loaded = tokio::task::spawn_blocking(move || {
             entry.check()?;
@@ -143,6 +190,8 @@ impl Wallet {
             client.payment_consumed = self.consumed.clone();
             state.client = Some(client);
         }
+        state.instance = Some(cli.instance_id.clone());
+        state.stamp = stamp;
         state.persisted = Some(credentials);
         // Take ownership: cancellation must drop, not retain, an uncertain in-memory cookie.
         let mut client = state.client.take().ok_or("wallet client unavailable")?;
