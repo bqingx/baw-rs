@@ -23,6 +23,27 @@ pub struct Client {
     invalidated: bool,
     pub(crate) payment_consumed:
         std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Short-lived caches for the two reads every guarded write performs before it can
+    /// preview: `settings/query` (developer mode) and the wallet's chain addresses.
+    /// Bounded by [`CHECK_TTL`] so a revoked developer mode cannot stay trusted for long,
+    /// and cleared outright whenever the session changes.
+    settings_cache: Option<(std::time::Instant, Value)>,
+    addresses_cache: Option<(std::time::Instant, Value)>,
+}
+
+/// Freshness window for the pre-preview reads.
+///
+/// Defaults to zero: a one-shot command performs each check exactly once anyway, so
+/// caching buys nothing and re-reading keeps the strict behaviour. A resident server sets
+/// `BAW_RS_CHECK_TTL_MS` when it starts, which is where the saving is real — the preview
+/// and the execute that follows it then share one settings read and one address read
+/// instead of paying four round trips.
+fn check_ttl() -> std::time::Duration {
+    let ms = std::env::var("BAW_RS_CHECK_TTL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    std::time::Duration::from_millis(ms)
 }
 
 impl Client {
@@ -60,6 +81,8 @@ impl Client {
             credentials,
             invalidated: false,
             payment_consumed: Default::default(),
+            settings_cache: None,
+            addresses_cache: None,
         })
     }
 
@@ -77,6 +100,57 @@ impl Client {
             return Err("test origin must be loopback".into());
         }
         Self::build(credentials, origin)
+    }
+
+    /// `settings/query`, reused for a few seconds inside one process.
+    ///
+    /// Every guarded write re-reads this to confirm developer mode is enabled and
+    /// unexpired. That is two round trips per command when nothing else changes, so the
+    /// value is reused for [`check_ttl`]. Set `BAW_RS_CHECK_TTL_MS=0` for the strict
+    /// original behaviour.
+    pub(crate) async fn cached_settings(&mut self) -> Result<Value, String> {
+        let ttl = check_ttl();
+        self.settings_with_ttl(ttl).await
+    }
+
+    async fn settings_with_ttl(&mut self, ttl: std::time::Duration) -> Result<Value, String> {
+        if !ttl.is_zero() {
+            if let Some((at, value)) = &self.settings_cache {
+                if at.elapsed() < ttl {
+                    return Ok(value.clone());
+                }
+            }
+        }
+        let value = self
+            .request(Method::GET, &format!("{API}/settings/query"), None)
+            .await?;
+        self.settings_cache = Some((std::time::Instant::now(), value.clone()));
+        Ok(value)
+    }
+
+    /// `wallet address` (two requests: wallet list + active networks), cached the same way.
+    pub(crate) async fn cached_addresses(&mut self) -> Result<Value, String> {
+        let ttl = check_ttl();
+        self.addresses_with_ttl(ttl).await
+    }
+
+    async fn addresses_with_ttl(&mut self, ttl: std::time::Duration) -> Result<Value, String> {
+        if !ttl.is_zero() {
+            if let Some((at, value)) = &self.addresses_cache {
+                if at.elapsed() < ttl {
+                    return Ok(value.clone());
+                }
+            }
+        }
+        let value = self.execute(&WalletCommand::Address).await?;
+        self.addresses_cache = Some((std::time::Instant::now(), value.clone()));
+        Ok(value)
+    }
+
+    /// Drops every cached read; call whenever the session or credentials change.
+    pub(crate) fn clear_check_caches(&mut self) {
+        self.settings_cache = None;
+        self.addresses_cache = None;
     }
 
     pub(crate) fn credentials(&self) -> &Credentials {
@@ -105,6 +179,7 @@ impl Client {
     pub(crate) fn begin_signin(&mut self) {
         self.credentials.session_id = zeroize::Zeroizing::new(String::new());
         self.invalidated = false;
+        self.clear_check_caches();
     }
 
     pub(crate) fn set_session(
@@ -121,6 +196,7 @@ impl Client {
         }
         self.credentials.session_id = session;
         self.invalidated = false;
+        self.clear_check_caches();
         Ok(())
     }
 
@@ -365,6 +441,7 @@ impl Client {
         self.invalidated = true;
         use zeroize::Zeroize;
         self.credentials.session_id.zeroize();
+        self.clear_check_caches();
     }
 }
 
@@ -969,6 +1046,70 @@ mod tests {
             creds.session_id = zeroize::Zeroizing::new(token.into());
             assert!(Client::new(creds).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn check_cache_reuses_reads_within_ttl_and_never_at_zero_ttl() {
+        // Three replies: one for the reused read, two for the two strict reads.
+        let settings_one = response(
+            json!({"devMode":{"enabled":true,"expiresAt":4102444800u64}}),
+            None,
+        );
+        let settings_two = settings_one.clone();
+        let settings_three = settings_one.clone();
+        let (base, requests, handle) = mock(vec![settings_one, settings_two, settings_three]);
+        let mut client = Client::test_client(credentials(), &base).unwrap();
+
+        let first = client
+            .settings_with_ttl(std::time::Duration::from_secs(30))
+            .await
+            .unwrap();
+        let second = client
+            .settings_with_ttl(std::time::Duration::from_secs(30))
+            .await
+            .unwrap();
+        assert_eq!(first, second);
+        // A zero TTL must always re-read, even with a populated cache.
+        client
+            .settings_with_ttl(std::time::Duration::ZERO)
+            .await
+            .unwrap();
+        client
+            .settings_with_ttl(std::time::Duration::ZERO)
+            .await
+            .unwrap();
+        handle.join().unwrap();
+
+        let seen: Vec<String> = requests.into_iter().collect();
+        assert_eq!(
+            seen.len(),
+            3,
+            "1 cached read + 1 at zero TTL, cache never used"
+        );
+        assert!(seen.iter().all(|r| r.contains("/settings/query")));
+    }
+
+    #[tokio::test]
+    async fn clearing_the_check_cache_forces_a_fresh_read() {
+        let reply = || {
+            response(
+                json!({"devMode":{"enabled":true,"expiresAt":4102444800u64}}),
+                None,
+            )
+        };
+        let (base, requests, handle) = mock(vec![reply(), reply()]);
+        let mut client = Client::test_client(credentials(), &base).unwrap();
+        client
+            .settings_with_ttl(std::time::Duration::from_secs(30))
+            .await
+            .unwrap();
+        client.clear_check_caches();
+        client
+            .settings_with_ttl(std::time::Duration::from_secs(30))
+            .await
+            .unwrap();
+        handle.join().unwrap();
+        assert_eq!(requests.into_iter().count(), 2);
     }
 
     #[tokio::test]

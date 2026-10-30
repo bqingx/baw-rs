@@ -7,6 +7,14 @@ the current source.
 
 ## Unreleased
 
+- Added `contract-call fire`: preview then execute in a single process, with `--confirm` and
+  a unique `--operation-id` but no policy file and no human digest review. The preview's
+  risks and authority changes are returned so the caller can log them.
+- The two pre-write backend reads (developer mode, wallet addresses) are now reused for
+  `BAW_RS_CHECK_TTL_MS` inside a resident server (default 3000 ms there, 0 in one-shot
+  commands), so a preview and the execute that follows it pay for them once. The cache is
+  per wallet client and dropped on any session change.
+
 - Added `--instance-id-file PATH`: read the instance identity from a private 0600 file
   instead of the command line, so the passphrase stays out of `ps` and shell history. Same
   string ⇒ same key, so existing wallets keep working with no re-login; supplying both

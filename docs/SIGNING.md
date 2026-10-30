@@ -34,3 +34,30 @@ Order of checks: policy parse → chain/target/value/selector/calldata/gas match
 → developer-mode and wallet-address verification → preview → risk and authority-change gate
 → execute with the preview's own digest. Any mismatch aborts; the preview stays consumed on
 an ambiguous execute and is never retried.
+
+## Single-call execution (`contract-call fire`)
+
+`contract-call fire` is `run` with the policy gate removed: preview and execute happen in
+one process, and there is **no human review of the digest**. `--confirm` and a unique
+`--operation-id` are still mandatory, still checked before any wallet access, and still
+journaled; the preview's `risks`, `authorityChanges` and `allowanceChanges` are returned in
+the output so a caller can log or alert on them after the fact.
+
+Use it when an external script owns the decision (for example a monitor that fires the
+moment a contract condition flips) and the extra process start plus the digest handshake
+would cost more than the risk it covers. When a human is in the loop, use `preview` +
+`execute`; when a fixed intent must be enforced, use `run` with a policy.
+
+Timing note measured on this host: `fire` removes one process start (~0.15 s for the
+JavaScript reference, <0.01 s here) and the digest transfer, but the two backend round
+trips (preview, execute) are unavoidable.
+
+## Pre-write checks and the resident cache
+
+Every guarded write re-reads `settings/query` (developer mode) and the wallet's chain
+addresses before it will preview — two round trips. Inside a resident server those two
+reads are reused for `BAW_RS_CHECK_TTL_MS` (default 3000 in `serve`, **0 in a one-shot
+command**), which is where a preview followed by its execute stops paying for the same two
+reads twice. The cache is dropped whenever the session changes (`set_session`,
+`begin_signin`, `invalidate`), is never shared between wallets, and never spans processes.
+Set `BAW_RS_CHECK_TTL_MS=0` in the server environment to restore strict per-command reads.

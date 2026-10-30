@@ -264,6 +264,12 @@ async fn serve_inner(
         }
         std::fs::remove_file(path).map_err(|_| "cannot remove stale socket")?;
     }
+    // Resident processes reuse the pre-write checks for a few seconds: a preview and the
+    // execute that follows it then share one settings read and one address read instead of
+    // paying four round trips. One-shot commands keep the strict default (no reuse).
+    if std::env::var_os("BAW_RS_CHECK_TTL_MS").is_none() {
+        std::env::set_var("BAW_RS_CHECK_TTL_MS", "3000");
+    }
     let listener = UnixListener::bind(path).map_err(|_| "cannot bind daemon socket")?;
     let _cleanup = SocketGuard(path.to_owned());
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))

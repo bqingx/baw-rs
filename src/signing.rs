@@ -121,6 +121,10 @@ pub enum ContractCommand {
     },
     /// Preview then execute in one process, only if the pinned policy matches.
     Run(ContractRun),
+    /// Preview then execute in one process with no policy gate and no human digest
+    /// review. Consent is still `--confirm` + a unique `--operation-id`; the preview's
+    /// risks and authority changes are returned in the output for the caller to log.
+    Fire(ContractFire),
 }
 #[derive(Args, Debug, Clone)]
 pub struct ContractRun {
@@ -139,6 +143,22 @@ pub struct ContractRun {
     #[arg(long)]
     pub policy: std::path::PathBuf,
 }
+#[derive(Args, Debug, Clone)]
+pub struct ContractFire {
+    #[arg(long = "binanceChainId")]
+    pub binance_chain_id: String,
+    #[arg(long)]
+    pub from: String,
+    #[arg(long)]
+    pub to: String,
+    #[arg(long)]
+    pub value: Option<String>,
+    #[arg(long = "inputData")]
+    pub input_data: Option<String>,
+    #[arg(long = "gasLimit")]
+    pub gas_limit: Option<u64>,
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct MessagePreview {
     #[arg(long = "binanceChainId")]
@@ -176,7 +196,7 @@ pub enum SignCommand {
     },
     History(MessageHistory),
 }
-use crate::{cli::WalletCommand, client::Client};
+use crate::client::Client;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -221,17 +241,16 @@ async fn check_wallet(
     expected: Option<&str>,
 ) -> Result<(String, u64), String> {
     nonempty(chain)?;
-    // Always revalidate against this client; never use a process-global chain cache.
-    let settings = client
-        .request(Method::GET, &format!("{API}/settings/query"), None)
-        .await?;
+    // Revalidate against this client; the value is reused only for a few seconds inside
+    // this process (BAW_RS_CHECK_TTL_MS, default 3000) and dropped on any session change.
+    let settings = client.cached_settings().await?;
     let mode = &settings["devMode"];
     let expires =
         timestamp(&mode["expiresAt"]).ok_or("developer mode expiry is missing or invalid")?;
     if mode["enabled"] != true || expires <= now()? {
         return Err("developer mode is disabled or expired".into());
     }
-    let wallets = client.execute(&WalletCommand::Address).await?;
+    let wallets = client.cached_addresses().await?;
     let rows = wallets["addresses"]
         .as_array()
         .ok_or("wallet addresses missing")?;
@@ -631,6 +650,7 @@ pub async fn contract(
             execute_call(client, dir, "contract-call", request_id, accepted_digest).await
         }
         ContractCommand::Run(a) => run_contract(client, dir, a).await,
+        ContractCommand::Fire(a) => fire_contract(client, dir, a).await,
     }
 }
 fn chain_number(v: &Value) -> Option<u128> {
@@ -787,7 +807,7 @@ pub fn needs_accepted_digest(command: &ContractCommand) -> bool {
 pub fn is_contract_mutating(command: &ContractCommand) -> bool {
     matches!(
         command,
-        ContractCommand::Execute { .. } | ContractCommand::Run(_)
+        ContractCommand::Execute { .. } | ContractCommand::Run(_) | ContractCommand::Fire(_)
     )
 }
 pub fn is_message_mutating(command: &SignCommand) -> bool {
@@ -803,6 +823,9 @@ pub fn contract_intent(command: &ContractCommand) -> Value {
         }
         ContractCommand::Run(a) => {
             json!({"operation":"contract-call-run","binanceChainId":a.binance_chain_id,"from":a.from,"to":a.to,"value":a.value,"inputData":a.input_data,"gasLimit":a.gas_limit,"policy":a.policy.to_string_lossy()})
+        }
+        ContractCommand::Fire(a) => {
+            json!({"operation":"contract-call-fire","binanceChainId":a.binance_chain_id,"from":a.from,"to":a.to,"value":a.value,"inputData":a.input_data,"gasLimit":a.gas_limit})
         }
     }
 }
@@ -882,6 +905,63 @@ async fn run_contract(
             "previewSha256": digest,
             "requireConfirmation": preview.get("requireConfirmation").cloned().unwrap_or(Value::Null),
             "gasLimit": preview.get("gasLimit").cloned().unwrap_or(Value::Null),
+        },
+        "execution": execution,
+    }))
+}
+
+/// `contract-call fire`: preview then execute in one process, no policy file and no
+/// human digest review. The caller authorises with `--confirm` + a unique
+/// `--operation-id`; the preview's risk and authority data is returned so it can be
+/// recorded even though nobody read it before execution.
+async fn fire_contract(
+    client: &mut Client,
+    dir: &Path,
+    args: &ContractFire,
+) -> Result<Value, String> {
+    if is_solana(&args.binance_chain_id) {
+        return Err("fire supports EVM chains only; use preview + execute for Solana".into());
+    }
+    let preview_args = ContractPreview {
+        binance_chain_id: args.binance_chain_id.clone(),
+        from: args.from.clone(),
+        to: Some(args.to.clone()),
+        value: args.value.clone(),
+        input_data: args.input_data.clone(),
+        unsigned_tx: None,
+        gas_limit: args.gas_limit,
+    };
+    let payload = contract_payload(&preview_args)?;
+    let (sender, dev_expiry) =
+        check_wallet(client, &args.binance_chain_id, Some(&args.from)).await?;
+    let preview = preview_call(
+        client,
+        dir,
+        "contract-call",
+        &args.binance_chain_id,
+        sender,
+        dev_expiry,
+        payload,
+    )
+    .await?;
+    let request_id = preview["requestId"]
+        .as_str()
+        .ok_or("preview requestId missing")?
+        .to_owned();
+    let digest = preview["previewSha256"]
+        .as_str()
+        .ok_or("preview digest missing")?
+        .to_owned();
+    let execution = execute_call(client, dir, "contract-call", &request_id, Some(&digest)).await?;
+    Ok(json!({
+        "policy": "none (fire performs no policy check)",
+        "preview": {
+            "requestId": request_id,
+            "previewSha256": digest,
+            "requireConfirmation": preview.get("requireConfirmation").cloned().unwrap_or(Value::Null),
+            "risks": preview.get("risks").cloned().unwrap_or(Value::Null),
+            "authorityChanges": preview.get("authorityChanges").cloned().unwrap_or(Value::Null),
+            "allowanceChanges": preview.get("allowanceChanges").cloned().unwrap_or(Value::Null),
         },
         "execution": execution,
     }))
@@ -1052,6 +1132,65 @@ mod tests {
             0o600
         );
     }
+    #[test]
+    fn fire_is_a_mutation_but_needs_no_accepted_digest() {
+        let fire = ContractCommand::Fire(ContractFire {
+            binance_chain_id: "1".into(),
+            from: FROM.into(),
+            to: "0x2222222222222222222222222222222222222222".into(),
+            value: None,
+            input_data: Some("0x".into()),
+            gas_limit: None,
+        });
+        assert!(is_contract_mutating(&fire), "fire must require consent");
+        assert!(
+            !needs_accepted_digest(&fire),
+            "fire has no reviewed preview to pin"
+        );
+    }
+
+    #[tokio::test]
+    async fn fire_previews_and_executes_in_one_call_without_a_policy() {
+        let dir = tempwallet();
+        let mut replies = gates();
+        replies.push(preview());
+        replies.extend(gates());
+        replies.push(json!({"orderId":"synthetic-fire-order"}));
+        let (mut client, seen, thread) = fixture(replies);
+        let out = contract(
+            &mut client,
+            dir.path(),
+            &ContractCommand::Fire(ContractFire {
+                binance_chain_id: "1".into(),
+                from: FROM.into(),
+                to: "0x2222222222222222222222222222222222222222".into(),
+                value: Some("0".into()),
+                input_data: Some("0x".into()),
+                gas_limit: None,
+            }),
+            None,
+        )
+        .await
+        .unwrap();
+        thread.join().unwrap();
+        assert_eq!(out["execution"], json!({"orderId":"synthetic-fire-order"}));
+        // The risks the caller was never shown are still returned, so they can be logged.
+        assert_eq!(out["preview"]["risks"], preview()["risks"]);
+        assert_eq!(
+            out["preview"]["authorityChanges"],
+            preview()["authorityChanges"]
+        );
+        assert_eq!(out["preview"]["previewSha256"].as_str().unwrap().len(), 64);
+        let requests = seen.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            8,
+            "strict default: gates, preview, gates again, execute"
+        );
+        assert!(requests[3].contains("/contract-call/preview "));
+        assert!(requests[7].contains("/contract-call/execute "));
+    }
+
     #[tokio::test]
     async fn accepted_preview_is_consumed_even_when_wallet_revalidation_fails() {
         let dir = tempwallet();
