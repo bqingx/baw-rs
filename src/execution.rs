@@ -21,7 +21,10 @@ pub fn require_consent(confirmed: bool, operation_id: Option<&str>) -> Result<&s
 pub struct OperationGuard {
     record: std::fs::File,
     metadata: Value,
-    _lock: std::fs::File,
+    /// Held for the duration of the mutation unless `BAW_RS_CONCURRENT_WRITES=1`
+    /// explicitly opts out (needed to find out what the backend does with two writes from
+    /// one wallet at the same time).
+    _lock: Option<std::fs::File>,
 }
 impl OperationGuard {
     pub fn begin(
@@ -84,8 +87,13 @@ impl OperationGuard {
             c".baw-rs-write.lock",
             libc::O_RDWR | libc::O_CREAT,
         )?;
-        fs2::FileExt::try_lock_exclusive(&lock)
-            .map_err(|_| "another wallet mutation is running")?;
+        let lock = if std::env::var("BAW_RS_CONCURRENT_WRITES").is_ok_and(|v| v == "1") {
+            None
+        } else {
+            fs2::FileExt::try_lock_exclusive(&lock)
+                .map_err(|_| "another wallet mutation is running")?;
+            Some(lock)
+        };
         let created =
             unsafe { libc::mkdirat(directory.as_raw_fd(), c".baw-rs-operations".as_ptr(), 0o700) };
         if created < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST) {

@@ -7,6 +7,11 @@ the current source.
 
 ## Unreleased
 
+- `BAW_RS_CONCURRENT_WRITES=1` skips the local exclusive write lock, for diagnosing backend
+  behaviour. Measured: two simultaneous writes from one wallet always yield one
+  `BROADCASTED` and one `Binance API code 351716`, so a single wallet is serialised by
+  Binance itself. Not a throughput switch; see `docs/SIGNING.md`.
+
 - Added `openfour quote-buy`: reads the Open Four bonding curve and builds the
   `buyByBudget` transaction in-process — no Node, no wallet session, no local simulation.
   Measured 67-74 ms against 467-1100 ms for the reference script, with byte-identical

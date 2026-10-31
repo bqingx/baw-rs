@@ -81,3 +81,26 @@ server to apply it to every request) removes both. When it is on:
 
 It is off by default, on every command, and it is the only switch in this tool that removes
 a local safety check rather than adding one.
+
+## Concurrent writes from one wallet: the backend refuses them
+
+Measured on 2026-10-30, twice, with `BAW_RS_CONCURRENT_WRITES=1` (see below) so that the
+local write lock was out of the way and both requests actually reached Binance:
+
+| run | result |
+|---|---|
+| two `contract-call fire` at once, different tokens | one `BROADCASTED` at ~1.2 s, the other rejected at ~0.9 s with `Binance API code 351716` |
+
+Both runs behaved identically: exactly one write proceeds, the second is refused by the
+backend while the first is in flight. So a single wallet is serialised by Binance, not only
+by this client — buying ten tokens with one wallet costs ten sequential executions
+(~1 s each here), and no amount of local concurrency changes that.
+
+`351716` has no mapping in the installed bundle; the behaviour above is the evidence, the
+code itself is undocumented.
+
+`BAW_RS_CONCURRENT_WRITES=1` skips the local exclusive write lock
+(`.baw-rs-write.lock`). It exists so this question could be answered, and it is not a
+throughput switch: with the backend refusing the second write there is nothing to gain, and
+the failed request has already written its journal entry and consumed its preview. Leave it
+unset unless you are diagnosing the backend again.
