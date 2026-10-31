@@ -8,6 +8,7 @@ pub mod dispatch;
 pub mod execution;
 pub mod leaderboard;
 pub mod limit_order;
+pub mod openfour;
 pub mod policy;
 pub mod portfolio;
 pub mod prediction;

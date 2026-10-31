@@ -71,6 +71,24 @@ async fn run() -> io::Result<bool> {
         emit_json(&mut io::stdout().lock(), &envelope(result))?;
         return Ok(success);
     }
+    // `openfour` is a chain-only read: it must work without a wallet directory, an
+    // instance identity or a session, so it is parsed and run before the wallet CLI.
+    if raw
+        .first()
+        .is_some_and(|s| baw_rs::openfour::NAMES.contains(&s.as_str()))
+    {
+        let parsed = match baw_rs::openfour::Args::try_parse_from(raw.iter()) {
+            Ok(args) => args,
+            Err(error) => {
+                let _ = error.print();
+                return Ok(false);
+            }
+        };
+        let result = baw_rs::openfour::run(&parsed.command).await;
+        let success = result.is_ok();
+        emit_json(&mut io::stdout().lock(), &envelope(result))?;
+        return Ok(success);
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => {
             baw_rs::signing::set_skip_prechecks_default(cli.skip_prechecks);

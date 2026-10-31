@@ -7,6 +7,11 @@ the current source.
 
 ## Unreleased
 
+- Added `openfour quote-buy`: reads the Open Four bonding curve and builds the
+  `buyByBudget` transaction in-process — no Node, no wallet session, no local simulation.
+  Measured 67-74 ms against 467-1100 ms for the reference script, with byte-identical
+  calldata, amounts and slippage floor on the same inputs. See `docs/OPENFOUR-QUOTE.md`.
+
 - Added `--skip-prechecks` / `BAW_RS_SKIP_PRECHECKS=1`: skip the developer-mode and
   wallet-address reads before a guarded write and trust `--from` (which becomes mandatory).
   Saves the two measured reads (0.51-0.54 s + 0.43-0.64 s per call) at the cost of the only

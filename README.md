@@ -23,7 +23,7 @@
 
 | | |
 |---|---|
-| **命令面** | 官方 1.12.0 的 102 条叶子命令语法全覆盖，另有 `batch`（只读批处理）、`serve`（常驻）、`contract-call run`（策略约束执行）、`contract-call fire`（预览+执行合成一次调用） |
+| **命令面** | 官方 1.12.0 的 102 条叶子命令语法全覆盖，另有 `batch`（只读批处理）、`serve`（常驻）、`contract-call run`（策略约束执行）、`contract-call fire`（预览+执行合成一次调用）、`openfour quote-buy`（four.meme 内盘报价，进程内 67 ms，替代 Node 脚本的 467–1100 ms） |
 | **交易** | swap、限价单、转账、合约调用与 EIP-712 签名，全部走「预览 → 确认 → 执行」三段式 |
 | **查询** | 余额、历史、额度、gas、授权（approvals）、Agent ID、会话到期时间 |
 | **DeFi** | 协议与机会发现、持仓、存取、LP、领取 |
