@@ -2,7 +2,7 @@
   "base_commit": "e77e68e8889be7a41eec31cf475f38aa976dce4a",
   "dirty_source": true,
   "production_verified": false,
-  "binary": "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+  "binary": "<scratch>/baw-rs-multi-target/release/baw-rs",
   "binary_sha256": "28d5ed7a5207202774a656c6a36c3f59b1d6ce8f01b534d756df9f25ebc7215a",
   "tests_passed": 290,
   "tests_failed": 0,

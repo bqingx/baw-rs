@@ -51,7 +51,7 @@
   {
     "name": "release-version",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "--version"
     ],
     "exit_code": 0,
@@ -61,7 +61,7 @@
   {
     "name": "vaults-help",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--help"
     ],
@@ -72,16 +72,16 @@
   {
     "name": "register-alice",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "register",
       "alice",
       "--wallet-dir",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/alice",
+      "<scratch>/baw-multi-jvj9yy20/alice",
       "--instance-id-file",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/alice.identity"
+      "<scratch>/baw-multi-jvj9yy20/alice.identity"
     ],
     "exit_code": 0,
     "expected_exit_code": 0,
@@ -90,16 +90,16 @@
   {
     "name": "register-bob",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "register",
       "bob",
       "--wallet-dir",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/bob",
+      "<scratch>/baw-multi-jvj9yy20/bob",
       "--instance-id-file",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/bob.identity"
+      "<scratch>/baw-multi-jvj9yy20/bob.identity"
     ],
     "exit_code": 0,
     "expected_exit_code": 0,
@@ -108,10 +108,10 @@
   {
     "name": "list",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "list"
     ],
     "exit_code": 0,
@@ -121,10 +121,10 @@
   {
     "name": "status",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "status"
     ],
     "exit_code": 0,
@@ -134,10 +134,10 @@
   {
     "name": "unknown-wallet",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "run",
       "missing",
       "--",
@@ -151,10 +151,10 @@
   {
     "name": "empty-alice",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "run",
       "alice",
       "--",
@@ -168,10 +168,10 @@
   {
     "name": "empty-bob",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "run",
       "bob",
       "--",
@@ -185,10 +185,10 @@
   {
     "name": "selector-rejected",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "run",
       "alice",
       "--",
@@ -203,10 +203,10 @@
   {
     "name": "stream-rejected",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "run",
       "alice",
       "--",
@@ -221,10 +221,10 @@
   {
     "name": "stop",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "stop"
     ],
     "exit_code": 0,
@@ -234,10 +234,10 @@
   {
     "name": "daemon",
     "argv": [
-      "/root/.hermes/cache/scratch/baw-rs-multi-target/release/baw-rs",
+      "<scratch>/baw-rs-multi-target/release/baw-rs",
       "vaults",
       "--registry",
-      "/root/.hermes/cache/scratch/baw-multi-jvj9yy20/registry",
+      "<scratch>/baw-multi-jvj9yy20/registry",
       "serve"
     ],
     "exit_code": 0,

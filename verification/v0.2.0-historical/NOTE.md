@@ -8,7 +8,7 @@ Why that conclusion holds (recomputed, not assumed):
 - `source-sha256.json` recorded 19 files; **9 do not match** the shipped source
   (`Cargo.toml`, `Cargo.lock`, `src/auth.rs`, `src/cli.rs`, `src/client.rs`,
   `src/dispatch.rs`, `src/lib.rs`, `src/main.rs`, `src/signing.rs`).
-- Every log reads `Compiling baw-rs v0.2.0 (/root/baw-rs)`, while `Cargo.toml` shipped
+- Every log reads `Compiling baw-rs v0.2.0 (<repo>)`, while `Cargo.toml` shipped
   as `0.2.2`. Different version, different working directory.
 - The manifest's test tally (100 library tests) differs from what this tree runs
   (105 library tests, 114 total), which is consistent with tests added after those

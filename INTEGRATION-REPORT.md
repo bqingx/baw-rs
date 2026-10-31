@@ -1,7 +1,7 @@
 # BAW Rust v0.2 integration report
 
 > **Historical document — scope limited to v0.2.0.**
-> The gates quoted below ran on `v0.2.0` at `/root/baw-rs`. The source in this
+> The gates quoted below ran on `v0.2.0` at `<repo>`. The source in this
 > repository is `0.2.2` and differs in 9 files, so **none of the counts or hashes in
 > this report describe the current tree**. They are retained as the record of that
 > earlier review pass. The shipped binary hash (`d0e203…`, 5,564,520 bytes) refers to a
@@ -13,9 +13,9 @@
 
 Requested migration is integrated and offline-verified. Release version: **0.2.0**. All previously interrupted modules are compiled into the real CLI; no original CLI fallback, production stubs, todo!/unimplemented! paths, fake responses or live-wallet execution were introduced.
 
-**Delivered executable:** `/root/baw-rs/dist/baw-rs`
+**Delivered executable:** `<repo>/dist/baw-rs`
 
-Build executable: `/root/.hermes/cache/scratch/baw-integration-target/release/baw-rs`
+Build executable: `<scratch>/baw-integration-target/release/baw-rs`
 
 Both files have identical SHA-256: `d0e203355a972778d213e19a64f6a7e138717f479cc647f00d95e0b78c3d9537`.
 
@@ -23,7 +23,7 @@ Executable size: **5,564,520 bytes**. Actual release output: `baw-rs 0.2.0`. Pro
 
 ## Exact final checks
 
-All final commands exited **0**, using `/root/.hermes/cache/scratch/baw-integration-target` for compilation:
+All final commands exited **0**, using `<scratch>/baw-integration-target` for compilation:
 
 | Gate | Actual outcome | Saved output |
 |---|---|---|
@@ -88,7 +88,7 @@ Clippy initially caught unnecessary owned BigDecimal comparisons; these were cha
 
 Primary implementation changes: `src/lib.rs`, `src/cli.rs`, `src/main.rs`, new `src/dispatch.rs`, `src/client.rs`, `src/session.rs`, integrated/fixed `src/auth.rs`, `src/auth_store.rs`, `src/signing.rs`, `src/trade.rs`; formatter/lint cleanup also touched `src/execution.rs`, `src/portfolio.rs`, `src/rwa.rs`. Tests: existing tests/cli.rs intentionally updated for normalized balance, new tests/mutation_consent.rs, existing tests/port_contract.rs now passes, additional module/cross-module regressions. Manifests, README and feature docs updated; new report, release smoke JSON, verification logs/source hashes and `dist/baw-rs` delivered.
 
-The directory is not a Git repository, so no Git diff/commit is claimed. Work stayed within /root/baw-rs and scratch build/log paths. Original `/usr/bin/baw`, `/root/baw-ext`, shell/Hermes/Camofox/service/dependency configurations and wallet directories were not modified.
+The directory is not a Git repository, so no Git diff/commit is claimed. Work stayed within <repo> and scratch build/log paths. Original `/usr/bin/baw`, `<baw-ext>`, shell/Hermes/Camofox/service/dependency configurations and wallet directories were not modified.
 
 ## Parent verification after integration
 

@@ -1,0 +1,16 @@
+# verification/
+
+`scripts/verify.sh` 生成的证据：fmt / clippy / test / release 的日志、命令清单、二进制身份。
+
+## 路径已归一化
+
+这些文件是在构建机上原样产出的，里面的绝对路径在仓库转为公开前做过一次机械替换：
+
+| 原来 | 现在 |
+|---|---|
+| `/root/baw-rs` | `<repo>` |
+| `/root/.hermes/cache/scratch/...` | `<scratch>/...` |
+| 其他 `/root/...` | `<home>/...` |
+
+替换只动了路径文本，日志正文、测试计数、退出码与二进制 sha256 都没有改：`<repo>` 下的源码哈希仍可用
+`sha256sum` 逐条核对这些记录。除路径外未做任何编辑。

@@ -7,6 +7,11 @@ the current source.
 
 ## Unreleased
 
+- Repo published under the MIT license (`LICENSE`), and absolute build-host paths inside
+  `verification/` normalised to `<repo>` / `<scratch>` / `<home>` before the repo went public.
+  Only path text changed; counts, exit codes and binary hashes are untouched. See
+  `verification/README.md` and `docs/PARITY-IMPL-NOTES.md`.
+
 - `BAW_RS_CONCURRENT_WRITES=1` skips the local exclusive write lock, for diagnosing backend
   behaviour. Measured: two simultaneous writes from one wallet always yield one
   `BROADCASTED` and one `Binance API code 351716`, so a single wallet is serialised by

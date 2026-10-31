@@ -1,4 +1,4 @@
-binary: /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs
+binary: <scratch>/baw-rs-target/release/baw-rs
 sha256: a81114e862ba61fd735313fbb1521d5c668d1d1f960ec6c0e73fdf61dbf38b4d
 bytes: 8615936
 version: baw-rs 0.3.0

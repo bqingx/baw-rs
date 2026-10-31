@@ -1,4 +1,4 @@
-# /root/.hermes/cache/scratch/baw-rs-target/release/baw-rs --version: baw-rs 0.3.0
+# <scratch>/baw-rs-target/release/baw-rs --version: baw-rs 0.3.0
 auth signin
 auth verify
 auth signout

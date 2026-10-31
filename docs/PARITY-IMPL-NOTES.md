@@ -78,10 +78,10 @@ Minimum per module:
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"
-cd /root/baw-rs
-CARGO_TARGET_DIR=/root/.hermes/cache/scratch/baw-rs-target cargo fmt
-CARGO_TARGET_DIR=/root/.hermes/cache/scratch/baw-rs-target cargo test --lib <your_module>::
-CARGO_TARGET_DIR=/root/.hermes/cache/scratch/baw-rs-target cargo clippy --all-targets -- -D warnings
+cd <repo>
+CARGO_TARGET_DIR=<scratch>/baw-rs-target cargo fmt
+CARGO_TARGET_DIR=<scratch>/baw-rs-target cargo test --lib <your_module>::
+CARGO_TARGET_DIR=<scratch>/baw-rs-target cargo clippy --all-targets -- -D warnings
 ```
 
 `cargo test --lib` is filtered to your module while iterating; the full suite takes ~2.5
