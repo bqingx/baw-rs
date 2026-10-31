@@ -1,0 +1,4245 @@
+{
+  "scope": "offline + loopback HTTP/1.1; no TLS; synthetic sessions; no live wallet/trades/deployment",
+  "rust_all_targets": {
+    "passed": 326,
+    "failed": 0,
+    "ignored_benchmark": 1
+  },
+  "python_driver_tests": 3,
+  "benchmark_separate": "passed",
+  "review": "4 regression findings repaired; baseline dispatch skip test repaired; historical preview-shape compatibility added",
+  "sha256": {
+    "src/fast.rs": "2a5386eae5232e4f02dce5d17d42563c5585c3a038709d174e5758b0331e1f33",
+    "src/fast_tests.rs": "b462738500f5eecd20add35eaa3520f75b997e16ff26bb42fba83a2ebc28b8bc",
+    "src/client.rs": "18f9bf88a7d0d77e73ba21f26e179d3e5dc924b4f964bb386546f98415124cbe",
+    "src/signing.rs": "c92a665372815b6ee2a0cdc5e98f3f187696589b0488c67973c01733789b1bef",
+    "src/dispatch.rs": "849161fce1ad44fb552e9255db728b9fcff0923247a85d6fc79a954a510a46e7",
+    "src/main.rs": "65a6798b7da0700dabf1b1129f84be882a7616a5ad2eca40cb59d6c45837568d",
+    "src/openfour.rs": "19720c02883b8e0b58b61bec4cdb383e47a467cd1346ddf58eee7326f4afe5a6",
+    "src/lib.rs": "9a59cc5b85e9ca6f4297631e7fe6b7bb06eed32809c5bfc2477821f7396cdb84",
+    "examples/fast_driver.py": "75fbaa9e804f5bc0bd0d1302c0b76c5badc0e00e9a7f1cb3944c05da089969c1",
+    "tests/fast_cli.rs": "7e97e15f60235de7a46f7234d6463c03bdd5840a414a034ae4bfd1eaf630255e",
+    "tests/test_fast_driver.py": "e289371d51a9263b8cb0b58599c09f21139d77453b532823ba0cc115f1b76911",
+    "tests/fixtures/openfour_budget.json": "4ffed73070bc00ae6edd05042972ff0982c73df27b22ae5b58043802a3f6b8aa"
+  },
+  "benchmarks": [
+    {
+      "httpRequests": 200,
+      "mockDelayPerHttpMs": 0,
+      "orders": 100,
+      "samples": [
+        {
+          "consume_ms": 3.443076,
+          "encode_ms": 0.041534,
+          "execute": {
+            "body_ms": 0.009074,
+            "full_roundtrip_ms": 0.309851,
+            "request_ms": 0.274859
+          },
+          "journal_ms": 8.849342,
+          "local_prep_ms": 2.54677,
+          "prechecks_ms": 0.00502,
+          "preview": {
+            "body_ms": 0.019903,
+            "full_roundtrip_ms": 0.687605,
+            "request_ms": 0.585551
+          },
+          "queue_ms": 0.000303,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 15.949497,
+          "validation_ms": 0.018897999999999998
+        },
+        {
+          "consume_ms": 3.2998670000000003,
+          "encode_ms": 0.015258,
+          "execute": {
+            "body_ms": 0.009067,
+            "full_roundtrip_ms": 0.289861,
+            "request_ms": 0.25182699999999997
+          },
+          "journal_ms": 6.562285999999999,
+          "local_prep_ms": 0.10473199999999999,
+          "prechecks_ms": 0.004757,
+          "preview": {
+            "body_ms": 0.020467,
+            "full_roundtrip_ms": 0.34584,
+            "request_ms": 0.291799
+          },
+          "queue_ms": 0.000191,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.692118,
+          "validation_ms": 0.017942
+        },
+        {
+          "consume_ms": 3.212748,
+          "encode_ms": 0.014341,
+          "execute": {
+            "body_ms": 0.045492,
+            "full_roundtrip_ms": 0.34956400000000004,
+            "request_ms": 0.274764
+          },
+          "journal_ms": 6.8264879999999994,
+          "local_prep_ms": 0.187047,
+          "prechecks_ms": 0.005027,
+          "preview": {
+            "body_ms": 0.016407,
+            "full_roundtrip_ms": 0.312898,
+            "request_ms": 0.265463
+          },
+          "queue_ms": 0.000148,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.975905,
+          "validation_ms": 0.017941
+        },
+        {
+          "consume_ms": 3.459645,
+          "encode_ms": 0.014525999999999999,
+          "execute": {
+            "body_ms": 0.007113,
+            "full_roundtrip_ms": 0.244325,
+            "request_ms": 0.209936
+          },
+          "journal_ms": 11.613339,
+          "local_prep_ms": 0.076564,
+          "prechecks_ms": 0.005744,
+          "preview": {
+            "body_ms": 0.018636,
+            "full_roundtrip_ms": 0.632386,
+            "request_ms": 0.563983
+          },
+          "queue_ms": 0.000224,
+          "state_check_ms": 4.8e-05,
+          "total_ms": 16.110229,
+          "validation_ms": 0.012041
+        },
+        {
+          "consume_ms": 3.1438960000000002,
+          "encode_ms": 0.015106000000000001,
+          "execute": {
+            "body_ms": 0.009322,
+            "full_roundtrip_ms": 0.261263,
+            "request_ms": 0.22319899999999998
+          },
+          "journal_ms": 6.565951999999999,
+          "local_prep_ms": 0.08395799999999999,
+          "prechecks_ms": 0.004755,
+          "preview": {
+            "body_ms": 0.05969,
+            "full_roundtrip_ms": 0.41283,
+            "request_ms": 0.316007
+          },
+          "queue_ms": 0.000268,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.563289,
+          "validation_ms": 0.019636
+        },
+        {
+          "consume_ms": 3.199922,
+          "encode_ms": 0.015484,
+          "execute": {
+            "body_ms": 0.008331999999999999,
+            "full_roundtrip_ms": 0.298857,
+            "request_ms": 0.25952800000000004
+          },
+          "journal_ms": 6.585994,
+          "local_prep_ms": 0.08452,
+          "prechecks_ms": 0.004966,
+          "preview": {
+            "body_ms": 0.06044,
+            "full_roundtrip_ms": 0.390546,
+            "request_ms": 0.275866
+          },
+          "queue_ms": 0.000317,
+          "state_check_ms": 3.1e-05,
+          "total_ms": 10.652009,
+          "validation_ms": 0.019442
+        },
+        {
+          "consume_ms": 3.0895639999999998,
+          "encode_ms": 0.014277999999999999,
+          "execute": {
+            "body_ms": 0.008518999999999999,
+            "full_roundtrip_ms": 0.306485,
+            "request_ms": 0.26734399999999997
+          },
+          "journal_ms": 6.385121,
+          "local_prep_ms": 0.084183,
+          "prechecks_ms": 0.0056749999999999995,
+          "preview": {
+            "body_ms": 0.061186000000000004,
+            "full_roundtrip_ms": 0.369036,
+            "request_ms": 0.274317
+          },
+          "queue_ms": 0.000268,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 10.328017000000001,
+          "validation_ms": 0.019083
+        },
+        {
+          "consume_ms": 3.249812,
+          "encode_ms": 0.014311,
+          "execute": {
+            "body_ms": 0.008532999999999999,
+            "full_roundtrip_ms": 0.294183,
+            "request_ms": 0.237515
+          },
+          "journal_ms": 6.214128,
+          "local_prep_ms": 0.083312,
+          "prechecks_ms": 0.0059240000000000004,
+          "preview": {
+            "body_ms": 0.060533,
+            "full_roundtrip_ms": 0.390718,
+            "request_ms": 0.29388
+          },
+          "queue_ms": 0.000146,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 10.326,
+          "validation_ms": 0.018449
+        },
+        {
+          "consume_ms": 3.1394420000000003,
+          "encode_ms": 0.016889,
+          "execute": {
+            "body_ms": 0.008667,
+            "full_roundtrip_ms": 0.288179,
+            "request_ms": 0.25166700000000003
+          },
+          "journal_ms": 6.428047,
+          "local_prep_ms": 0.083982,
+          "prechecks_ms": 0.005528,
+          "preview": {
+            "body_ms": 0.062865,
+            "full_roundtrip_ms": 0.481769,
+            "request_ms": 0.38557100000000005
+          },
+          "queue_ms": 0.00015800000000000002,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 10.515924,
+          "validation_ms": 0.019055000000000002
+        },
+        {
+          "consume_ms": 5.193972,
+          "encode_ms": 0.03208,
+          "execute": {
+            "body_ms": 0.009768,
+            "full_roundtrip_ms": 0.29473699999999997,
+            "request_ms": 0.259251
+          },
+          "journal_ms": 7.084582,
+          "local_prep_ms": 0.085138,
+          "prechecks_ms": 0.005884,
+          "preview": {
+            "body_ms": 0.059898,
+            "full_roundtrip_ms": 0.374197,
+            "request_ms": 0.275451
+          },
+          "queue_ms": 0.000314,
+          "state_check_ms": 2.9e-05,
+          "total_ms": 13.143949000000001,
+          "validation_ms": 0.020227999999999996
+        },
+        {
+          "consume_ms": 3.71067,
+          "encode_ms": 0.013099,
+          "execute": {
+            "body_ms": 0.057552,
+            "full_roundtrip_ms": 0.530548,
+            "request_ms": 0.439914
+          },
+          "journal_ms": 10.460805,
+          "local_prep_ms": 0.099107,
+          "prechecks_ms": 0.004567,
+          "preview": {
+            "body_ms": 0.018141,
+            "full_roundtrip_ms": 0.373331,
+            "request_ms": 0.326687
+          },
+          "queue_ms": 0.000399,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 15.259656999999999,
+          "validation_ms": 0.013508000000000001
+        },
+        {
+          "consume_ms": 3.61525,
+          "encode_ms": 0.014661,
+          "execute": {
+            "body_ms": 0.011316,
+            "full_roundtrip_ms": 2.288441,
+            "request_ms": 2.2478540000000002
+          },
+          "journal_ms": 6.623111,
+          "local_prep_ms": 0.086323,
+          "prechecks_ms": 0.005889,
+          "preview": {
+            "body_ms": 0.020686000000000003,
+            "full_roundtrip_ms": 0.34040299999999996,
+            "request_ms": 0.280751
+          },
+          "queue_ms": 0.000583,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 13.050177,
+          "validation_ms": 0.018545
+        },
+        {
+          "consume_ms": 3.2074730000000002,
+          "encode_ms": 0.016262000000000002,
+          "execute": {
+            "body_ms": 0.0104,
+            "full_roundtrip_ms": 0.843665,
+            "request_ms": 0.802197
+          },
+          "journal_ms": 7.48539,
+          "local_prep_ms": 0.087865,
+          "prechecks_ms": 0.005008,
+          "preview": {
+            "body_ms": 0.060621,
+            "full_roundtrip_ms": 0.37648,
+            "request_ms": 0.27721
+          },
+          "queue_ms": 0.000263,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 12.094483,
+          "validation_ms": 0.019443
+        },
+        {
+          "consume_ms": 8.518572,
+          "encode_ms": 0.015727,
+          "execute": {
+            "body_ms": 0.008898,
+            "full_roundtrip_ms": 0.310358,
+            "request_ms": 0.254592
+          },
+          "journal_ms": 6.349283000000001,
+          "local_prep_ms": 0.082742,
+          "prechecks_ms": 0.00617,
+          "preview": {
+            "body_ms": 0.018626,
+            "full_roundtrip_ms": 0.300139,
+            "request_ms": 0.246227
+          },
+          "queue_ms": 0.00026399999999999997,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 15.657245999999999,
+          "validation_ms": 0.017074
+        },
+        {
+          "consume_ms": 3.113562,
+          "encode_ms": 0.016257,
+          "execute": {
+            "body_ms": 0.050509,
+            "full_roundtrip_ms": 0.36856999999999995,
+            "request_ms": 0.287088
+          },
+          "journal_ms": 6.594706,
+          "local_prep_ms": 0.082372,
+          "prechecks_ms": 0.004855,
+          "preview": {
+            "body_ms": 0.021679,
+            "full_roundtrip_ms": 0.34601,
+            "request_ms": 0.288474
+          },
+          "queue_ms": 0.00026399999999999997,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.611987,
+          "validation_ms": 0.031793
+        },
+        {
+          "consume_ms": 3.1096090000000003,
+          "encode_ms": 0.012349,
+          "execute": {
+            "body_ms": 0.009307000000000001,
+            "full_roundtrip_ms": 0.283912,
+            "request_ms": 0.24327300000000002
+          },
+          "journal_ms": 6.151085,
+          "local_prep_ms": 0.081799,
+          "prechecks_ms": 0.005595,
+          "preview": {
+            "body_ms": 0.01949,
+            "full_roundtrip_ms": 0.321553,
+            "request_ms": 0.264442
+          },
+          "queue_ms": 0.000174,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 10.036514,
+          "validation_ms": 0.017994
+        },
+        {
+          "consume_ms": 3.2790470000000003,
+          "encode_ms": 0.016218999999999997,
+          "execute": {
+            "body_ms": 0.008943999999999999,
+            "full_roundtrip_ms": 0.268012,
+            "request_ms": 0.22792
+          },
+          "journal_ms": 6.398343000000001,
+          "local_prep_ms": 0.08394299999999999,
+          "prechecks_ms": 0.005071,
+          "preview": {
+            "body_ms": 0.06381899999999999,
+            "full_roundtrip_ms": 0.40966400000000003,
+            "request_ms": 0.309683
+          },
+          "queue_ms": 0.00016299999999999998,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 10.532503,
+          "validation_ms": 0.018954
+        },
+        {
+          "consume_ms": 6.512411,
+          "encode_ms": 0.015731,
+          "execute": {
+            "body_ms": 0.010187,
+            "full_roundtrip_ms": 0.688067,
+            "request_ms": 0.649819
+          },
+          "journal_ms": 6.561427,
+          "local_prep_ms": 0.076804,
+          "prechecks_ms": 0.005926,
+          "preview": {
+            "body_ms": 0.058461,
+            "full_roundtrip_ms": 0.39512899999999995,
+            "request_ms": 0.30271699999999996
+          },
+          "queue_ms": 0.000216,
+          "state_check_ms": 3.1e-05,
+          "total_ms": 14.330607,
+          "validation_ms": 0.01792
+        },
+        {
+          "consume_ms": 3.118362,
+          "encode_ms": 0.015000999999999999,
+          "execute": {
+            "body_ms": 0.010317,
+            "full_roundtrip_ms": 1.056597,
+            "request_ms": 1.016457
+          },
+          "journal_ms": 6.503105,
+          "local_prep_ms": 0.069233,
+          "prechecks_ms": 0.005764999999999999,
+          "preview": {
+            "body_ms": 0.017115000000000002,
+            "full_roundtrip_ms": 0.291959,
+            "request_ms": 0.24529
+          },
+          "queue_ms": 0.00032300000000000004,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 11.129846,
+          "validation_ms": 0.013081
+        },
+        {
+          "consume_ms": 3.076109,
+          "encode_ms": 0.016659,
+          "execute": {
+            "body_ms": 0.010421000000000001,
+            "full_roundtrip_ms": 1.061916,
+            "request_ms": 1.024724
+          },
+          "journal_ms": 6.86035,
+          "local_prep_ms": 0.084246,
+          "prechecks_ms": 0.005138,
+          "preview": {
+            "body_ms": 0.022777,
+            "full_roundtrip_ms": 0.32386699999999996,
+            "request_ms": 0.26506799999999997
+          },
+          "queue_ms": 0.000171,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 11.500715999999999,
+          "validation_ms": 0.018237
+        },
+        {
+          "consume_ms": 3.084926,
+          "encode_ms": 0.016031,
+          "execute": {
+            "body_ms": 0.009824,
+            "full_roundtrip_ms": 0.321264,
+            "request_ms": 0.284425
+          },
+          "journal_ms": 6.353557,
+          "local_prep_ms": 0.088675,
+          "prechecks_ms": 0.004413,
+          "preview": {
+            "body_ms": 0.021795000000000002,
+            "full_roundtrip_ms": 0.973987,
+            "request_ms": 0.915212
+          },
+          "queue_ms": 0.000261,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 10.949873,
+          "validation_ms": 0.021612
+        },
+        {
+          "consume_ms": 3.278419,
+          "encode_ms": 0.013575,
+          "execute": {
+            "body_ms": 0.009147,
+            "full_roundtrip_ms": 0.411026,
+            "request_ms": 0.37027400000000005
+          },
+          "journal_ms": 6.2102640000000005,
+          "local_prep_ms": 0.086683,
+          "prechecks_ms": 0.005981,
+          "preview": {
+            "body_ms": 0.025688,
+            "full_roundtrip_ms": 1.221098,
+            "request_ms": 1.159076
+          },
+          "queue_ms": 0.000155,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 11.303479,
+          "validation_ms": 0.021724
+        },
+        {
+          "consume_ms": 3.213366,
+          "encode_ms": 0.015858999999999998,
+          "execute": {
+            "body_ms": 0.008736,
+            "full_roundtrip_ms": 0.271989,
+            "request_ms": 0.23389200000000002
+          },
+          "journal_ms": 6.417864,
+          "local_prep_ms": 0.086562,
+          "prechecks_ms": 0.005329,
+          "preview": {
+            "body_ms": 0.060476999999999996,
+            "full_roundtrip_ms": 0.37418599999999996,
+            "request_ms": 0.277819
+          },
+          "queue_ms": 0.0007239999999999999,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 10.458695,
+          "validation_ms": 0.020238000000000003
+        },
+        {
+          "consume_ms": 3.1417829999999998,
+          "encode_ms": 0.014587,
+          "execute": {
+            "body_ms": 0.008608,
+            "full_roundtrip_ms": 0.312223,
+            "request_ms": 0.26804599999999995
+          },
+          "journal_ms": 6.30345,
+          "local_prep_ms": 0.084296,
+          "prechecks_ms": 0.004983,
+          "preview": {
+            "body_ms": 0.05605,
+            "full_roundtrip_ms": 0.40847700000000003,
+            "request_ms": 0.315249
+          },
+          "queue_ms": 0.00016,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.349331,
+          "validation_ms": 0.0191
+        },
+        {
+          "consume_ms": 3.419188,
+          "encode_ms": 0.015017999999999998,
+          "execute": {
+            "body_ms": 0.009923,
+            "full_roundtrip_ms": 0.659508,
+            "request_ms": 0.617939
+          },
+          "journal_ms": 7.201146,
+          "local_prep_ms": 0.06049,
+          "prechecks_ms": 0.005218,
+          "preview": {
+            "body_ms": 0.017263999999999998,
+            "full_roundtrip_ms": 0.282372,
+            "request_ms": 0.235288
+          },
+          "queue_ms": 0.000228,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 11.709742,
+          "validation_ms": 0.013562999999999999
+        },
+        {
+          "consume_ms": 3.830301,
+          "encode_ms": 0.017866,
+          "execute": {
+            "body_ms": 0.009670999999999999,
+            "full_roundtrip_ms": 0.334332,
+            "request_ms": 0.296771
+          },
+          "journal_ms": 8.825342,
+          "local_prep_ms": 0.11184999999999999,
+          "prechecks_ms": 0.0049510000000000005,
+          "preview": {
+            "body_ms": 0.020961,
+            "full_roundtrip_ms": 0.424302,
+            "request_ms": 0.337982
+          },
+          "queue_ms": 0.000352,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 13.623583,
+          "validation_ms": 0.01679
+        },
+        {
+          "consume_ms": 3.465666,
+          "encode_ms": 0.017159999999999998,
+          "execute": {
+            "body_ms": 0.010527,
+            "full_roundtrip_ms": 0.425458,
+            "request_ms": 0.38467
+          },
+          "journal_ms": 6.321108000000001,
+          "local_prep_ms": 0.09045600000000001,
+          "prechecks_ms": 0.005725000000000001,
+          "preview": {
+            "body_ms": 0.026272,
+            "full_roundtrip_ms": 2.20928,
+            "request_ms": 2.144651
+          },
+          "queue_ms": 0.000313,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 12.608257,
+          "validation_ms": 0.01879
+        },
+        {
+          "consume_ms": 3.531374,
+          "encode_ms": 0.015559000000000002,
+          "execute": {
+            "body_ms": 0.008832,
+            "full_roundtrip_ms": 0.282499,
+            "request_ms": 0.24297000000000002
+          },
+          "journal_ms": 6.5475449999999995,
+          "local_prep_ms": 0.086751,
+          "prechecks_ms": 0.005967999999999999,
+          "preview": {
+            "body_ms": 0.020596,
+            "full_roundtrip_ms": 0.341793,
+            "request_ms": 0.28388
+          },
+          "queue_ms": 0.000234,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 10.888985,
+          "validation_ms": 0.019062000000000003
+        },
+        {
+          "consume_ms": 3.380209,
+          "encode_ms": 0.014987,
+          "execute": {
+            "body_ms": 0.010393,
+            "full_roundtrip_ms": 0.320361,
+            "request_ms": 0.279192
+          },
+          "journal_ms": 6.395322999999999,
+          "local_prep_ms": 0.08698,
+          "prechecks_ms": 0.004928999999999999,
+          "preview": {
+            "body_ms": 0.078972,
+            "full_roundtrip_ms": 0.411091,
+            "request_ms": 0.29317299999999996
+          },
+          "queue_ms": 0.00023799999999999998,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 10.701452,
+          "validation_ms": 0.019375
+        },
+        {
+          "consume_ms": 3.253327,
+          "encode_ms": 0.034107,
+          "execute": {
+            "body_ms": 0.008551,
+            "full_roundtrip_ms": 0.2872,
+            "request_ms": 0.24534999999999998
+          },
+          "journal_ms": 6.617343,
+          "local_prep_ms": 0.089335,
+          "prechecks_ms": 0.0050290000000000005,
+          "preview": {
+            "body_ms": 0.022313000000000003,
+            "full_roundtrip_ms": 0.414732,
+            "request_ms": 0.35470999999999997
+          },
+          "queue_ms": 0.000232,
+          "state_check_ms": 3.2999999999999996e-05,
+          "total_ms": 10.793076000000001,
+          "validation_ms": 0.033634
+        },
+        {
+          "consume_ms": 3.367682,
+          "encode_ms": 0.014606999999999998,
+          "execute": {
+            "body_ms": 0.009014000000000001,
+            "full_roundtrip_ms": 0.281522,
+            "request_ms": 0.242932
+          },
+          "journal_ms": 6.704855,
+          "local_prep_ms": 0.089232,
+          "prechecks_ms": 0.005854999999999999,
+          "preview": {
+            "body_ms": 0.063697,
+            "full_roundtrip_ms": 0.39078399999999996,
+            "request_ms": 0.287056
+          },
+          "queue_ms": 0.000245,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 10.933701000000001,
+          "validation_ms": 0.019736
+        },
+        {
+          "consume_ms": 3.323051,
+          "encode_ms": 0.016058000000000003,
+          "execute": {
+            "body_ms": 0.042176,
+            "full_roundtrip_ms": 0.33993199999999996,
+            "request_ms": 0.252585
+          },
+          "journal_ms": 6.790794,
+          "local_prep_ms": 0.089077,
+          "prechecks_ms": 0.005134,
+          "preview": {
+            "body_ms": 0.060483999999999996,
+            "full_roundtrip_ms": 0.389911,
+            "request_ms": 0.291674
+          },
+          "queue_ms": 0.000556,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 11.028067,
+          "validation_ms": 0.019895
+        },
+        {
+          "consume_ms": 3.350231,
+          "encode_ms": 0.015736999999999998,
+          "execute": {
+            "body_ms": 0.008994,
+            "full_roundtrip_ms": 1.244573,
+            "request_ms": 1.2066780000000001
+          },
+          "journal_ms": 12.049467,
+          "local_prep_ms": 0.103123,
+          "prechecks_ms": 0.0052910000000000006,
+          "preview": {
+            "body_ms": 0.019111,
+            "full_roundtrip_ms": 0.326531,
+            "request_ms": 0.262873
+          },
+          "queue_ms": 0.00019600000000000002,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 17.170725,
+          "validation_ms": 0.017979
+        },
+        {
+          "consume_ms": 3.216899,
+          "encode_ms": 0.015928,
+          "execute": {
+            "body_ms": 0.010471,
+            "full_roundtrip_ms": 0.614692,
+            "request_ms": 0.563718
+          },
+          "journal_ms": 6.3802509999999995,
+          "local_prep_ms": 0.09396299999999999,
+          "prechecks_ms": 0.004823,
+          "preview": {
+            "body_ms": 0.052868000000000005,
+            "full_roundtrip_ms": 0.35514599999999996,
+            "request_ms": 0.265672
+          },
+          "queue_ms": 0.000236,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 10.757016,
+          "validation_ms": 0.019659000000000003
+        },
+        {
+          "consume_ms": 3.256939,
+          "encode_ms": 0.01499,
+          "execute": {
+            "body_ms": 0.009157,
+            "full_roundtrip_ms": 0.292836,
+            "request_ms": 0.25398
+          },
+          "journal_ms": 6.4196550000000006,
+          "local_prep_ms": 0.086063,
+          "prechecks_ms": 0.00507,
+          "preview": {
+            "body_ms": 0.021556000000000002,
+            "full_roundtrip_ms": 0.307781,
+            "request_ms": 0.25047200000000003
+          },
+          "queue_ms": 0.000187,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.457708,
+          "validation_ms": 0.018786
+        },
+        {
+          "consume_ms": 3.140814,
+          "encode_ms": 0.014829,
+          "execute": {
+            "body_ms": 0.008449,
+            "full_roundtrip_ms": 0.27213,
+            "request_ms": 0.23307699999999998
+          },
+          "journal_ms": 6.3350100000000005,
+          "local_prep_ms": 0.08594099999999999,
+          "prechecks_ms": 0.005691,
+          "preview": {
+            "body_ms": 0.053869999999999994,
+            "full_roundtrip_ms": 0.359943,
+            "request_ms": 0.270547
+          },
+          "queue_ms": 0.00025100000000000003,
+          "state_check_ms": 3.1e-05,
+          "total_ms": 10.28948,
+          "validation_ms": 0.019950000000000002
+        },
+        {
+          "consume_ms": 3.116321,
+          "encode_ms": 0.014174,
+          "execute": {
+            "body_ms": 0.009728,
+            "full_roundtrip_ms": 0.291968,
+            "request_ms": 0.25465699999999997
+          },
+          "journal_ms": 6.366377,
+          "local_prep_ms": 0.087408,
+          "prechecks_ms": 0.004365000000000001,
+          "preview": {
+            "body_ms": 0.061073,
+            "full_roundtrip_ms": 0.381365,
+            "request_ms": 0.282617
+          },
+          "queue_ms": 0.000165,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 10.337909,
+          "validation_ms": 0.019148
+        },
+        {
+          "consume_ms": 3.1016440000000003,
+          "encode_ms": 0.016680999999999998,
+          "execute": {
+            "body_ms": 0.010829,
+            "full_roundtrip_ms": 0.34113699999999997,
+            "request_ms": 0.292276
+          },
+          "journal_ms": 6.913327,
+          "local_prep_ms": 0.08746,
+          "prechecks_ms": 0.006026999999999999,
+          "preview": {
+            "body_ms": 0.064576,
+            "full_roundtrip_ms": 0.42644699999999996,
+            "request_ms": 0.311449
+          },
+          "queue_ms": 0.000197,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.971008000000001,
+          "validation_ms": 0.020259
+        },
+        {
+          "consume_ms": 3.215988,
+          "encode_ms": 0.014289,
+          "execute": {
+            "body_ms": 0.045531999999999996,
+            "full_roundtrip_ms": 0.337751,
+            "request_ms": 0.26155900000000004
+          },
+          "journal_ms": 6.228792,
+          "local_prep_ms": 0.101015,
+          "prechecks_ms": 0.005136,
+          "preview": {
+            "body_ms": 0.05643,
+            "full_roundtrip_ms": 0.377545,
+            "request_ms": 0.285438
+          },
+          "queue_ms": 0.000232,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.357098,
+          "validation_ms": 0.019889
+        },
+        {
+          "consume_ms": 5.197303000000001,
+          "encode_ms": 0.01668,
+          "execute": {
+            "body_ms": 0.009353,
+            "full_roundtrip_ms": 0.866546,
+            "request_ms": 0.823975
+          },
+          "journal_ms": 8.756067,
+          "local_prep_ms": 0.08726,
+          "prechecks_ms": 0.005084999999999999,
+          "preview": {
+            "body_ms": 0.020180999999999998,
+            "full_roundtrip_ms": 0.616083,
+            "request_ms": 0.5658310000000001
+          },
+          "queue_ms": 0.000241,
+          "state_check_ms": 2.8e-05,
+          "total_ms": 15.693915999999998,
+          "validation_ms": 0.07628900000000001
+        },
+        {
+          "consume_ms": 3.938444,
+          "encode_ms": 0.011205,
+          "execute": {
+            "body_ms": 0.008851999999999999,
+            "full_roundtrip_ms": 0.300703,
+            "request_ms": 0.261488
+          },
+          "journal_ms": 6.635991,
+          "local_prep_ms": 0.077544,
+          "prechecks_ms": 0.0048000000000000004,
+          "preview": {
+            "body_ms": 0.025958000000000002,
+            "full_roundtrip_ms": 0.303806,
+            "request_ms": 0.245547
+          },
+          "queue_ms": 0.000153,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 11.347505,
+          "validation_ms": 0.012856
+        },
+        {
+          "consume_ms": 3.594009,
+          "encode_ms": 0.015285,
+          "execute": {
+            "body_ms": 0.010041,
+            "full_roundtrip_ms": 0.612928,
+            "request_ms": 0.571604
+          },
+          "journal_ms": 6.426543,
+          "local_prep_ms": 0.09259999999999999,
+          "prechecks_ms": 0.005659000000000001,
+          "preview": {
+            "body_ms": 0.023833,
+            "full_roundtrip_ms": 0.751486,
+            "request_ms": 0.690442
+          },
+          "queue_ms": 0.000171,
+          "state_check_ms": 4.4999999999999996e-05,
+          "total_ms": 11.589011,
+          "validation_ms": 0.02006
+        },
+        {
+          "consume_ms": 3.1527629999999998,
+          "encode_ms": 0.015437000000000001,
+          "execute": {
+            "body_ms": 0.008379999999999999,
+            "full_roundtrip_ms": 0.271523,
+            "request_ms": 0.233766
+          },
+          "journal_ms": 6.555521,
+          "local_prep_ms": 0.083538,
+          "prechecks_ms": 0.0046099999999999995,
+          "preview": {
+            "body_ms": 0.055193,
+            "full_roundtrip_ms": 0.443648,
+            "request_ms": 0.290329
+          },
+          "queue_ms": 0.000245,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 10.605436,
+          "validation_ms": 0.020985999999999998
+        },
+        {
+          "consume_ms": 3.43277,
+          "encode_ms": 0.015951,
+          "execute": {
+            "body_ms": 0.008449,
+            "full_roundtrip_ms": 0.297538,
+            "request_ms": 0.260301
+          },
+          "journal_ms": 6.647698,
+          "local_prep_ms": 0.081948,
+          "prechecks_ms": 0.004881,
+          "preview": {
+            "body_ms": 0.061302,
+            "full_roundtrip_ms": 0.379975,
+            "request_ms": 0.282484
+          },
+          "queue_ms": 0.00042,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.934354,
+          "validation_ms": 0.018938999999999998
+        },
+        {
+          "consume_ms": 3.234847,
+          "encode_ms": 0.016574000000000002,
+          "execute": {
+            "body_ms": 0.008456,
+            "full_roundtrip_ms": 0.264221,
+            "request_ms": 0.227479
+          },
+          "journal_ms": 6.7602139999999995,
+          "local_prep_ms": 0.084718,
+          "prechecks_ms": 0.004431,
+          "preview": {
+            "body_ms": 0.060177999999999995,
+            "full_roundtrip_ms": 0.38260099999999997,
+            "request_ms": 0.286466
+          },
+          "queue_ms": 0.000243,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.820553,
+          "validation_ms": 0.019604
+        },
+        {
+          "consume_ms": 3.178642,
+          "encode_ms": 0.015985,
+          "execute": {
+            "body_ms": 0.043621999999999994,
+            "full_roundtrip_ms": 0.37055299999999997,
+            "request_ms": 0.299276
+          },
+          "journal_ms": 6.251578,
+          "local_prep_ms": 0.081101,
+          "prechecks_ms": 0.004765,
+          "preview": {
+            "body_ms": 0.019714000000000002,
+            "full_roundtrip_ms": 0.32340599999999997,
+            "request_ms": 0.269552
+          },
+          "queue_ms": 0.000157,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.29947,
+          "validation_ms": 0.019578
+        },
+        {
+          "consume_ms": 7.078378,
+          "encode_ms": 0.015772,
+          "execute": {
+            "body_ms": 0.048853999999999995,
+            "full_roundtrip_ms": 0.362081,
+            "request_ms": 0.277743
+          },
+          "journal_ms": 10.623972,
+          "local_prep_ms": 0.09296,
+          "prechecks_ms": 0.0060030000000000005,
+          "preview": {
+            "body_ms": 0.023284,
+            "full_roundtrip_ms": 0.354365,
+            "request_ms": 0.294188
+          },
+          "queue_ms": 0.000207,
+          "state_check_ms": 3.2999999999999996e-05,
+          "total_ms": 18.634522,
+          "validation_ms": 0.022160000000000003
+        },
+        {
+          "consume_ms": 3.1884550000000003,
+          "encode_ms": 0.014884,
+          "execute": {
+            "body_ms": 0.009996,
+            "full_roundtrip_ms": 0.320709,
+            "request_ms": 0.279978
+          },
+          "journal_ms": 6.786467999999999,
+          "local_prep_ms": 0.08376800000000001,
+          "prechecks_ms": 0.0056819999999999996,
+          "preview": {
+            "body_ms": 0.033573,
+            "full_roundtrip_ms": 0.342043,
+            "request_ms": 0.27405399999999996
+          },
+          "queue_ms": 0.000241,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 10.820836,
+          "validation_ms": 0.018468
+        },
+        {
+          "consume_ms": 3.232441,
+          "encode_ms": 0.015163000000000001,
+          "execute": {
+            "body_ms": 0.009515,
+            "full_roundtrip_ms": 0.2961,
+            "request_ms": 0.257032
+          },
+          "journal_ms": 6.190756,
+          "local_prep_ms": 0.108039,
+          "prechecks_ms": 0.069612,
+          "preview": {
+            "body_ms": 0.025967999999999998,
+            "full_roundtrip_ms": 0.444974,
+            "request_ms": 0.380147
+          },
+          "queue_ms": 0.00028000000000000003,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 10.431543999999999,
+          "validation_ms": 0.018253
+        },
+        {
+          "consume_ms": 3.1099650000000003,
+          "encode_ms": 0.014015,
+          "execute": {
+            "body_ms": 0.008991,
+            "full_roundtrip_ms": 0.335751,
+            "request_ms": 0.298064
+          },
+          "journal_ms": 6.034064,
+          "local_prep_ms": 0.08896899999999999,
+          "prechecks_ms": 0.004687,
+          "preview": {
+            "body_ms": 0.023167999999999998,
+            "full_roundtrip_ms": 0.36549,
+            "request_ms": 0.305293
+          },
+          "queue_ms": 0.000252,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.025946000000001,
+          "validation_ms": 0.018653
+        },
+        {
+          "consume_ms": 3.180585,
+          "encode_ms": 0.015342999999999999,
+          "execute": {
+            "body_ms": 0.008249,
+            "full_roundtrip_ms": 0.271942,
+            "request_ms": 0.233942
+          },
+          "journal_ms": 6.414609,
+          "local_prep_ms": 0.09717699999999999,
+          "prechecks_ms": 0.005569999999999999,
+          "preview": {
+            "body_ms": 0.06037,
+            "full_roundtrip_ms": 0.43010299999999996,
+            "request_ms": 0.332639
+          },
+          "queue_ms": 0.000239,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 10.493183,
+          "validation_ms": 0.019369
+        },
+        {
+          "consume_ms": 3.1201139999999996,
+          "encode_ms": 0.014966,
+          "execute": {
+            "body_ms": 0.059293000000000005,
+            "full_roundtrip_ms": 0.34174699999999997,
+            "request_ms": 0.252218
+          },
+          "journal_ms": 6.222019,
+          "local_prep_ms": 0.08727499999999999,
+          "prechecks_ms": 0.004425,
+          "preview": {
+            "body_ms": 0.058748,
+            "full_roundtrip_ms": 0.38607,
+            "request_ms": 0.290099
+          },
+          "queue_ms": 0.000184,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 10.254681999999999,
+          "validation_ms": 0.019851999999999998
+        },
+        {
+          "consume_ms": 3.262806,
+          "encode_ms": 0.014918,
+          "execute": {
+            "body_ms": 0.044794,
+            "full_roundtrip_ms": 0.343831,
+            "request_ms": 0.265749
+          },
+          "journal_ms": 7.59582,
+          "local_prep_ms": 0.10266,
+          "prechecks_ms": 0.005988,
+          "preview": {
+            "body_ms": 0.018817999999999998,
+            "full_roundtrip_ms": 0.30856500000000003,
+            "request_ms": 0.254
+          },
+          "queue_ms": 0.000152,
+          "state_check_ms": 3.1e-05,
+          "total_ms": 11.716101,
+          "validation_ms": 0.017084
+        },
+        {
+          "consume_ms": 3.5677920000000003,
+          "encode_ms": 0.014341,
+          "execute": {
+            "body_ms": 0.008928,
+            "full_roundtrip_ms": 0.349668,
+            "request_ms": 0.277119
+          },
+          "journal_ms": 12.628829,
+          "local_prep_ms": 0.10314499999999999,
+          "prechecks_ms": 0.005948,
+          "preview": {
+            "body_ms": 0.02124,
+            "full_roundtrip_ms": 0.322517,
+            "request_ms": 0.262214
+          },
+          "queue_ms": 0.000214,
+          "state_check_ms": 5.8e-05,
+          "total_ms": 17.118079,
+          "validation_ms": 0.031428
+        },
+        {
+          "consume_ms": 3.090484,
+          "encode_ms": 0.016388,
+          "execute": {
+            "body_ms": 0.008854,
+            "full_roundtrip_ms": 0.285258,
+            "request_ms": 0.246223
+          },
+          "journal_ms": 6.179224,
+          "local_prep_ms": 0.09072,
+          "prechecks_ms": 0.005086,
+          "preview": {
+            "body_ms": 0.024676,
+            "full_roundtrip_ms": 0.757237,
+            "request_ms": 0.694767
+          },
+          "queue_ms": 0.00024900000000000004,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.501031,
+          "validation_ms": 0.018848999999999998
+        },
+        {
+          "consume_ms": 3.066573,
+          "encode_ms": 0.015756,
+          "execute": {
+            "body_ms": 0.041807000000000004,
+            "full_roundtrip_ms": 0.34651400000000004,
+            "request_ms": 0.270617
+          },
+          "journal_ms": 6.418391,
+          "local_prep_ms": 0.087718,
+          "prechecks_ms": 0.004916,
+          "preview": {
+            "body_ms": 0.063431,
+            "full_roundtrip_ms": 0.396872,
+            "request_ms": 0.296145
+          },
+          "queue_ms": 0.00033999999999999997,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 10.416745,
+          "validation_ms": 0.020943
+        },
+        {
+          "consume_ms": 3.1013759999999997,
+          "encode_ms": 0.01611,
+          "execute": {
+            "body_ms": 0.047258,
+            "full_roundtrip_ms": 0.33841699999999997,
+            "request_ms": 0.261984
+          },
+          "journal_ms": 6.252757000000001,
+          "local_prep_ms": 0.08983,
+          "prechecks_ms": 0.00466,
+          "preview": {
+            "body_ms": 0.024344,
+            "full_roundtrip_ms": 0.371388,
+            "request_ms": 0.30747599999999997
+          },
+          "queue_ms": 0.00026199999999999997,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 10.252335,
+          "validation_ms": 0.01835
+        },
+        {
+          "consume_ms": 3.118086,
+          "encode_ms": 0.016218,
+          "execute": {
+            "body_ms": 0.04385,
+            "full_roundtrip_ms": 0.339424,
+            "request_ms": 0.265259
+          },
+          "journal_ms": 6.402105,
+          "local_prep_ms": 0.08930199999999999,
+          "prechecks_ms": 0.005045,
+          "preview": {
+            "body_ms": 0.021868000000000002,
+            "full_roundtrip_ms": 0.35031199999999996,
+            "request_ms": 0.289799
+          },
+          "queue_ms": 0.00019600000000000002,
+          "state_check_ms": 4.6e-05,
+          "total_ms": 10.401712,
+          "validation_ms": 0.018890999999999998
+        },
+        {
+          "consume_ms": 3.232265,
+          "encode_ms": 0.015736999999999998,
+          "execute": {
+            "body_ms": 0.049530000000000005,
+            "full_roundtrip_ms": 0.366744,
+            "request_ms": 0.285004
+          },
+          "journal_ms": 6.40579,
+          "local_prep_ms": 0.089366,
+          "prechecks_ms": 0.00551,
+          "preview": {
+            "body_ms": 0.021991,
+            "full_roundtrip_ms": 0.314628,
+            "request_ms": 0.256935
+          },
+          "queue_ms": 0.00027,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.509387,
+          "validation_ms": 0.021703
+        },
+        {
+          "consume_ms": 5.187255,
+          "encode_ms": 0.015887,
+          "execute": {
+            "body_ms": 0.011172999999999999,
+            "full_roundtrip_ms": 0.67876,
+            "request_ms": 0.633393
+          },
+          "journal_ms": 6.326465,
+          "local_prep_ms": 0.08827499999999999,
+          "prechecks_ms": 0.005176999999999999,
+          "preview": {
+            "body_ms": 0.021721999999999998,
+            "full_roundtrip_ms": 0.346383,
+            "request_ms": 0.289676
+          },
+          "queue_ms": 0.000232,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 12.725093,
+          "validation_ms": 0.018753
+        },
+        {
+          "consume_ms": 3.249712,
+          "encode_ms": 0.016354,
+          "execute": {
+            "body_ms": 0.008014,
+            "full_roundtrip_ms": 0.33870599999999995,
+            "request_ms": 0.29875799999999997
+          },
+          "journal_ms": 10.846540000000001,
+          "local_prep_ms": 0.097227,
+          "prechecks_ms": 0.004640999999999999,
+          "preview": {
+            "body_ms": 0.01995,
+            "full_roundtrip_ms": 0.314796,
+            "request_ms": 0.25855399999999995
+          },
+          "queue_ms": 0.000306,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 14.955929,
+          "validation_ms": 0.013898
+        },
+        {
+          "consume_ms": 3.132658,
+          "encode_ms": 0.014756,
+          "execute": {
+            "body_ms": 0.045811,
+            "full_roundtrip_ms": 0.32856399999999997,
+            "request_ms": 0.25378
+          },
+          "journal_ms": 6.308108000000001,
+          "local_prep_ms": 0.08535400000000001,
+          "prechecks_ms": 0.004723,
+          "preview": {
+            "body_ms": 0.035731,
+            "full_roundtrip_ms": 0.324448,
+            "request_ms": 0.25206399999999995
+          },
+          "queue_ms": 0.000229,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.270901,
+          "validation_ms": 0.018636
+        },
+        {
+          "consume_ms": 3.366715,
+          "encode_ms": 0.016366,
+          "execute": {
+            "body_ms": 0.04518,
+            "full_roundtrip_ms": 0.329413,
+            "request_ms": 0.255134
+          },
+          "journal_ms": 6.156644,
+          "local_prep_ms": 0.080768,
+          "prechecks_ms": 0.005505,
+          "preview": {
+            "body_ms": 0.019448,
+            "full_roundtrip_ms": 0.321849,
+            "request_ms": 0.266715
+          },
+          "queue_ms": 0.000173,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 10.351082,
+          "validation_ms": 0.018233
+        },
+        {
+          "consume_ms": 3.2491,
+          "encode_ms": 0.015096,
+          "execute": {
+            "body_ms": 0.048102,
+            "full_roundtrip_ms": 0.358479,
+            "request_ms": 0.280812
+          },
+          "journal_ms": 6.133903999999999,
+          "local_prep_ms": 0.089115,
+          "prechecks_ms": 0.0053690000000000005,
+          "preview": {
+            "body_ms": 0.02091,
+            "full_roundtrip_ms": 0.323364,
+            "request_ms": 0.26626299999999997
+          },
+          "queue_ms": 0.000175,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 10.250837,
+          "validation_ms": 0.0184
+        },
+        {
+          "consume_ms": 3.260014,
+          "encode_ms": 0.014637,
+          "execute": {
+            "body_ms": 0.008864,
+            "full_roundtrip_ms": 0.279843,
+            "request_ms": 0.241117
+          },
+          "journal_ms": 6.292101,
+          "local_prep_ms": 0.084812,
+          "prechecks_ms": 0.005809000000000001,
+          "preview": {
+            "body_ms": 0.024206000000000002,
+            "full_roundtrip_ms": 0.419633,
+            "request_ms": 0.35610299999999995
+          },
+          "queue_ms": 0.00023,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.437009,
+          "validation_ms": 0.017213
+        },
+        {
+          "consume_ms": 3.04353,
+          "encode_ms": 0.016367,
+          "execute": {
+            "body_ms": 0.01012,
+            "full_roundtrip_ms": 0.378314,
+            "request_ms": 0.340654
+          },
+          "journal_ms": 6.227345,
+          "local_prep_ms": 0.086,
+          "prechecks_ms": 0.004619,
+          "preview": {
+            "body_ms": 0.021682,
+            "full_roundtrip_ms": 0.360566,
+            "request_ms": 0.302896
+          },
+          "queue_ms": 0.00023,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 10.202164999999999,
+          "validation_ms": 0.018433
+        },
+        {
+          "consume_ms": 3.54726,
+          "encode_ms": 0.015173,
+          "execute": {
+            "body_ms": 0.008529,
+            "full_roundtrip_ms": 0.291456,
+            "request_ms": 0.252504
+          },
+          "journal_ms": 6.523384,
+          "local_prep_ms": 0.08122900000000001,
+          "prechecks_ms": 0.004575,
+          "preview": {
+            "body_ms": 0.020639,
+            "full_roundtrip_ms": 0.394625,
+            "request_ms": 0.336435
+          },
+          "queue_ms": 0.00023,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 10.940845,
+          "validation_ms": 0.017257
+        },
+        {
+          "consume_ms": 3.1252989999999996,
+          "encode_ms": 0.015035999999999999,
+          "execute": {
+            "body_ms": 0.008896,
+            "full_roundtrip_ms": 0.329659,
+            "request_ms": 0.291205
+          },
+          "journal_ms": 6.316261,
+          "local_prep_ms": 0.083737,
+          "prechecks_ms": 0.006655999999999999,
+          "preview": {
+            "body_ms": 0.020842000000000003,
+            "full_roundtrip_ms": 0.41845899999999997,
+            "request_ms": 0.359345
+          },
+          "queue_ms": 0.00024200000000000003,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.380125,
+          "validation_ms": 0.018185
+        },
+        {
+          "consume_ms": 5.934284,
+          "encode_ms": 0.014902,
+          "execute": {
+            "body_ms": 0.007627,
+            "full_roundtrip_ms": 0.27784400000000004,
+            "request_ms": 0.239599
+          },
+          "journal_ms": 10.913568,
+          "local_prep_ms": 0.081363,
+          "prechecks_ms": 0.0061860000000000005,
+          "preview": {
+            "body_ms": 0.058526999999999996,
+            "full_roundtrip_ms": 0.37370200000000003,
+            "request_ms": 0.278206
+          },
+          "queue_ms": 0.00043799999999999997,
+          "state_check_ms": 3.1e-05,
+          "total_ms": 17.729809999999997,
+          "validation_ms": 0.018186
+        },
+        {
+          "consume_ms": 3.287648,
+          "encode_ms": 0.014752000000000001,
+          "execute": {
+            "body_ms": 0.00938,
+            "full_roundtrip_ms": 0.305316,
+            "request_ms": 0.263424
+          },
+          "journal_ms": 6.574609000000001,
+          "local_prep_ms": 0.085368,
+          "prechecks_ms": 0.005377000000000001,
+          "preview": {
+            "body_ms": 0.022472000000000002,
+            "full_roundtrip_ms": 0.494215,
+            "request_ms": 0.43315299999999995
+          },
+          "queue_ms": 0.000194,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 10.845268,
+          "validation_ms": 0.017966
+        },
+        {
+          "consume_ms": 3.2621439999999997,
+          "encode_ms": 0.014729,
+          "execute": {
+            "body_ms": 0.04595,
+            "full_roundtrip_ms": 0.333478,
+            "request_ms": 0.256112
+          },
+          "journal_ms": 6.57831,
+          "local_prep_ms": 0.09997400000000001,
+          "prechecks_ms": 0.0060420000000000005,
+          "preview": {
+            "body_ms": 0.021445,
+            "full_roundtrip_ms": 0.509427,
+            "request_ms": 0.449192
+          },
+          "queue_ms": 0.00023799999999999998,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.882887,
+          "validation_ms": 0.019589
+        },
+        {
+          "consume_ms": 3.161301,
+          "encode_ms": 0.015396,
+          "execute": {
+            "body_ms": 0.00938,
+            "full_roundtrip_ms": 0.32932700000000004,
+            "request_ms": 0.289621
+          },
+          "journal_ms": 6.6523579999999995,
+          "local_prep_ms": 0.086615,
+          "prechecks_ms": 0.0053620000000000004,
+          "preview": {
+            "body_ms": 0.023200000000000002,
+            "full_roundtrip_ms": 0.476452,
+            "request_ms": 0.415177
+          },
+          "queue_ms": 0.00024900000000000004,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 10.815493,
+          "validation_ms": 0.01866
+        },
+        {
+          "consume_ms": 3.130708,
+          "encode_ms": 0.01681,
+          "execute": {
+            "body_ms": 0.009109,
+            "full_roundtrip_ms": 0.31399699999999997,
+            "request_ms": 0.27730099999999996
+          },
+          "journal_ms": 6.618136999999999,
+          "local_prep_ms": 0.10050999999999999,
+          "prechecks_ms": 0.0044740000000000005,
+          "preview": {
+            "body_ms": 0.02473,
+            "full_roundtrip_ms": 0.364556,
+            "request_ms": 0.303065
+          },
+          "queue_ms": 0.00024400000000000002,
+          "state_check_ms": 4.8e-05,
+          "total_ms": 10.62642,
+          "validation_ms": 0.017699
+        },
+        {
+          "consume_ms": 3.276193,
+          "encode_ms": 0.014365000000000001,
+          "execute": {
+            "body_ms": 0.010012,
+            "full_roundtrip_ms": 0.290576,
+            "request_ms": 0.247066
+          },
+          "journal_ms": 6.6719919999999995,
+          "local_prep_ms": 0.082721,
+          "prechecks_ms": 0.0061,
+          "preview": {
+            "body_ms": 0.057521,
+            "full_roundtrip_ms": 0.368847,
+            "request_ms": 0.272517
+          },
+          "queue_ms": 0.000269,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.789712999999999,
+          "validation_ms": 0.017336
+        },
+        {
+          "consume_ms": 3.272568,
+          "encode_ms": 0.015582,
+          "execute": {
+            "body_ms": 0.008758,
+            "full_roundtrip_ms": 0.356808,
+            "request_ms": 0.263985
+          },
+          "journal_ms": 6.5416810000000005,
+          "local_prep_ms": 0.10895099999999999,
+          "prechecks_ms": 0.006011,
+          "preview": {
+            "body_ms": 0.061019,
+            "full_roundtrip_ms": 0.377936,
+            "request_ms": 0.28040600000000004
+          },
+          "queue_ms": 0.00016299999999999998,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.770948,
+          "validation_ms": 0.036458000000000004
+        },
+        {
+          "consume_ms": 8.029591000000002,
+          "encode_ms": 0.015699,
+          "execute": {
+            "body_ms": 0.008106,
+            "full_roundtrip_ms": 0.711832,
+            "request_ms": 0.670976
+          },
+          "journal_ms": 6.736901,
+          "local_prep_ms": 0.086411,
+          "prechecks_ms": 0.0057269999999999995,
+          "preview": {
+            "body_ms": 0.022393,
+            "full_roundtrip_ms": 0.339256,
+            "request_ms": 0.278556
+          },
+          "queue_ms": 0.000253,
+          "state_check_ms": 2.9999999999999997e-05,
+          "total_ms": 16.003586,
+          "validation_ms": 0.019546
+        },
+        {
+          "consume_ms": 3.3240790000000002,
+          "encode_ms": 0.016745999999999997,
+          "execute": {
+            "body_ms": 0.009356,
+            "full_roundtrip_ms": 0.691542,
+            "request_ms": 0.650415
+          },
+          "journal_ms": 7.407081,
+          "local_prep_ms": 0.09084,
+          "prechecks_ms": 0.005151,
+          "preview": {
+            "body_ms": 0.097525,
+            "full_roundtrip_ms": 0.558542,
+            "request_ms": 0.422962
+          },
+          "queue_ms": 0.000403,
+          "state_check_ms": 3.2999999999999996e-05,
+          "total_ms": 12.176449,
+          "validation_ms": 0.020609000000000002
+        },
+        {
+          "consume_ms": 3.532421,
+          "encode_ms": 0.015503000000000001,
+          "execute": {
+            "body_ms": 0.009543,
+            "full_roundtrip_ms": 0.415728,
+            "request_ms": 0.372143
+          },
+          "journal_ms": 6.876756,
+          "local_prep_ms": 0.082428,
+          "prechecks_ms": 0.006216,
+          "preview": {
+            "body_ms": 0.059819,
+            "full_roundtrip_ms": 0.545577,
+            "request_ms": 0.447778
+          },
+          "queue_ms": 0.000248,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 11.553824,
+          "validation_ms": 0.018723
+        },
+        {
+          "consume_ms": 3.708974,
+          "encode_ms": 0.015923,
+          "execute": {
+            "body_ms": 0.045463,
+            "full_roundtrip_ms": 0.338671,
+            "request_ms": 0.261534
+          },
+          "journal_ms": 6.73324,
+          "local_prep_ms": 0.088217,
+          "prechecks_ms": 0.005866,
+          "preview": {
+            "body_ms": 0.019615,
+            "full_roundtrip_ms": 0.327318,
+            "request_ms": 0.273144
+          },
+          "queue_ms": 0.00017999999999999998,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 11.297649999999999,
+          "validation_ms": 0.017195000000000002
+        },
+        {
+          "consume_ms": 3.331349,
+          "encode_ms": 0.015759,
+          "execute": {
+            "body_ms": 0.052467,
+            "full_roundtrip_ms": 0.394596,
+            "request_ms": 0.311115
+          },
+          "journal_ms": 6.5574449999999995,
+          "local_prep_ms": 0.09634899999999999,
+          "prechecks_ms": 0.006782,
+          "preview": {
+            "body_ms": 0.020811,
+            "full_roundtrip_ms": 0.350297,
+            "request_ms": 0.273002
+          },
+          "queue_ms": 0.000157,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 10.832625,
+          "validation_ms": 0.018155
+        },
+        {
+          "consume_ms": 3.0732899999999996,
+          "encode_ms": 0.01643,
+          "execute": {
+            "body_ms": 0.045661,
+            "full_roundtrip_ms": 0.343153,
+            "request_ms": 0.267875
+          },
+          "journal_ms": 6.141177,
+          "local_prep_ms": 0.088385,
+          "prechecks_ms": 0.006114,
+          "preview": {
+            "body_ms": 0.021374,
+            "full_roundtrip_ms": 0.351528,
+            "request_ms": 0.29057099999999997
+          },
+          "queue_ms": 0.000165,
+          "state_check_ms": 4.9999999999999996e-05,
+          "total_ms": 10.096655,
+          "validation_ms": 0.018143
+        },
+        {
+          "consume_ms": 3.126685,
+          "encode_ms": 0.015339,
+          "execute": {
+            "body_ms": 0.046037,
+            "full_roundtrip_ms": 0.345808,
+            "request_ms": 0.267933
+          },
+          "journal_ms": 6.290318,
+          "local_prep_ms": 0.10194899999999998,
+          "prechecks_ms": 0.005291,
+          "preview": {
+            "body_ms": 0.022042,
+            "full_roundtrip_ms": 0.353147,
+            "request_ms": 0.29282199999999997
+          },
+          "queue_ms": 0.00017999999999999998,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 10.313602,
+          "validation_ms": 0.017966999999999997
+        },
+        {
+          "consume_ms": 3.15899,
+          "encode_ms": 0.017203,
+          "execute": {
+            "body_ms": 0.046046,
+            "full_roundtrip_ms": 0.370141,
+            "request_ms": 0.291074
+          },
+          "journal_ms": 6.271691,
+          "local_prep_ms": 0.080978,
+          "prechecks_ms": 0.005954000000000001,
+          "preview": {
+            "body_ms": 0.0178,
+            "full_roundtrip_ms": 0.292079,
+            "request_ms": 0.23871799999999999
+          },
+          "queue_ms": 0.000186,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 10.273216,
+          "validation_ms": 0.017225999999999998
+        },
+        {
+          "consume_ms": 5.638134,
+          "encode_ms": 0.014065,
+          "execute": {
+            "body_ms": 0.025236,
+            "full_roundtrip_ms": 0.6513610000000001,
+            "request_ms": 0.5640470000000001
+          },
+          "journal_ms": 11.023568000000001,
+          "local_prep_ms": 0.19155200000000003,
+          "prechecks_ms": 0.007704,
+          "preview": {
+            "body_ms": 0.025062,
+            "full_roundtrip_ms": 0.35329900000000003,
+            "request_ms": 0.29210899999999995
+          },
+          "queue_ms": 0.000453,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 17.974930999999998,
+          "validation_ms": 0.020024
+        },
+        {
+          "consume_ms": 3.175537,
+          "encode_ms": 0.015221,
+          "execute": {
+            "body_ms": 0.009244,
+            "full_roundtrip_ms": 0.26423100000000005,
+            "request_ms": 0.22774899999999998
+          },
+          "journal_ms": 6.77426,
+          "local_prep_ms": 0.076949,
+          "prechecks_ms": 0.005142,
+          "preview": {
+            "body_ms": 0.028873,
+            "full_roundtrip_ms": 0.307807,
+            "request_ms": 0.248046
+          },
+          "queue_ms": 0.00024200000000000003,
+          "state_check_ms": 2.9e-05,
+          "total_ms": 10.687361,
+          "validation_ms": 0.013677
+        },
+        {
+          "consume_ms": 3.121741,
+          "encode_ms": 0.01134,
+          "execute": {
+            "body_ms": 0.047663000000000004,
+            "full_roundtrip_ms": 0.348729,
+            "request_ms": 0.271392
+          },
+          "journal_ms": 6.132054,
+          "local_prep_ms": 0.08468599999999998,
+          "prechecks_ms": 0.006056,
+          "preview": {
+            "body_ms": 0.021413,
+            "full_roundtrip_ms": 0.373027,
+            "request_ms": 0.313881
+          },
+          "queue_ms": 0.000172,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 10.15264,
+          "validation_ms": 0.019479
+        },
+        {
+          "consume_ms": 3.144103,
+          "encode_ms": 0.014941,
+          "execute": {
+            "body_ms": 0.04117,
+            "full_roundtrip_ms": 0.350742,
+            "request_ms": 0.280094
+          },
+          "journal_ms": 6.156134,
+          "local_prep_ms": 0.08532999999999999,
+          "prechecks_ms": 0.004791,
+          "preview": {
+            "body_ms": 0.019383,
+            "full_roundtrip_ms": 0.30516499999999996,
+            "request_ms": 0.248412
+          },
+          "queue_ms": 0.000202,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 10.128625000000001,
+          "validation_ms": 0.017416
+        },
+        {
+          "consume_ms": 3.2405340000000002,
+          "encode_ms": 0.015588999999999999,
+          "execute": {
+            "body_ms": 0.046279999999999995,
+            "full_roundtrip_ms": 0.337784,
+            "request_ms": 0.262533
+          },
+          "journal_ms": 6.49835,
+          "local_prep_ms": 0.084429,
+          "prechecks_ms": 0.005366,
+          "preview": {
+            "body_ms": 0.020461,
+            "full_roundtrip_ms": 0.329295,
+            "request_ms": 0.25839199999999996
+          },
+          "queue_ms": 0.000243,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 10.586649,
+          "validation_ms": 0.019815
+        },
+        {
+          "consume_ms": 3.327791,
+          "encode_ms": 0.016313,
+          "execute": {
+            "body_ms": 0.047817,
+            "full_roundtrip_ms": 0.326412,
+            "request_ms": 0.24953399999999998
+          },
+          "journal_ms": 6.262271,
+          "local_prep_ms": 0.084921,
+          "prechecks_ms": 0.00505,
+          "preview": {
+            "body_ms": 0.021818999999999998,
+            "full_roundtrip_ms": 0.37417100000000003,
+            "request_ms": 0.268467
+          },
+          "queue_ms": 0.000247,
+          "state_check_ms": 4.9000000000000005e-05,
+          "total_ms": 10.485794,
+          "validation_ms": 0.036506000000000004
+        },
+        {
+          "consume_ms": 3.164949,
+          "encode_ms": 0.014828,
+          "execute": {
+            "body_ms": 0.044432,
+            "full_roundtrip_ms": 0.325128,
+            "request_ms": 0.250186
+          },
+          "journal_ms": 6.278076,
+          "local_prep_ms": 0.097069,
+          "prechecks_ms": 0.004834,
+          "preview": {
+            "body_ms": 0.020314,
+            "full_roundtrip_ms": 0.33342,
+            "request_ms": 0.280331
+          },
+          "queue_ms": 0.00017999999999999998,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 10.290537,
+          "validation_ms": 0.018334
+        },
+        {
+          "consume_ms": 5.23712,
+          "encode_ms": 0.014263999999999999,
+          "execute": {
+            "body_ms": 0.040994,
+            "full_roundtrip_ms": 0.350335,
+            "request_ms": 0.27542700000000003
+          },
+          "journal_ms": 6.22252,
+          "local_prep_ms": 0.085638,
+          "prechecks_ms": 0.005901,
+          "preview": {
+            "body_ms": 0.020318,
+            "full_roundtrip_ms": 0.312413,
+            "request_ms": 0.257874
+          },
+          "queue_ms": 0.000246,
+          "state_check_ms": 2.9999999999999997e-05,
+          "total_ms": 12.298988,
+          "validation_ms": 0.016824000000000002
+        },
+        {
+          "consume_ms": 3.1292400000000002,
+          "encode_ms": 0.010194,
+          "execute": {
+            "body_ms": 0.041023,
+            "full_roundtrip_ms": 0.307644,
+            "request_ms": 0.239287
+          },
+          "journal_ms": 8.652470999999998,
+          "local_prep_ms": 0.076316,
+          "prechecks_ms": 0.005594,
+          "preview": {
+            "body_ms": 0.016104999999999998,
+            "full_roundtrip_ms": 0.314585,
+            "request_ms": 0.243903
+          },
+          "queue_ms": 0.00013199999999999998,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 12.560173,
+          "validation_ms": 0.011738
+        },
+        {
+          "consume_ms": 3.193005,
+          "encode_ms": 0.013632,
+          "execute": {
+            "body_ms": 0.008236,
+            "full_roundtrip_ms": 0.320044,
+            "request_ms": 0.28238800000000003
+          },
+          "journal_ms": 6.3144919999999995,
+          "local_prep_ms": 0.083797,
+          "prechecks_ms": 0.005108,
+          "preview": {
+            "body_ms": 0.020236999999999998,
+            "full_roundtrip_ms": 0.305834,
+            "request_ms": 0.24864800000000004
+          },
+          "queue_ms": 0.00019,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 10.306848,
+          "validation_ms": 0.017721
+        },
+        {
+          "consume_ms": 5.511305999999999,
+          "encode_ms": 0.014352,
+          "execute": {
+            "body_ms": 0.009106999999999999,
+            "full_roundtrip_ms": 0.281999,
+            "request_ms": 0.24117799999999998
+          },
+          "journal_ms": 6.190143,
+          "local_prep_ms": 0.083286,
+          "prechecks_ms": 0.006466,
+          "preview": {
+            "body_ms": 0.02095,
+            "full_roundtrip_ms": 0.522056,
+            "request_ms": 0.46128800000000003
+          },
+          "queue_ms": 0.000164,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 12.685557,
+          "validation_ms": 0.01604
+        },
+        {
+          "consume_ms": 3.168037,
+          "encode_ms": 0.01598,
+          "execute": {
+            "body_ms": 0.009975,
+            "full_roundtrip_ms": 0.311867,
+            "request_ms": 0.27148100000000003
+          },
+          "journal_ms": 6.577916,
+          "local_prep_ms": 0.083332,
+          "prechecks_ms": 0.005691,
+          "preview": {
+            "body_ms": 0.022518,
+            "full_roundtrip_ms": 0.670388,
+            "request_ms": 0.6097090000000001
+          },
+          "queue_ms": 0.0005600000000000001,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 10.911117999999998,
+          "validation_ms": 0.017821999999999998
+        },
+        {
+          "consume_ms": 3.093672,
+          "encode_ms": 0.017033,
+          "execute": {
+            "body_ms": 0.010893,
+            "full_roundtrip_ms": 0.383201,
+            "request_ms": 0.338753
+          },
+          "journal_ms": 6.420721,
+          "local_prep_ms": 0.089701,
+          "prechecks_ms": 0.006914,
+          "preview": {
+            "body_ms": 0.026119,
+            "full_roundtrip_ms": 0.464496,
+            "request_ms": 0.398586
+          },
+          "queue_ms": 0.000599,
+          "state_check_ms": 4e-05,
+          "total_ms": 10.568425,
+          "validation_ms": 0.032208
+        },
+        {
+          "consume_ms": 3.4059709999999996,
+          "encode_ms": 0.014823,
+          "execute": {
+            "body_ms": 0.007909,
+            "full_roundtrip_ms": 0.259045,
+            "request_ms": 0.224244
+          },
+          "journal_ms": 6.476532000000001,
+          "local_prep_ms": 0.08532599999999999,
+          "prechecks_ms": 0.004804,
+          "preview": {
+            "body_ms": 0.020425,
+            "full_roundtrip_ms": 0.47572800000000004,
+            "request_ms": 0.42047599999999996
+          },
+          "queue_ms": 0.000176,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 10.793166,
+          "validation_ms": 0.017238
+        },
+        {
+          "consume_ms": 3.748351,
+          "encode_ms": 0.015173,
+          "execute": {
+            "body_ms": 0.012001999999999999,
+            "full_roundtrip_ms": 0.279469,
+            "request_ms": 0.239905
+          },
+          "journal_ms": 11.261194999999999,
+          "local_prep_ms": 0.09709499999999999,
+          "prechecks_ms": 0.005269000000000001,
+          "preview": {
+            "body_ms": 0.081403,
+            "full_roundtrip_ms": 0.389828,
+            "request_ms": 0.272029
+          },
+          "queue_ms": 0.000237,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 15.871323,
+          "validation_ms": 0.019188
+        },
+        {
+          "consume_ms": 3.246263,
+          "encode_ms": 0.014835,
+          "execute": {
+            "body_ms": 0.010621,
+            "full_roundtrip_ms": 0.303362,
+            "request_ms": 0.261698
+          },
+          "journal_ms": 6.841654,
+          "local_prep_ms": 0.09486799999999998,
+          "prechecks_ms": 0.00526,
+          "preview": {
+            "body_ms": 0.024814,
+            "full_roundtrip_ms": 0.873031,
+            "request_ms": 0.810665
+          },
+          "queue_ms": 0.00025600000000000004,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 11.452525999999999,
+          "validation_ms": 0.018623999999999998
+        },
+        {
+          "consume_ms": 3.075983,
+          "encode_ms": 0.016162,
+          "execute": {
+            "body_ms": 0.007843,
+            "full_roundtrip_ms": 0.348369,
+            "request_ms": 0.313
+          },
+          "journal_ms": 6.558983,
+          "local_prep_ms": 0.08616700000000001,
+          "prechecks_ms": 0.004685,
+          "preview": {
+            "body_ms": 0.022481,
+            "full_roundtrip_ms": 0.324591,
+            "request_ms": 0.264501
+          },
+          "queue_ms": 0.000241,
+          "state_check_ms": 3.1e-05,
+          "total_ms": 10.48523,
+          "validation_ms": 0.018389000000000003
+        }
+      ],
+      "scope": "loopback HTTP/1.1, native resident handler, durable journal + consumed markers, NOT Binance speed, no TLS",
+      "tcpAccepts": 1
+    },
+    {
+      "httpRequests": 200,
+      "mockDelayPerHttpMs": 5,
+      "orders": 100,
+      "samples": [
+        {
+          "consume_ms": 3.2800580000000004,
+          "encode_ms": 0.015458,
+          "execute": {
+            "body_ms": 0.011426,
+            "full_roundtrip_ms": 5.498286,
+            "request_ms": 5.410588
+          },
+          "journal_ms": 8.032731,
+          "local_prep_ms": 2.641054,
+          "prechecks_ms": 0.00527,
+          "preview": {
+            "body_ms": 0.02377,
+            "full_roundtrip_ms": 5.783375,
+            "request_ms": 5.723033
+          },
+          "queue_ms": 0.000608,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 25.336982000000003,
+          "validation_ms": 0.019110000000000002
+        },
+        {
+          "consume_ms": 3.2977760000000003,
+          "encode_ms": 0.016126,
+          "execute": {
+            "body_ms": 0.010149,
+            "full_roundtrip_ms": 5.441523999999999,
+            "request_ms": 5.401478
+          },
+          "journal_ms": 6.540713,
+          "local_prep_ms": 0.10144399999999999,
+          "prechecks_ms": 0.005322,
+          "preview": {
+            "body_ms": 0.043657,
+            "full_roundtrip_ms": 5.975454,
+            "request_ms": 5.896783
+          },
+          "queue_ms": 0.000255,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 21.456874,
+          "validation_ms": 0.018588
+        },
+        {
+          "consume_ms": 3.255953,
+          "encode_ms": 0.011625,
+          "execute": {
+            "body_ms": 0.011397,
+            "full_roundtrip_ms": 5.488360999999999,
+            "request_ms": 5.448258
+          },
+          "journal_ms": 6.525684,
+          "local_prep_ms": 0.083734,
+          "prechecks_ms": 0.005631000000000001,
+          "preview": {
+            "body_ms": 0.028934,
+            "full_roundtrip_ms": 5.494577,
+            "request_ms": 5.430761
+          },
+          "queue_ms": 0.00017900000000000001,
+          "state_check_ms": 4e-05,
+          "total_ms": 20.948474,
+          "validation_ms": 0.019154
+        },
+        {
+          "consume_ms": 3.202709,
+          "encode_ms": 0.015896,
+          "execute": {
+            "body_ms": 0.012343,
+            "full_roundtrip_ms": 5.449937,
+            "request_ms": 5.4044360000000005
+          },
+          "journal_ms": 6.560237000000001,
+          "local_prep_ms": 0.09027700000000001,
+          "prechecks_ms": 0.005549999999999999,
+          "preview": {
+            "body_ms": 0.026399,
+            "full_roundtrip_ms": 5.527833,
+            "request_ms": 5.462278
+          },
+          "queue_ms": 0.000235,
+          "state_check_ms": 3.2000000000000005e-05,
+          "total_ms": 20.934230000000003,
+          "validation_ms": 0.019028999999999997
+        },
+        {
+          "consume_ms": 3.30823,
+          "encode_ms": 0.016703,
+          "execute": {
+            "body_ms": 0.011264999999999999,
+            "full_roundtrip_ms": 5.4481779999999995,
+            "request_ms": 5.404903
+          },
+          "journal_ms": 6.419187,
+          "local_prep_ms": 0.100929,
+          "prechecks_ms": 0.00533,
+          "preview": {
+            "body_ms": 0.024797,
+            "full_roundtrip_ms": 5.503781,
+            "request_ms": 5.440103
+          },
+          "queue_ms": 0.000232,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 20.896824000000002,
+          "validation_ms": 0.019176
+        },
+        {
+          "consume_ms": 3.193597,
+          "encode_ms": 0.015721000000000002,
+          "execute": {
+            "body_ms": 0.012426,
+            "full_roundtrip_ms": 5.469905,
+            "request_ms": 5.425562
+          },
+          "journal_ms": 8.821537,
+          "local_prep_ms": 0.09148400000000001,
+          "prechecks_ms": 0.005118999999999999,
+          "preview": {
+            "body_ms": 0.027267000000000003,
+            "full_roundtrip_ms": 5.461914,
+            "request_ms": 5.406217
+          },
+          "queue_ms": 0.000232,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 23.140482,
+          "validation_ms": 0.018388
+        },
+        {
+          "consume_ms": 3.425471,
+          "encode_ms": 0.015205999999999999,
+          "execute": {
+            "body_ms": 0.011192,
+            "full_roundtrip_ms": 5.451338,
+            "request_ms": 5.407966999999999
+          },
+          "journal_ms": 6.322807000000001,
+          "local_prep_ms": 0.089757,
+          "prechecks_ms": 0.0047539999999999995,
+          "preview": {
+            "body_ms": 0.025265999999999997,
+            "full_roundtrip_ms": 5.567814,
+            "request_ms": 5.505883
+          },
+          "queue_ms": 0.00023999999999999998,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 20.958277000000002,
+          "validation_ms": 0.019992999999999997
+        },
+        {
+          "consume_ms": 3.325967,
+          "encode_ms": 0.015919000000000003,
+          "execute": {
+            "body_ms": 0.012102,
+            "full_roundtrip_ms": 5.484153,
+            "request_ms": 5.439456
+          },
+          "journal_ms": 6.345913,
+          "local_prep_ms": 0.08846699999999999,
+          "prechecks_ms": 0.005492,
+          "preview": {
+            "body_ms": 0.026390999999999998,
+            "full_roundtrip_ms": 5.50805,
+            "request_ms": 5.445041000000001
+          },
+          "queue_ms": 0.000482,
+          "state_check_ms": 4.6e-05,
+          "total_ms": 20.854927999999997,
+          "validation_ms": 0.018407
+        },
+        {
+          "consume_ms": 3.867138,
+          "encode_ms": 0.016859,
+          "execute": {
+            "body_ms": 0.012818,
+            "full_roundtrip_ms": 5.475245999999999,
+            "request_ms": 5.430418
+          },
+          "journal_ms": 12.483228999999998,
+          "local_prep_ms": 0.07456,
+          "prechecks_ms": 0.005559000000000001,
+          "preview": {
+            "body_ms": 0.019296,
+            "full_roundtrip_ms": 5.457409,
+            "request_ms": 5.400519
+          },
+          "queue_ms": 0.00023099999999999998,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 27.46575,
+          "validation_ms": 0.014445
+        },
+        {
+          "consume_ms": 4.669554000000001,
+          "encode_ms": 0.016245000000000002,
+          "execute": {
+            "body_ms": 0.011079,
+            "full_roundtrip_ms": 5.451026000000001,
+            "request_ms": 5.408469
+          },
+          "journal_ms": 8.582281,
+          "local_prep_ms": 0.089858,
+          "prechecks_ms": 0.005507,
+          "preview": {
+            "body_ms": 0.024248,
+            "full_roundtrip_ms": 5.490725,
+            "request_ms": 5.427192
+          },
+          "queue_ms": 0.00025699999999999996,
+          "state_check_ms": 4e-05,
+          "total_ms": 24.387362,
+          "validation_ms": 0.019956
+        },
+        {
+          "consume_ms": 3.042656,
+          "encode_ms": 0.016914000000000002,
+          "execute": {
+            "body_ms": 0.012084,
+            "full_roundtrip_ms": 5.510099,
+            "request_ms": 5.467905
+          },
+          "journal_ms": 6.662597,
+          "local_prep_ms": 0.09115999999999999,
+          "prechecks_ms": 0.005561999999999999,
+          "preview": {
+            "body_ms": 0.025339,
+            "full_roundtrip_ms": 5.511822,
+            "request_ms": 5.446014
+          },
+          "queue_ms": 0.000167,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 20.918257,
+          "validation_ms": 0.019649
+        },
+        {
+          "consume_ms": 3.7254300000000002,
+          "encode_ms": 0.015733,
+          "execute": {
+            "body_ms": 0.012616,
+            "full_roundtrip_ms": 5.414466,
+            "request_ms": 5.377281
+          },
+          "journal_ms": 5.983795000000001,
+          "local_prep_ms": 0.07133300000000001,
+          "prechecks_ms": 0.004786,
+          "preview": {
+            "body_ms": 0.028605000000000002,
+            "full_roundtrip_ms": 5.43745,
+            "request_ms": 5.381963
+          },
+          "queue_ms": 0.000157,
+          "state_check_ms": 2.9e-05,
+          "total_ms": 20.730104,
+          "validation_ms": 0.019141000000000002
+        },
+        {
+          "consume_ms": 3.7786180000000003,
+          "encode_ms": 0.017636,
+          "execute": {
+            "body_ms": 0.013542,
+            "full_roundtrip_ms": 5.98404,
+            "request_ms": 5.936764
+          },
+          "journal_ms": 6.660962,
+          "local_prep_ms": 0.103069,
+          "prechecks_ms": 0.006007,
+          "preview": {
+            "body_ms": 0.02868,
+            "full_roundtrip_ms": 5.499704,
+            "request_ms": 5.431894
+          },
+          "queue_ms": 0.00026399999999999997,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 22.135693,
+          "validation_ms": 0.020525
+        },
+        {
+          "consume_ms": 3.389206,
+          "encode_ms": 0.015427,
+          "execute": {
+            "body_ms": 0.013047999999999999,
+            "full_roundtrip_ms": 5.490395,
+            "request_ms": 5.444531
+          },
+          "journal_ms": 7.0467059999999995,
+          "local_prep_ms": 0.11273999999999999,
+          "prechecks_ms": 0.005835000000000001,
+          "preview": {
+            "body_ms": 0.025807,
+            "full_roundtrip_ms": 5.607104,
+            "request_ms": 5.545545
+          },
+          "queue_ms": 0.000188,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 21.748027,
+          "validation_ms": 0.019536
+        },
+        {
+          "consume_ms": 5.6454260000000005,
+          "encode_ms": 0.033444,
+          "execute": {
+            "body_ms": 0.050161000000000004,
+            "full_roundtrip_ms": 5.579789,
+            "request_ms": 5.49625
+          },
+          "journal_ms": 6.408246,
+          "local_prep_ms": 0.09165,
+          "prechecks_ms": 0.0058779999999999995,
+          "preview": {
+            "body_ms": 0.026441,
+            "full_roundtrip_ms": 5.5016,
+            "request_ms": 5.423292
+          },
+          "queue_ms": 0.00022700000000000002,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 23.428668,
+          "validation_ms": 0.020456999999999996
+        },
+        {
+          "consume_ms": 3.4081829999999997,
+          "encode_ms": 0.011613,
+          "execute": {
+            "body_ms": 0.011911,
+            "full_roundtrip_ms": 5.98758,
+            "request_ms": 5.944406
+          },
+          "journal_ms": 6.836894,
+          "local_prep_ms": 0.090136,
+          "prechecks_ms": 0.00584,
+          "preview": {
+            "body_ms": 0.025675,
+            "full_roundtrip_ms": 5.507871,
+            "request_ms": 5.436281
+          },
+          "queue_ms": 0.00015,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 21.937695,
+          "validation_ms": 0.025249
+        },
+        {
+          "consume_ms": 3.510607,
+          "encode_ms": 0.014552,
+          "execute": {
+            "body_ms": 0.011205,
+            "full_roundtrip_ms": 5.4811,
+            "request_ms": 5.436987
+          },
+          "journal_ms": 6.901019,
+          "local_prep_ms": 0.08596300000000001,
+          "prechecks_ms": 0.005296,
+          "preview": {
+            "body_ms": 0.024651000000000003,
+            "full_roundtrip_ms": 5.576617,
+            "request_ms": 5.517112999999999
+          },
+          "queue_ms": 0.000248,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 21.655538,
+          "validation_ms": 0.019346000000000002
+        },
+        {
+          "consume_ms": 3.424374,
+          "encode_ms": 0.015851,
+          "execute": {
+            "body_ms": 0.011189000000000001,
+            "full_roundtrip_ms": 5.445307,
+            "request_ms": 5.4014429999999996
+          },
+          "journal_ms": 7.68642,
+          "local_prep_ms": 0.09153700000000001,
+          "prechecks_ms": 0.005948,
+          "preview": {
+            "body_ms": 0.026909,
+            "full_roundtrip_ms": 5.48594,
+            "request_ms": 5.422251999999999
+          },
+          "queue_ms": 0.000221,
+          "state_check_ms": 4.4999999999999996e-05,
+          "total_ms": 22.325559,
+          "validation_ms": 0.11047799999999999
+        },
+        {
+          "consume_ms": 3.429836,
+          "encode_ms": 0.015936000000000002,
+          "execute": {
+            "body_ms": 0.013892,
+            "full_roundtrip_ms": 5.503813,
+            "request_ms": 5.455234
+          },
+          "journal_ms": 8.700346,
+          "local_prep_ms": 0.084796,
+          "prechecks_ms": 0.006555,
+          "preview": {
+            "body_ms": 0.027756,
+            "full_roundtrip_ms": 5.45895,
+            "request_ms": 5.401689999999999
+          },
+          "queue_ms": 0.000577,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 23.283053000000002,
+          "validation_ms": 0.020816
+        },
+        {
+          "consume_ms": 3.232764,
+          "encode_ms": 0.014971,
+          "execute": {
+            "body_ms": 0.011734,
+            "full_roundtrip_ms": 5.471262,
+            "request_ms": 5.424461
+          },
+          "journal_ms": 5.875624,
+          "local_prep_ms": 0.091558,
+          "prechecks_ms": 0.007141,
+          "preview": {
+            "body_ms": 0.024854,
+            "full_roundtrip_ms": 5.499388,
+            "request_ms": 5.437313
+          },
+          "queue_ms": 0.000168,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 20.275006,
+          "validation_ms": 0.019426
+        },
+        {
+          "consume_ms": 2.758905,
+          "encode_ms": 0.016531,
+          "execute": {
+            "body_ms": 0.012802000000000001,
+            "full_roundtrip_ms": 5.471861,
+            "request_ms": 5.424404
+          },
+          "journal_ms": 5.840034,
+          "local_prep_ms": 0.090997,
+          "prechecks_ms": 0.005714,
+          "preview": {
+            "body_ms": 0.024817,
+            "full_roundtrip_ms": 5.480500999999999,
+            "request_ms": 5.417955
+          },
+          "queue_ms": 0.000166,
+          "state_check_ms": 4.8e-05,
+          "total_ms": 19.744766000000002,
+          "validation_ms": 0.018685
+        },
+        {
+          "consume_ms": 3.195161,
+          "encode_ms": 0.019218000000000002,
+          "execute": {
+            "body_ms": 0.018349,
+            "full_roundtrip_ms": 5.439948,
+            "request_ms": 5.394901
+          },
+          "journal_ms": 10.581714999999999,
+          "local_prep_ms": 0.074416,
+          "prechecks_ms": 0.005397,
+          "preview": {
+            "body_ms": 0.020744,
+            "full_roundtrip_ms": 5.487928,
+            "request_ms": 5.435273
+          },
+          "queue_ms": 0.000148,
+          "state_check_ms": 2.9e-05,
+          "total_ms": 24.879576,
+          "validation_ms": 0.013203999999999999
+        },
+        {
+          "consume_ms": 2.873513,
+          "encode_ms": 0.016986,
+          "execute": {
+            "body_ms": 0.013038,
+            "full_roundtrip_ms": 5.462581999999999,
+            "request_ms": 5.4176340000000005
+          },
+          "journal_ms": 6.750667999999999,
+          "local_prep_ms": 0.089693,
+          "prechecks_ms": 0.0054340000000000005,
+          "preview": {
+            "body_ms": 0.026417000000000003,
+            "full_roundtrip_ms": 5.516668,
+            "request_ms": 5.454938
+          },
+          "queue_ms": 0.000282,
+          "state_check_ms": 4e-05,
+          "total_ms": 20.800226000000002,
+          "validation_ms": 0.022295000000000002
+        },
+        {
+          "consume_ms": 3.14451,
+          "encode_ms": 0.015432999999999999,
+          "execute": {
+            "body_ms": 0.01324,
+            "full_roundtrip_ms": 5.535522,
+            "request_ms": 5.489998
+          },
+          "journal_ms": 5.907188999999999,
+          "local_prep_ms": 0.093349,
+          "prechecks_ms": 0.00508,
+          "preview": {
+            "body_ms": 0.02593,
+            "full_roundtrip_ms": 5.496512999999999,
+            "request_ms": 5.435589
+          },
+          "queue_ms": 0.000489,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 20.279754,
+          "validation_ms": 0.021299
+        },
+        {
+          "consume_ms": 4.248055,
+          "encode_ms": 0.015183,
+          "execute": {
+            "body_ms": 0.009953,
+            "full_roundtrip_ms": 5.390818,
+            "request_ms": 5.348177
+          },
+          "journal_ms": 6.164227,
+          "local_prep_ms": 0.09907099999999999,
+          "prechecks_ms": 0.005156999999999999,
+          "preview": {
+            "body_ms": 0.024759,
+            "full_roundtrip_ms": 5.462049,
+            "request_ms": 5.404005
+          },
+          "queue_ms": 0.00023,
+          "state_check_ms": 0.00027,
+          "total_ms": 21.45843,
+          "validation_ms": 0.020391999999999997
+        },
+        {
+          "consume_ms": 3.1277399999999997,
+          "encode_ms": 0.01293,
+          "execute": {
+            "body_ms": 0.010202,
+            "full_roundtrip_ms": 5.456599000000001,
+            "request_ms": 5.415418
+          },
+          "journal_ms": 6.085765,
+          "local_prep_ms": 0.08180299999999999,
+          "prechecks_ms": 0.0066879999999999995,
+          "preview": {
+            "body_ms": 0.062583,
+            "full_roundtrip_ms": 5.550796999999999,
+            "request_ms": 5.449535999999999
+          },
+          "queue_ms": 0.00036199999999999996,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 21.42227,
+          "validation_ms": 0.019922
+        },
+        {
+          "consume_ms": 3.198992,
+          "encode_ms": 0.015146,
+          "execute": {
+            "body_ms": 0.012194,
+            "full_roundtrip_ms": 5.44957,
+            "request_ms": 5.407456
+          },
+          "journal_ms": 6.183415,
+          "local_prep_ms": 0.08763599999999999,
+          "prechecks_ms": 0.004524,
+          "preview": {
+            "body_ms": 0.023128,
+            "full_roundtrip_ms": 5.489638,
+            "request_ms": 5.431614000000001
+          },
+          "queue_ms": 0.000233,
+          "state_check_ms": 4e-05,
+          "total_ms": 20.508519,
+          "validation_ms": 0.018617
+        },
+        {
+          "consume_ms": 3.4888660000000002,
+          "encode_ms": 0.014653,
+          "execute": {
+            "body_ms": 0.013762,
+            "full_roundtrip_ms": 5.469601,
+            "request_ms": 5.424004
+          },
+          "journal_ms": 6.4655819999999995,
+          "local_prep_ms": 0.086667,
+          "prechecks_ms": 0.004949,
+          "preview": {
+            "body_ms": 0.025512,
+            "full_roundtrip_ms": 5.491989,
+            "request_ms": 5.431829
+          },
+          "queue_ms": 0.000166,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 21.140823,
+          "validation_ms": 0.020386
+        },
+        {
+          "consume_ms": 3.575394,
+          "encode_ms": 0.0159,
+          "execute": {
+            "body_ms": 0.012275,
+            "full_roundtrip_ms": 5.4813529999999995,
+            "request_ms": 5.434263
+          },
+          "journal_ms": 12.255509,
+          "local_prep_ms": 0.083619,
+          "prechecks_ms": 0.005690000000000001,
+          "preview": {
+            "body_ms": 0.024473,
+            "full_roundtrip_ms": 5.479313,
+            "request_ms": 5.4245730000000005
+          },
+          "queue_ms": 0.00022,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 26.977466,
+          "validation_ms": 0.019785
+        },
+        {
+          "consume_ms": 3.4426029999999996,
+          "encode_ms": 0.016050000000000002,
+          "execute": {
+            "body_ms": 0.012862,
+            "full_roundtrip_ms": 5.461397,
+            "request_ms": 5.415617
+          },
+          "journal_ms": 6.690500999999999,
+          "local_prep_ms": 0.141956,
+          "prechecks_ms": 0.006308,
+          "preview": {
+            "body_ms": 0.025627999999999998,
+            "full_roundtrip_ms": 5.542153,
+            "request_ms": 5.476582
+          },
+          "queue_ms": 0.00023999999999999998,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 21.390877999999997,
+          "validation_ms": 0.026382
+        },
+        {
+          "consume_ms": 3.4329120000000004,
+          "encode_ms": 0.016167,
+          "execute": {
+            "body_ms": 0.011689,
+            "full_roundtrip_ms": 5.5016240000000005,
+            "request_ms": 5.4551110000000005
+          },
+          "journal_ms": 6.613947,
+          "local_prep_ms": 0.173232,
+          "prechecks_ms": 0.005295,
+          "preview": {
+            "body_ms": 0.025296,
+            "full_roundtrip_ms": 5.520017999999999,
+            "request_ms": 5.455025
+          },
+          "queue_ms": 0.00018199999999999998,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 21.346585,
+          "validation_ms": 0.022368
+        },
+        {
+          "consume_ms": 3.496157,
+          "encode_ms": 0.017327,
+          "execute": {
+            "body_ms": 0.014091,
+            "full_roundtrip_ms": 5.518848,
+            "request_ms": 5.4710849999999995
+          },
+          "journal_ms": 9.124907,
+          "local_prep_ms": 0.08090800000000001,
+          "prechecks_ms": 0.006660000000000001,
+          "preview": {
+            "body_ms": 0.018914,
+            "full_roundtrip_ms": 5.455131000000001,
+            "request_ms": 5.395551
+          },
+          "queue_ms": 0.000342,
+          "state_check_ms": 3.2999999999999996e-05,
+          "total_ms": 23.784585,
+          "validation_ms": 0.016643
+        },
+        {
+          "consume_ms": 3.419655,
+          "encode_ms": 0.016597,
+          "execute": {
+            "body_ms": 0.012535,
+            "full_roundtrip_ms": 5.44559,
+            "request_ms": 5.401463
+          },
+          "journal_ms": 6.535475,
+          "local_prep_ms": 0.120133,
+          "prechecks_ms": 0.00621,
+          "preview": {
+            "body_ms": 0.026416,
+            "full_roundtrip_ms": 5.551034,
+            "request_ms": 5.473019
+          },
+          "queue_ms": 0.000248,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 21.177284,
+          "validation_ms": 0.020819999999999998
+        },
+        {
+          "consume_ms": 5.362139999999999,
+          "encode_ms": 0.015826,
+          "execute": {
+            "body_ms": 0.053291000000000005,
+            "full_roundtrip_ms": 5.527424000000001,
+            "request_ms": 5.438892
+          },
+          "journal_ms": 6.387906,
+          "local_prep_ms": 0.088935,
+          "prechecks_ms": 0.005837,
+          "preview": {
+            "body_ms": 0.027295,
+            "full_roundtrip_ms": 5.5078510000000005,
+            "request_ms": 5.444501
+          },
+          "queue_ms": 0.000223,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 22.97953,
+          "validation_ms": 0.021644
+        },
+        {
+          "consume_ms": 5.2160899999999994,
+          "encode_ms": 0.016795,
+          "execute": {
+            "body_ms": 0.0143,
+            "full_roundtrip_ms": 5.48886,
+            "request_ms": 5.441494
+          },
+          "journal_ms": 7.148707,
+          "local_prep_ms": 0.080223,
+          "prechecks_ms": 0.005208,
+          "preview": {
+            "body_ms": 0.023376,
+            "full_roundtrip_ms": 7.0282219999999995,
+            "request_ms": 6.967318000000001
+          },
+          "queue_ms": 0.000176,
+          "state_check_ms": 2.9999999999999997e-05,
+          "total_ms": 25.057474,
+          "validation_ms": 0.013930999999999999
+        },
+        {
+          "consume_ms": 3.182971,
+          "encode_ms": 0.029882,
+          "execute": {
+            "body_ms": 0.016524999999999998,
+            "full_roundtrip_ms": 5.481871999999999,
+            "request_ms": 5.43293
+          },
+          "journal_ms": 6.399902,
+          "local_prep_ms": 0.087951,
+          "prechecks_ms": 0.004424,
+          "preview": {
+            "body_ms": 0.062617,
+            "full_roundtrip_ms": 5.537754,
+            "request_ms": 5.437521
+          },
+          "queue_ms": 0.000237,
+          "state_check_ms": 5.3e-05,
+          "total_ms": 20.86082,
+          "validation_ms": 0.019598
+        },
+        {
+          "consume_ms": 3.291066,
+          "encode_ms": 0.014858999999999999,
+          "execute": {
+            "body_ms": 0.013159,
+            "full_roundtrip_ms": 5.46895,
+            "request_ms": 5.422861999999999
+          },
+          "journal_ms": 6.480506,
+          "local_prep_ms": 0.092474,
+          "prechecks_ms": 0.004978,
+          "preview": {
+            "body_ms": 0.029700999999999998,
+            "full_roundtrip_ms": 5.500467,
+            "request_ms": 5.434588
+          },
+          "queue_ms": 0.00016299999999999998,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 20.937975,
+          "validation_ms": 0.019694
+        },
+        {
+          "consume_ms": 3.203107,
+          "encode_ms": 0.015986,
+          "execute": {
+            "body_ms": 0.012211,
+            "full_roundtrip_ms": 5.443926,
+            "request_ms": 5.39975
+          },
+          "journal_ms": 6.567387,
+          "local_prep_ms": 0.090518,
+          "prechecks_ms": 0.005533,
+          "preview": {
+            "body_ms": 0.02913,
+            "full_roundtrip_ms": 5.523228,
+            "request_ms": 5.455955
+          },
+          "queue_ms": 0.000241,
+          "state_check_ms": 4e-05,
+          "total_ms": 20.932934,
+          "validation_ms": 0.017685
+        },
+        {
+          "consume_ms": 3.269661,
+          "encode_ms": 0.014435,
+          "execute": {
+            "body_ms": 0.011278999999999999,
+            "full_roundtrip_ms": 5.467277,
+            "request_ms": 5.422427
+          },
+          "journal_ms": 9.153957,
+          "local_prep_ms": 0.09199399999999999,
+          "prechecks_ms": 0.005813,
+          "preview": {
+            "body_ms": 0.042793000000000005,
+            "full_roundtrip_ms": 5.637392,
+            "request_ms": 5.538852
+          },
+          "queue_ms": 0.00023099999999999998,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 23.722906,
+          "validation_ms": 0.018718000000000002
+        },
+        {
+          "consume_ms": 3.179048,
+          "encode_ms": 0.014978,
+          "execute": {
+            "body_ms": 0.011883,
+            "full_roundtrip_ms": 5.474755,
+            "request_ms": 5.4332
+          },
+          "journal_ms": 6.2013929999999995,
+          "local_prep_ms": 0.08649499999999999,
+          "prechecks_ms": 0.005731,
+          "preview": {
+            "body_ms": 0.027875,
+            "full_roundtrip_ms": 5.492652,
+            "request_ms": 5.411321999999999
+          },
+          "queue_ms": 0.000235,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 20.537670000000002,
+          "validation_ms": 0.02108
+        },
+        {
+          "consume_ms": 3.162336,
+          "encode_ms": 0.014633,
+          "execute": {
+            "body_ms": 0.013234000000000001,
+            "full_roundtrip_ms": 5.47935,
+            "request_ms": 5.4340589999999995
+          },
+          "journal_ms": 6.1746859999999995,
+          "local_prep_ms": 0.088115,
+          "prechecks_ms": 0.005632,
+          "preview": {
+            "body_ms": 0.026097000000000002,
+            "full_roundtrip_ms": 5.508408,
+            "request_ms": 5.445671
+          },
+          "queue_ms": 0.000167,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 20.514215999999998,
+          "validation_ms": 0.019606000000000002
+        },
+        {
+          "consume_ms": 3.6221159999999997,
+          "encode_ms": 0.016728,
+          "execute": {
+            "body_ms": 0.013541,
+            "full_roundtrip_ms": 5.4909099999999995,
+            "request_ms": 5.445047
+          },
+          "journal_ms": 12.137573000000001,
+          "local_prep_ms": 0.14906,
+          "prechecks_ms": 0.00511,
+          "preview": {
+            "body_ms": 0.026493,
+            "full_roundtrip_ms": 5.880377,
+            "request_ms": 5.817381
+          },
+          "queue_ms": 0.000253,
+          "state_check_ms": 4e-05,
+          "total_ms": 27.384128,
+          "validation_ms": 0.01915
+        },
+        {
+          "consume_ms": 3.323995,
+          "encode_ms": 0.015371,
+          "execute": {
+            "body_ms": 0.0112,
+            "full_roundtrip_ms": 5.471420999999999,
+            "request_ms": 5.426874
+          },
+          "journal_ms": 6.3508309999999994,
+          "local_prep_ms": 0.08521899999999999,
+          "prechecks_ms": 0.006106,
+          "preview": {
+            "body_ms": 0.028717999999999997,
+            "full_roundtrip_ms": 5.548412,
+            "request_ms": 5.48193
+          },
+          "queue_ms": 0.00015800000000000002,
+          "state_check_ms": 4.6e-05,
+          "total_ms": 20.89594,
+          "validation_ms": 0.020824999999999996
+        },
+        {
+          "consume_ms": 3.300664,
+          "encode_ms": 0.014726,
+          "execute": {
+            "body_ms": 0.030467,
+            "full_roundtrip_ms": 5.478206,
+            "request_ms": 5.416533
+          },
+          "journal_ms": 6.431598,
+          "local_prep_ms": 0.09074499999999999,
+          "prechecks_ms": 0.005408,
+          "preview": {
+            "body_ms": 0.030402000000000002,
+            "full_roundtrip_ms": 5.558552,
+            "request_ms": 5.489704
+          },
+          "queue_ms": 0.000229,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 20.96038,
+          "validation_ms": 0.020582000000000003
+        },
+        {
+          "consume_ms": 6.000035,
+          "encode_ms": 0.015983,
+          "execute": {
+            "body_ms": 0.013027,
+            "full_roundtrip_ms": 5.467606,
+            "request_ms": 5.4293070000000005
+          },
+          "journal_ms": 6.602511,
+          "local_prep_ms": 0.09720999999999999,
+          "prechecks_ms": 0.005385,
+          "preview": {
+            "body_ms": 0.026349,
+            "full_roundtrip_ms": 5.494794,
+            "request_ms": 5.430886
+          },
+          "queue_ms": 0.00022600000000000002,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 23.758537999999998,
+          "validation_ms": 0.017787
+        },
+        {
+          "consume_ms": 3.164732,
+          "encode_ms": 0.017065,
+          "execute": {
+            "body_ms": 0.012516,
+            "full_roundtrip_ms": 5.472771000000001,
+            "request_ms": 5.426258
+          },
+          "journal_ms": 6.413829999999999,
+          "local_prep_ms": 0.103684,
+          "prechecks_ms": 0.0062320000000000006,
+          "preview": {
+            "body_ms": 0.024385,
+            "full_roundtrip_ms": 5.568554,
+            "request_ms": 5.503852
+          },
+          "queue_ms": 0.000243,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 20.829483,
+          "validation_ms": 0.01999
+        },
+        {
+          "consume_ms": 3.281577,
+          "encode_ms": 0.017304,
+          "execute": {
+            "body_ms": 0.011953,
+            "full_roundtrip_ms": 5.461312,
+            "request_ms": 5.417449
+          },
+          "journal_ms": 6.512224,
+          "local_prep_ms": 0.08857200000000001,
+          "prechecks_ms": 0.005514,
+          "preview": {
+            "body_ms": 0.028585000000000003,
+            "full_roundtrip_ms": 5.494908,
+            "request_ms": 5.43177
+          },
+          "queue_ms": 0.000202,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 20.942927,
+          "validation_ms": 0.019151
+        },
+        {
+          "consume_ms": 5.589066,
+          "encode_ms": 0.015421,
+          "execute": {
+            "body_ms": 0.01211,
+            "full_roundtrip_ms": 5.445101,
+            "request_ms": 5.401342
+          },
+          "journal_ms": 6.774606,
+          "local_prep_ms": 0.089311,
+          "prechecks_ms": 0.005800999999999999,
+          "preview": {
+            "body_ms": 0.025808,
+            "full_roundtrip_ms": 5.493320000000001,
+            "request_ms": 5.433293
+          },
+          "queue_ms": 0.000234,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 23.580798,
+          "validation_ms": 0.020513
+        },
+        {
+          "consume_ms": 3.440003,
+          "encode_ms": 0.012992,
+          "execute": {
+            "body_ms": 0.011888000000000001,
+            "full_roundtrip_ms": 5.477367,
+            "request_ms": 5.429898
+          },
+          "journal_ms": 6.490897,
+          "local_prep_ms": 0.10201500000000001,
+          "prechecks_ms": 0.00593,
+          "preview": {
+            "body_ms": 0.16772700000000001,
+            "full_roundtrip_ms": 5.622284,
+            "request_ms": 5.416352
+          },
+          "queue_ms": 0.00017700000000000002,
+          "state_check_ms": 4e-05,
+          "total_ms": 21.229419999999998,
+          "validation_ms": 0.014495000000000001
+        },
+        {
+          "consume_ms": 3.357152,
+          "encode_ms": 0.016308,
+          "execute": {
+            "body_ms": 0.015224,
+            "full_roundtrip_ms": 6.830725,
+            "request_ms": 6.7825239999999996
+          },
+          "journal_ms": 6.549439,
+          "local_prep_ms": 0.092672,
+          "prechecks_ms": 0.005622,
+          "preview": {
+            "body_ms": 0.025521,
+            "full_roundtrip_ms": 5.502622000000001,
+            "request_ms": 5.442088
+          },
+          "queue_ms": 0.00015900000000000002,
+          "state_check_ms": 4e-05,
+          "total_ms": 22.435463,
+          "validation_ms": 0.019934999999999998
+        },
+        {
+          "consume_ms": 3.188999,
+          "encode_ms": 0.016368999999999998,
+          "execute": {
+            "body_ms": 0.028598,
+            "full_roundtrip_ms": 5.478104999999999,
+            "request_ms": 5.416898
+          },
+          "journal_ms": 6.500489999999999,
+          "local_prep_ms": 0.095838,
+          "prechecks_ms": 0.005378,
+          "preview": {
+            "body_ms": 0.026133,
+            "full_roundtrip_ms": 5.589027,
+            "request_ms": 5.5228150000000005
+          },
+          "queue_ms": 0.000174,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 20.957753,
+          "validation_ms": 0.020529000000000002
+        },
+        {
+          "consume_ms": 5.356622,
+          "encode_ms": 0.015262000000000001,
+          "execute": {
+            "body_ms": 0.015973,
+            "full_roundtrip_ms": 5.508538000000001,
+            "request_ms": 5.454261
+          },
+          "journal_ms": 6.7006049999999995,
+          "local_prep_ms": 0.078886,
+          "prechecks_ms": 0.005311000000000001,
+          "preview": {
+            "body_ms": 0.032243999999999995,
+            "full_roundtrip_ms": 5.484100000000001,
+            "request_ms": 5.414809
+          },
+          "queue_ms": 0.000191,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 23.226180999999997,
+          "validation_ms": 0.014953999999999999
+        },
+        {
+          "consume_ms": 3.2977610000000004,
+          "encode_ms": 0.018031000000000002,
+          "execute": {
+            "body_ms": 0.013209,
+            "full_roundtrip_ms": 5.556109,
+            "request_ms": 5.508746
+          },
+          "journal_ms": 6.963993,
+          "local_prep_ms": 0.113969,
+          "prechecks_ms": 0.00569,
+          "preview": {
+            "body_ms": 0.026151999999999998,
+            "full_roundtrip_ms": 5.505994,
+            "request_ms": 5.4368799999999995
+          },
+          "queue_ms": 0.000343,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 21.545282999999998,
+          "validation_ms": 0.020081
+        },
+        {
+          "consume_ms": 3.379845,
+          "encode_ms": 0.016079999999999997,
+          "execute": {
+            "body_ms": 0.013283,
+            "full_roundtrip_ms": 5.566001999999999,
+            "request_ms": 5.520333
+          },
+          "journal_ms": 6.589150999999999,
+          "local_prep_ms": 0.099481,
+          "prechecks_ms": 0.006443000000000001,
+          "preview": {
+            "body_ms": 0.026037,
+            "full_roundtrip_ms": 5.539798,
+            "request_ms": 5.476682
+          },
+          "queue_ms": 0.000267,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 21.282593,
+          "validation_ms": 0.021367999999999998
+        },
+        {
+          "consume_ms": 3.244998,
+          "encode_ms": 0.016333,
+          "execute": {
+            "body_ms": 0.013496,
+            "full_roundtrip_ms": 5.490565999999999,
+            "request_ms": 5.446335
+          },
+          "journal_ms": 6.732711,
+          "local_prep_ms": 0.09276400000000001,
+          "prechecks_ms": 0.00539,
+          "preview": {
+            "body_ms": 0.027274,
+            "full_roundtrip_ms": 5.506673,
+            "request_ms": 5.4429359999999996
+          },
+          "queue_ms": 0.000161,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 21.167572999999997,
+          "validation_ms": 0.018221
+        },
+        {
+          "consume_ms": 4.0669189999999995,
+          "encode_ms": 0.01396,
+          "execute": {
+            "body_ms": 0.012088,
+            "full_roundtrip_ms": 5.675571,
+            "request_ms": 5.630113
+          },
+          "journal_ms": 10.371057,
+          "local_prep_ms": 0.095365,
+          "prechecks_ms": 0.005091,
+          "preview": {
+            "body_ms": 0.019646,
+            "full_roundtrip_ms": 5.517783,
+            "request_ms": 5.460248
+          },
+          "queue_ms": 0.000221,
+          "state_check_ms": 4e-05,
+          "total_ms": 25.833933,
+          "validation_ms": 0.013345999999999998
+        },
+        {
+          "consume_ms": 3.261209,
+          "encode_ms": 0.015047,
+          "execute": {
+            "body_ms": 0.011962,
+            "full_roundtrip_ms": 5.464913,
+            "request_ms": 5.421626
+          },
+          "journal_ms": 6.536970999999999,
+          "local_prep_ms": 0.08774699999999999,
+          "prechecks_ms": 0.00561,
+          "preview": {
+            "body_ms": 0.025649,
+            "full_roundtrip_ms": 5.506444,
+            "request_ms": 5.4445049999999995
+          },
+          "queue_ms": 0.000224,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 20.960783,
+          "validation_ms": 0.02111
+        },
+        {
+          "consume_ms": 3.794925,
+          "encode_ms": 0.015916000000000003,
+          "execute": {
+            "body_ms": 0.011992,
+            "full_roundtrip_ms": 5.474961,
+            "request_ms": 5.430234
+          },
+          "journal_ms": 6.5189710000000005,
+          "local_prep_ms": 0.281997,
+          "prechecks_ms": 0.006546000000000001,
+          "preview": {
+            "body_ms": 0.026373,
+            "full_roundtrip_ms": 5.561425,
+            "request_ms": 5.496121
+          },
+          "queue_ms": 0.00029099999999999997,
+          "state_check_ms": 3.2000000000000005e-05,
+          "total_ms": 21.738197,
+          "validation_ms": 0.021955000000000002
+        },
+        {
+          "consume_ms": 5.293683000000001,
+          "encode_ms": 0.015908000000000002,
+          "execute": {
+            "body_ms": 0.011836,
+            "full_roundtrip_ms": 5.470726,
+            "request_ms": 5.425121
+          },
+          "journal_ms": 6.43581,
+          "local_prep_ms": 0.083378,
+          "prechecks_ms": 0.006266000000000001,
+          "preview": {
+            "body_ms": 0.022777,
+            "full_roundtrip_ms": 5.690915,
+            "request_ms": 5.629881
+          },
+          "queue_ms": 0.000223,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 23.073753,
+          "validation_ms": 0.019881
+        },
+        {
+          "consume_ms": 3.412917,
+          "encode_ms": 0.01687,
+          "execute": {
+            "body_ms": 0.012184,
+            "full_roundtrip_ms": 5.509354999999999,
+            "request_ms": 5.462993
+          },
+          "journal_ms": 8.626781999999999,
+          "local_prep_ms": 0.09083,
+          "prechecks_ms": 0.006386,
+          "preview": {
+            "body_ms": 0.027523,
+            "full_roundtrip_ms": 6.241817999999999,
+            "request_ms": 6.175700999999999
+          },
+          "queue_ms": 0.000277,
+          "state_check_ms": 6.1000000000000005e-05,
+          "total_ms": 23.984289,
+          "validation_ms": 0.020618000000000004
+        },
+        {
+          "consume_ms": 3.168643,
+          "encode_ms": 0.014197,
+          "execute": {
+            "body_ms": 0.011806,
+            "full_roundtrip_ms": 5.463061,
+            "request_ms": 5.419595
+          },
+          "journal_ms": 6.380563,
+          "local_prep_ms": 0.08524200000000001,
+          "prechecks_ms": 0.005899,
+          "preview": {
+            "body_ms": 0.027725,
+            "full_roundtrip_ms": 5.541113999999999,
+            "request_ms": 5.473747
+          },
+          "queue_ms": 0.00032599999999999996,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 20.743502,
+          "validation_ms": 0.021866999999999998
+        },
+        {
+          "consume_ms": 3.1351,
+          "encode_ms": 0.015226,
+          "execute": {
+            "body_ms": 0.012239,
+            "full_roundtrip_ms": 5.5811139999999995,
+            "request_ms": 5.536403
+          },
+          "journal_ms": 6.6001840000000005,
+          "local_prep_ms": 0.097193,
+          "prechecks_ms": 0.005004,
+          "preview": {
+            "body_ms": 0.02415,
+            "full_roundtrip_ms": 5.50117,
+            "request_ms": 5.438400000000001
+          },
+          "queue_ms": 0.00022600000000000002,
+          "state_check_ms": 3.4e-05,
+          "total_ms": 21.011802,
+          "validation_ms": 0.019577
+        },
+        {
+          "consume_ms": 4.005832,
+          "encode_ms": 0.015654,
+          "execute": {
+            "body_ms": 0.012965999999999998,
+            "full_roundtrip_ms": 5.5002130000000005,
+            "request_ms": 5.452534
+          },
+          "journal_ms": 8.821553,
+          "local_prep_ms": 0.088805,
+          "prechecks_ms": 0.005971,
+          "preview": {
+            "body_ms": 0.027444,
+            "full_roundtrip_ms": 5.486891,
+            "request_ms": 5.4242539999999995
+          },
+          "queue_ms": 0.000221,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 24.011195999999998,
+          "validation_ms": 0.021057
+        },
+        {
+          "consume_ms": 3.433846,
+          "encode_ms": 0.01761,
+          "execute": {
+            "body_ms": 0.012936,
+            "full_roundtrip_ms": 5.492957,
+            "request_ms": 5.4456620000000004
+          },
+          "journal_ms": 6.616026,
+          "local_prep_ms": 0.104789,
+          "prechecks_ms": 0.005992000000000001,
+          "preview": {
+            "body_ms": 0.026752,
+            "full_roundtrip_ms": 5.519552,
+            "request_ms": 5.4559120000000005
+          },
+          "queue_ms": 0.000162,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 21.278602,
+          "validation_ms": 0.02265
+        },
+        {
+          "consume_ms": 3.228843,
+          "encode_ms": 0.017444,
+          "execute": {
+            "body_ms": 0.012861,
+            "full_roundtrip_ms": 5.482367999999999,
+            "request_ms": 5.435649
+          },
+          "journal_ms": 6.825785,
+          "local_prep_ms": 0.08752199999999999,
+          "prechecks_ms": 0.005371,
+          "preview": {
+            "body_ms": 0.028507,
+            "full_roundtrip_ms": 6.803481,
+            "request_ms": 6.732654999999999
+          },
+          "queue_ms": 0.000427,
+          "state_check_ms": 3.2000000000000005e-05,
+          "total_ms": 22.534025,
+          "validation_ms": 0.021471
+        },
+        {
+          "consume_ms": 5.227771,
+          "encode_ms": 0.015867,
+          "execute": {
+            "body_ms": 0.013628000000000001,
+            "full_roundtrip_ms": 5.54131,
+            "request_ms": 5.491873
+          },
+          "journal_ms": 6.726687,
+          "local_prep_ms": 0.090018,
+          "prechecks_ms": 0.0061530000000000005,
+          "preview": {
+            "body_ms": 0.025032,
+            "full_roundtrip_ms": 5.478173,
+            "request_ms": 5.413412
+          },
+          "queue_ms": 0.00023,
+          "state_check_ms": 5.1e-05,
+          "total_ms": 23.180819,
+          "validation_ms": 0.019225
+        },
+        {
+          "consume_ms": 3.165302,
+          "encode_ms": 0.015104,
+          "execute": {
+            "body_ms": 0.011372,
+            "full_roundtrip_ms": 5.456494,
+            "request_ms": 5.411672
+          },
+          "journal_ms": 6.311439,
+          "local_prep_ms": 0.08819199999999999,
+          "prechecks_ms": 0.0056760000000000005,
+          "preview": {
+            "body_ms": 0.025734,
+            "full_roundtrip_ms": 5.484424,
+            "request_ms": 5.420071
+          },
+          "queue_ms": 0.00017700000000000002,
+          "state_check_ms": 4.6e-05,
+          "total_ms": 20.613694,
+          "validation_ms": 0.021165999999999997
+        },
+        {
+          "consume_ms": 3.209416,
+          "encode_ms": 0.016404000000000002,
+          "execute": {
+            "body_ms": 0.011502,
+            "full_roundtrip_ms": 5.499209,
+            "request_ms": 5.453401
+          },
+          "journal_ms": 6.376431,
+          "local_prep_ms": 0.08974000000000001,
+          "prechecks_ms": 0.005984,
+          "preview": {
+            "body_ms": 0.029672,
+            "full_roundtrip_ms": 5.525546,
+            "request_ms": 5.457441
+          },
+          "queue_ms": 0.000167,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 20.808039,
+          "validation_ms": 0.0195
+        },
+        {
+          "consume_ms": 3.201819,
+          "encode_ms": 0.016137000000000002,
+          "execute": {
+            "body_ms": 0.010709,
+            "full_roundtrip_ms": 5.456914,
+            "request_ms": 5.413058
+          },
+          "journal_ms": 6.899689,
+          "local_prep_ms": 0.103265,
+          "prechecks_ms": 0.005482,
+          "preview": {
+            "body_ms": 0.02923,
+            "full_roundtrip_ms": 5.545698,
+            "request_ms": 5.476387999999999
+          },
+          "queue_ms": 0.00017700000000000002,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 21.312354,
+          "validation_ms": 0.021283
+        },
+        {
+          "consume_ms": 3.249572,
+          "encode_ms": 0.015867,
+          "execute": {
+            "body_ms": 0.012781,
+            "full_roundtrip_ms": 5.6114299999999995,
+            "request_ms": 5.5650200000000005
+          },
+          "journal_ms": 8.100857,
+          "local_prep_ms": 0.08362900000000001,
+          "prechecks_ms": 0.0062710000000000005,
+          "preview": {
+            "body_ms": 0.028212,
+            "full_roundtrip_ms": 5.562266,
+            "request_ms": 5.501384
+          },
+          "queue_ms": 0.00032300000000000004,
+          "state_check_ms": 4e-05,
+          "total_ms": 22.713954,
+          "validation_ms": 0.01913
+        },
+        {
+          "consume_ms": 5.368208,
+          "encode_ms": 0.017363999999999997,
+          "execute": {
+            "body_ms": 0.012742999999999999,
+            "full_roundtrip_ms": 5.507854,
+            "request_ms": 5.460634
+          },
+          "journal_ms": 6.950948,
+          "local_prep_ms": 0.094418,
+          "prechecks_ms": 0.005973000000000001,
+          "preview": {
+            "body_ms": 0.029459,
+            "full_roundtrip_ms": 5.533564999999999,
+            "request_ms": 5.466727000000001
+          },
+          "queue_ms": 0.000296,
+          "state_check_ms": 3.7e-05,
+          "total_ms": 23.56073,
+          "validation_ms": 0.018202999999999997
+        },
+        {
+          "consume_ms": 3.3513129999999998,
+          "encode_ms": 0.015903,
+          "execute": {
+            "body_ms": 0.012365,
+            "full_roundtrip_ms": 5.484156,
+            "request_ms": 5.438215
+          },
+          "journal_ms": 6.228095,
+          "local_prep_ms": 0.091128,
+          "prechecks_ms": 0.005439,
+          "preview": {
+            "body_ms": 0.027559,
+            "full_roundtrip_ms": 5.5110410000000005,
+            "request_ms": 5.446028
+          },
+          "queue_ms": 0.00023,
+          "state_check_ms": 4e-05,
+          "total_ms": 20.76964,
+          "validation_ms": 0.020533000000000003
+        },
+        {
+          "consume_ms": 5.934095,
+          "encode_ms": 0.015979,
+          "execute": {
+            "body_ms": 0.010894,
+            "full_roundtrip_ms": 5.441167999999999,
+            "request_ms": 5.395122
+          },
+          "journal_ms": 6.630664,
+          "local_prep_ms": 0.09128,
+          "prechecks_ms": 0.005643,
+          "preview": {
+            "body_ms": 0.029622,
+            "full_roundtrip_ms": 5.924259999999999,
+            "request_ms": 5.857051
+          },
+          "queue_ms": 0.000206,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 24.137959000000002,
+          "validation_ms": 0.018468000000000002
+        },
+        {
+          "consume_ms": 3.7558819999999997,
+          "encode_ms": 0.015787,
+          "execute": {
+            "body_ms": 0.013937999999999999,
+            "full_roundtrip_ms": 5.602837999999999,
+            "request_ms": 5.556242
+          },
+          "journal_ms": 7.116407000000001,
+          "local_prep_ms": 0.092692,
+          "prechecks_ms": 0.006113999999999999,
+          "preview": {
+            "body_ms": 0.032815,
+            "full_roundtrip_ms": 6.73437,
+            "request_ms": 6.665915
+          },
+          "queue_ms": 0.00025100000000000003,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 23.408552,
+          "validation_ms": 0.023648
+        },
+        {
+          "consume_ms": 3.264047,
+          "encode_ms": 0.016064000000000002,
+          "execute": {
+            "body_ms": 0.012501,
+            "full_roundtrip_ms": 5.475912,
+            "request_ms": 5.428882000000001
+          },
+          "journal_ms": 6.337334,
+          "local_prep_ms": 0.10089499999999998,
+          "prechecks_ms": 0.005216,
+          "preview": {
+            "body_ms": 0.027119,
+            "full_roundtrip_ms": 5.534626,
+            "request_ms": 5.467516000000001
+          },
+          "queue_ms": 0.000237,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 20.81336,
+          "validation_ms": 0.017528000000000002
+        },
+        {
+          "consume_ms": 3.502684,
+          "encode_ms": 0.015892,
+          "execute": {
+            "body_ms": 0.011682,
+            "full_roundtrip_ms": 5.493105,
+            "request_ms": 5.44822
+          },
+          "journal_ms": 6.953041,
+          "local_prep_ms": 0.097774,
+          "prechecks_ms": 0.005707,
+          "preview": {
+            "body_ms": 0.025894,
+            "full_roundtrip_ms": 5.496336,
+            "request_ms": 5.43116
+          },
+          "queue_ms": 0.000233,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 21.642378,
+          "validation_ms": 0.017844
+        },
+        {
+          "consume_ms": 3.218856,
+          "encode_ms": 0.01643,
+          "execute": {
+            "body_ms": 0.013040000000000001,
+            "full_roundtrip_ms": 5.455407,
+            "request_ms": 5.409385
+          },
+          "journal_ms": 6.692759000000001,
+          "local_prep_ms": 0.07749700000000001,
+          "prechecks_ms": 0.0049510000000000005,
+          "preview": {
+            "body_ms": 0.021852999999999997,
+            "full_roundtrip_ms": 6.599439,
+            "request_ms": 6.5370740000000005
+          },
+          "queue_ms": 0.000359,
+          "state_check_ms": 4.9999999999999996e-05,
+          "total_ms": 22.135222,
+          "validation_ms": 0.013188
+        },
+        {
+          "consume_ms": 3.872028,
+          "encode_ms": 0.013648,
+          "execute": {
+            "body_ms": 0.012254,
+            "full_roundtrip_ms": 5.538851,
+            "request_ms": 5.491331000000001
+          },
+          "journal_ms": 10.839159,
+          "local_prep_ms": 0.08652099999999999,
+          "prechecks_ms": 0.006184,
+          "preview": {
+            "body_ms": 0.023329,
+            "full_roundtrip_ms": 5.559277,
+            "request_ms": 5.472358
+          },
+          "queue_ms": 0.000233,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 25.997111999999998,
+          "validation_ms": 0.01761
+        },
+        {
+          "consume_ms": 3.199783,
+          "encode_ms": 0.015707000000000002,
+          "execute": {
+            "body_ms": 0.011973999999999999,
+            "full_roundtrip_ms": 5.554832,
+            "request_ms": 5.508345
+          },
+          "journal_ms": 6.533056,
+          "local_prep_ms": 0.09040600000000001,
+          "prechecks_ms": 0.010173,
+          "preview": {
+            "body_ms": 0.02484,
+            "full_roundtrip_ms": 5.517824,
+            "request_ms": 5.456231
+          },
+          "queue_ms": 0.000267,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 21.004005,
+          "validation_ms": 0.020339000000000003
+        },
+        {
+          "consume_ms": 3.258053,
+          "encode_ms": 0.015466,
+          "execute": {
+            "body_ms": 0.011366,
+            "full_roundtrip_ms": 5.446866,
+            "request_ms": 5.40146
+          },
+          "journal_ms": 6.587746,
+          "local_prep_ms": 0.17420100000000002,
+          "prechecks_ms": 0.004875,
+          "preview": {
+            "body_ms": 0.024675,
+            "full_roundtrip_ms": 6.485743,
+            "request_ms": 6.421346
+          },
+          "queue_ms": 0.000239,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 22.051918999999998,
+          "validation_ms": 0.01984
+        },
+        {
+          "consume_ms": 3.288533,
+          "encode_ms": 0.0157,
+          "execute": {
+            "body_ms": 0.012313999999999999,
+            "full_roundtrip_ms": 5.406926,
+            "request_ms": 5.369914
+          },
+          "journal_ms": 14.200834,
+          "local_prep_ms": 0.076618,
+          "prechecks_ms": 0.006617,
+          "preview": {
+            "body_ms": 0.019214,
+            "full_roundtrip_ms": 5.4257029999999995,
+            "request_ms": 5.368976
+          },
+          "queue_ms": 0.000248,
+          "state_check_ms": 4e-05,
+          "total_ms": 28.495518,
+          "validation_ms": 0.014787
+        },
+        {
+          "consume_ms": 3.600343,
+          "encode_ms": 0.012768,
+          "execute": {
+            "body_ms": 0.012334000000000001,
+            "full_roundtrip_ms": 5.430121000000001,
+            "request_ms": 5.390873
+          },
+          "journal_ms": 6.550795,
+          "local_prep_ms": 0.067969,
+          "prechecks_ms": 0.0043749999999999995,
+          "preview": {
+            "body_ms": 0.019957,
+            "full_roundtrip_ms": 5.48791,
+            "request_ms": 5.4407689999999995
+          },
+          "queue_ms": 0.000239,
+          "state_check_ms": 2.9999999999999997e-05,
+          "total_ms": 21.219001000000002,
+          "validation_ms": 0.013259
+        },
+        {
+          "consume_ms": 3.312837,
+          "encode_ms": 0.012446,
+          "execute": {
+            "body_ms": 0.012891999999999999,
+            "full_roundtrip_ms": 5.632563,
+            "request_ms": 5.586418999999999
+          },
+          "journal_ms": 6.503734000000001,
+          "local_prep_ms": 0.066954,
+          "prechecks_ms": 0.005552,
+          "preview": {
+            "body_ms": 0.021959,
+            "full_roundtrip_ms": 6.5248859999999995,
+            "request_ms": 6.473172999999999
+          },
+          "queue_ms": 0.000167,
+          "state_check_ms": 3.5000000000000004e-05,
+          "total_ms": 22.133482,
+          "validation_ms": 0.014831
+        },
+        {
+          "consume_ms": 5.441491,
+          "encode_ms": 0.017188,
+          "execute": {
+            "body_ms": 0.010211,
+            "full_roundtrip_ms": 5.507416,
+            "request_ms": 5.469413
+          },
+          "journal_ms": 8.134457,
+          "local_prep_ms": 0.09606700000000001,
+          "prechecks_ms": 0.00535,
+          "preview": {
+            "body_ms": 0.024134,
+            "full_roundtrip_ms": 5.467657,
+            "request_ms": 5.408439
+          },
+          "queue_ms": 0.000236,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 24.745295,
+          "validation_ms": 0.018081
+        },
+        {
+          "consume_ms": 3.325094,
+          "encode_ms": 0.015120999999999999,
+          "execute": {
+            "body_ms": 0.01202,
+            "full_roundtrip_ms": 6.597372,
+            "request_ms": 6.535820999999999
+          },
+          "journal_ms": 6.713891,
+          "local_prep_ms": 0.10669300000000001,
+          "prechecks_ms": 0.005893,
+          "preview": {
+            "body_ms": 0.027129,
+            "full_roundtrip_ms": 5.551256,
+            "request_ms": 5.472548
+          },
+          "queue_ms": 0.0006039999999999999,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 22.392031,
+          "validation_ms": 0.019412
+        },
+        {
+          "consume_ms": 3.317181,
+          "encode_ms": 0.014953000000000001,
+          "execute": {
+            "body_ms": 0.01276,
+            "full_roundtrip_ms": 5.4847079999999995,
+            "request_ms": 5.434693
+          },
+          "journal_ms": 6.351447,
+          "local_prep_ms": 0.087414,
+          "prechecks_ms": 0.005259,
+          "preview": {
+            "body_ms": 0.026574,
+            "full_roundtrip_ms": 5.521502,
+            "request_ms": 5.447629
+          },
+          "queue_ms": 0.00023999999999999998,
+          "state_check_ms": 4e-05,
+          "total_ms": 20.865683,
+          "validation_ms": 0.020822
+        },
+        {
+          "consume_ms": 3.3077900000000002,
+          "encode_ms": 0.015290999999999999,
+          "execute": {
+            "body_ms": 0.017070000000000002,
+            "full_roundtrip_ms": 5.483776,
+            "request_ms": 5.432326000000001
+          },
+          "journal_ms": 6.7847610000000005,
+          "local_prep_ms": 0.089982,
+          "prechecks_ms": 0.005274999999999999,
+          "preview": {
+            "body_ms": 0.061848999999999994,
+            "full_roundtrip_ms": 5.582343,
+            "request_ms": 5.414818
+          },
+          "queue_ms": 0.000245,
+          "state_check_ms": 3.6e-05,
+          "total_ms": 21.352627,
+          "validation_ms": 0.0219
+        },
+        {
+          "consume_ms": 3.223739,
+          "encode_ms": 0.016484,
+          "execute": {
+            "body_ms": 0.012374999999999999,
+            "full_roundtrip_ms": 5.542236,
+            "request_ms": 5.4734240000000005
+          },
+          "journal_ms": 9.421598,
+          "local_prep_ms": 0.113645,
+          "prechecks_ms": 0.005157999999999999,
+          "preview": {
+            "body_ms": 0.025401,
+            "full_roundtrip_ms": 5.521495000000001,
+            "request_ms": 5.462632
+          },
+          "queue_ms": 0.000629,
+          "state_check_ms": 3.9e-05,
+          "total_ms": 23.931165,
+          "validation_ms": 0.0232
+        },
+        {
+          "consume_ms": 3.352572,
+          "encode_ms": 0.015905000000000002,
+          "execute": {
+            "body_ms": 0.012796,
+            "full_roundtrip_ms": 5.474298,
+            "request_ms": 5.427234
+          },
+          "journal_ms": 6.450056999999999,
+          "local_prep_ms": 0.09068999999999999,
+          "prechecks_ms": 0.01966,
+          "preview": {
+            "body_ms": 0.043042,
+            "full_roundtrip_ms": 5.551126,
+            "request_ms": 5.468706999999999
+          },
+          "queue_ms": 0.000243,
+          "state_check_ms": 4.4e-05,
+          "total_ms": 21.042796,
+          "validation_ms": 0.020824
+        },
+        {
+          "consume_ms": 3.55143,
+          "encode_ms": 0.015318000000000002,
+          "execute": {
+            "body_ms": 0.01158,
+            "full_roundtrip_ms": 5.488061,
+            "request_ms": 5.439167
+          },
+          "journal_ms": 6.71438,
+          "local_prep_ms": 0.09133999999999999,
+          "prechecks_ms": 0.0063030000000000004,
+          "preview": {
+            "body_ms": 0.024807000000000003,
+            "full_roundtrip_ms": 5.583806,
+            "request_ms": 5.5202230000000005
+          },
+          "queue_ms": 0.000278,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 21.536262,
+          "validation_ms": 0.022515
+        },
+        {
+          "consume_ms": 5.727931000000001,
+          "encode_ms": 0.017074,
+          "execute": {
+            "body_ms": 0.011401,
+            "full_roundtrip_ms": 6.469817,
+            "request_ms": 6.413665
+          },
+          "journal_ms": 7.064068000000001,
+          "local_prep_ms": 0.3823289999999999,
+          "prechecks_ms": 0.005634999999999999,
+          "preview": {
+            "body_ms": 0.025613999999999998,
+            "full_roundtrip_ms": 5.518431,
+            "request_ms": 5.443815
+          },
+          "queue_ms": 0.000248,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 25.263632,
+          "validation_ms": 0.019544
+        },
+        {
+          "consume_ms": 3.874854,
+          "encode_ms": 0.017071999999999997,
+          "execute": {
+            "body_ms": 0.012827,
+            "full_roundtrip_ms": 6.088855,
+            "request_ms": 6.0404480000000005
+          },
+          "journal_ms": 6.7010570000000005,
+          "local_prep_ms": 0.090712,
+          "prechecks_ms": 0.0068839999999999995,
+          "preview": {
+            "body_ms": 0.026358,
+            "full_roundtrip_ms": 5.71607,
+            "request_ms": 5.652139
+          },
+          "queue_ms": 0.000234,
+          "state_check_ms": 4.2e-05,
+          "total_ms": 22.582967999999997,
+          "validation_ms": 0.021685999999999997
+        },
+        {
+          "consume_ms": 3.355807,
+          "encode_ms": 0.016072000000000003,
+          "execute": {
+            "body_ms": 0.013077,
+            "full_roundtrip_ms": 5.560549,
+            "request_ms": 5.515042
+          },
+          "journal_ms": 6.826888,
+          "local_prep_ms": 0.090106,
+          "prechecks_ms": 0.005094,
+          "preview": {
+            "body_ms": 0.029335999999999997,
+            "full_roundtrip_ms": 5.590127000000001,
+            "request_ms": 5.519779
+          },
+          "queue_ms": 0.000241,
+          "state_check_ms": 4.7e-05,
+          "total_ms": 21.53316,
+          "validation_ms": 0.023975
+        },
+        {
+          "consume_ms": 3.363749,
+          "encode_ms": 0.018285,
+          "execute": {
+            "body_ms": 0.014214,
+            "full_roundtrip_ms": 6.576069,
+            "request_ms": 6.525408
+          },
+          "journal_ms": 6.558046,
+          "local_prep_ms": 0.09800599999999998,
+          "prechecks_ms": 0.006501000000000001,
+          "preview": {
+            "body_ms": 0.024284999999999998,
+            "full_roundtrip_ms": 6.713283,
+            "request_ms": 6.648457
+          },
+          "queue_ms": 0.00025699999999999996,
+          "state_check_ms": 3.8e-05,
+          "total_ms": 23.418468,
+          "validation_ms": 0.021055
+        },
+        {
+          "consume_ms": 3.5888769999999997,
+          "encode_ms": 0.017879,
+          "execute": {
+            "body_ms": 0.011269,
+            "full_roundtrip_ms": 5.470845000000001,
+            "request_ms": 5.425669999999999
+          },
+          "journal_ms": 9.111929,
+          "local_prep_ms": 0.08399599999999999,
+          "prechecks_ms": 0.006087,
+          "preview": {
+            "body_ms": 0.026463999999999998,
+            "full_roundtrip_ms": 5.469822,
+            "request_ms": 5.4118889999999995
+          },
+          "queue_ms": 0.000379,
+          "state_check_ms": 4.3e-05,
+          "total_ms": 23.837234,
+          "validation_ms": 0.022515
+        },
+        {
+          "consume_ms": 3.451628,
+          "encode_ms": 0.016268,
+          "execute": {
+            "body_ms": 0.013363,
+            "full_roundtrip_ms": 5.522298999999999,
+            "request_ms": 5.473547
+          },
+          "journal_ms": 7.023921,
+          "local_prep_ms": 0.094807,
+          "prechecks_ms": 0.005372999999999999,
+          "preview": {
+            "body_ms": 0.050399000000000006,
+            "full_roundtrip_ms": 5.532115,
+            "request_ms": 5.441689
+          },
+          "queue_ms": 0.000258,
+          "state_check_ms": 4e-05,
+          "total_ms": 21.728596,
+          "validation_ms": 0.021436
+        },
+        {
+          "consume_ms": 3.413933,
+          "encode_ms": 0.016084,
+          "execute": {
+            "body_ms": 0.011773,
+            "full_roundtrip_ms": 5.457602,
+            "request_ms": 5.412234
+          },
+          "journal_ms": 6.404007,
+          "local_prep_ms": 0.11788399999999999,
+          "prechecks_ms": 0.004984,
+          "preview": {
+            "body_ms": 0.02559,
+            "full_roundtrip_ms": 5.522108,
+            "request_ms": 5.458571
+          },
+          "queue_ms": 0.000241,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 21.018974999999998,
+          "validation_ms": 0.020962999999999996
+        },
+        {
+          "consume_ms": 3.718747,
+          "encode_ms": 0.015905000000000002,
+          "execute": {
+            "body_ms": 0.025103999999999998,
+            "full_roundtrip_ms": 5.486913,
+            "request_ms": 5.424385
+          },
+          "journal_ms": 12.499537,
+          "local_prep_ms": 0.090777,
+          "prechecks_ms": 0.005367,
+          "preview": {
+            "body_ms": 0.027239000000000003,
+            "full_roundtrip_ms": 5.607885,
+            "request_ms": 5.545418
+          },
+          "queue_ms": 0.000267,
+          "state_check_ms": 4.1e-05,
+          "total_ms": 27.529226,
+          "validation_ms": 0.021486
+        },
+        {
+          "consume_ms": 3.2108179999999997,
+          "encode_ms": 0.020706000000000002,
+          "execute": {
+            "body_ms": 0.012622000000000001,
+            "full_roundtrip_ms": 5.5151580000000004,
+            "request_ms": 5.467782
+          },
+          "journal_ms": 6.636998,
+          "local_prep_ms": 0.09124700000000001,
+          "prechecks_ms": 0.005469,
+          "preview": {
+            "body_ms": 0.024715,
+            "full_roundtrip_ms": 5.51121,
+            "request_ms": 5.446774
+          },
+          "queue_ms": 0.00018199999999999998,
+          "state_check_ms": 4.4999999999999996e-05,
+          "total_ms": 21.072233,
+          "validation_ms": 0.01971
+        },
+        {
+          "consume_ms": 3.448322,
+          "encode_ms": 0.015957,
+          "execute": {
+            "body_ms": 0.013493,
+            "full_roundtrip_ms": 5.6460490000000005,
+            "request_ms": 5.600029
+          },
+          "journal_ms": 6.873813999999999,
+          "local_prep_ms": 0.09253,
+          "prechecks_ms": 0.005545,
+          "preview": {
+            "body_ms": 0.029291,
+            "full_roundtrip_ms": 5.496124,
+            "request_ms": 5.431646
+          },
+          "queue_ms": 0.000313,
+          "state_check_ms": 4.4999999999999996e-05,
+          "total_ms": 21.656803,
+          "validation_ms": 0.019061
+        }
+      ],
+      "scope": "loopback HTTP/1.1, native resident handler, durable journal + consumed markers, NOT Binance speed, no TLS",
+      "tcpAccepts": 1
+    }
+  ]
+}

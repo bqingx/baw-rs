@@ -6,6 +6,7 @@ pub mod client;
 pub mod defi;
 pub mod dispatch;
 pub mod execution;
+pub mod fast;
 pub mod leaderboard;
 pub mod limit_order;
 pub mod openfour;

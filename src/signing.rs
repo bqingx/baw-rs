@@ -28,7 +28,7 @@ fn nonempty(s: &str) -> Result<(), String> {
 fn is_solana(chain: &str) -> bool {
     chain == "CT_501"
 }
-fn address(chain: &str, s: &str) -> Result<(), String> {
+pub(crate) fn address(chain: &str, s: &str) -> Result<(), String> {
     if is_solana(chain) {
         if (32..=44).contains(&s.len())
             && s.bytes()
@@ -257,8 +257,24 @@ pub fn apply_skip_prechecks(requested: bool) {
     set_skip_prechecks(default || requested);
 }
 
+tokio::task_local! {
+    static REQUEST_SKIP_PRECHECKS: bool;
+}
+
+/// Pin the ordinary CLI's policy for the entire asynchronous dispatch. Legacy global
+/// setters remain compatible with direct callers, but cannot override another request.
+pub(crate) async fn request_precheck_policy<F: std::future::Future>(
+    requested: bool,
+    future: F,
+) -> F::Output {
+    let skip = requested || SKIP_PRECHECKS_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
+    REQUEST_SKIP_PRECHECKS.scope(skip, future).await
+}
+
 pub fn skip_prechecks() -> bool {
-    SKIP_PRECHECKS.load(std::sync::atomic::Ordering::Relaxed)
+    REQUEST_SKIP_PRECHECKS
+        .try_with(|skip| *skip)
+        .unwrap_or_else(|_| SKIP_PRECHECKS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 async fn check_wallet(
@@ -266,8 +282,16 @@ async fn check_wallet(
     chain: &str,
     expected: Option<&str>,
 ) -> Result<(String, u64), String> {
+    check_wallet_policy(client, chain, expected, skip_prechecks()).await
+}
+async fn check_wallet_policy(
+    client: &mut Client,
+    chain: &str,
+    expected: Option<&str>,
+    skip: bool,
+) -> Result<(String, u64), String> {
     nonempty(chain)?;
-    if skip_prechecks() {
+    if skip {
         // No settings read (the backend enforces developer mode anyway) and no address
         // read (the caller asserts the sender). Format is still validated locally, and the
         // preview is bounded by the ordinary five-minute window instead of the dev expiry.
@@ -391,6 +415,11 @@ impl Cache {
         let made = unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) };
         if made < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists {
             return Err(ioerr());
+        }
+        if made == 0 {
+            // Persist the new cache-directory entry before any consumption marker can
+            // authorize an execute (the operation journal alone only binds operation IDs).
+            directory.sync_all().map_err(|_| ioerr())?;
         }
         let dir = openat(&directory, &name, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
         private(&dir.metadata().map_err(|_| ioerr())?, true)?;
@@ -553,55 +582,98 @@ async fn preview_call(
     input: Value,
 ) -> Result<Value, String> {
     let cache = Cache::open(dir)?;
+    let record = preview_record(
+        client,
+        &cache,
+        kind,
+        chain,
+        sender,
+        dev_expiry,
+        input,
+        &mut FireTimings::default(),
+    )
+    .await?;
+    let digest = record.digest()?;
+    cache.store(&record)?;
+    let mut output = record.output;
+    output["previewSha256"] = json!(digest);
+    Ok(output)
+}
+#[derive(Default, serde::Serialize)]
+pub(crate) struct FireTimings {
+    #[serde(skip)]
+    pub preview_output: Option<Value>,
+    pub preview: crate::client::HttpTiming,
+    pub execute: crate::client::HttpTiming,
+    pub validation_ms: f64,
+    pub local_prep_ms: f64,
+    pub prechecks_ms: f64,
+    pub consume_ms: f64,
+}
+#[allow(clippy::too_many_arguments)]
+async fn preview_record(
+    client: &mut Client,
+    cache: &Cache,
+    kind: &str,
+    chain: &str,
+    sender: String,
+    dev_expiry: u64,
+    input: Value,
+    timing: &mut FireTimings,
+) -> Result<Cached, String> {
     let output = client
         .request(
             Method::POST,
             &format!("{API}/{kind}/preview"),
             Some(input.clone()),
         )
-        .await?;
-    check_output(&output, chain, &sender)?;
-    let request_id = output["requestId"]
-        .as_str()
-        .ok_or("preview requestId missing")?
-        .to_owned();
-    nonempty(&request_id)?;
-    // The installed protocol does not require an expiry field. Always impose our
-    // own five-minute limit, tightened by every server bound that is present.
-    let time = now()?;
-    let mut expires_at = dev_expiry.min(time.saturating_add(PREVIEW_TTL));
-    for key in [
-        "expiresAt",
-        "expireAt",
-        "expireTime",
-        "requestExpireTime",
-        "expiryTime",
-    ] {
-        if let Some(value) = output.get(key) {
-            expires_at = expires_at.min(timestamp(value).ok_or("invalid preview expiry")?);
+        .await;
+    timing.preview = client.last_http.clone();
+    let output = output?;
+    timing.preview_output = Some(output.clone());
+    let validation_start = std::time::Instant::now();
+    let result = (|| {
+        check_output(&output, chain, &sender)?;
+        let request_id = output["requestId"]
+            .as_str()
+            .ok_or("preview requestId missing")?
+            .to_owned();
+        nonempty(&request_id)?;
+        // The installed protocol does not require an expiry field. Always impose our
+        // own five-minute limit, tightened by every server bound that is present.
+        let time = now()?;
+        let mut expires_at = dev_expiry.min(time.saturating_add(PREVIEW_TTL));
+        for key in [
+            "expiresAt",
+            "expireAt",
+            "expireTime",
+            "requestExpireTime",
+            "expiryTime",
+        ] {
+            if let Some(value) = output.get(key) {
+                expires_at = expires_at.min(timestamp(value).ok_or("invalid preview expiry")?);
+            }
         }
-    }
-    if expires_at <= time {
-        return Err("preview expired".into());
-    }
-    let record = Cached {
-        version: 1,
-        kind: kind.into(),
-        client_binding: sha(client.credentials().client_id.as_bytes()),
-        wallet_device: cache.wallet_device,
-        wallet_inode: cache.wallet_inode,
-        chain: chain.into(),
-        sender,
-        request_id,
-        expires_at,
-        input,
-        output,
-    };
-    let digest = record.digest()?;
-    cache.store(&record)?;
-    let mut output = record.output;
-    output["previewSha256"] = json!(digest);
-    Ok(output)
+        if expires_at <= time {
+            return Err("preview expired".into());
+        }
+        let record = Cached {
+            version: 1,
+            kind: kind.into(),
+            client_binding: sha(client.credentials().client_id.as_bytes()),
+            wallet_device: cache.wallet_device,
+            wallet_inode: cache.wallet_inode,
+            chain: chain.into(),
+            sender,
+            request_id,
+            expires_at,
+            input,
+            output,
+        };
+        Ok(record)
+    })();
+    timing.validation_ms += validation_start.elapsed().as_secs_f64() * 1000.0;
+    result
 }
 async fn execute_call(
     client: &mut Client,
@@ -955,6 +1027,136 @@ async fn fire_contract(
     dir: &Path,
     args: &ContractFire,
 ) -> Result<Value, String> {
+    let mut timing = FireTimings::default();
+    let mut result = memory_fire(client, dir, args, skip_prechecks(), &mut timing).await?;
+    result["timings"] = serde_json::to_value(timing).map_err(|_| "timing encoding failed")?;
+    Ok(result)
+}
+fn fire_preview_checks(
+    v: &Value,
+    chain: &str,
+    sender: &str,
+    require_binding: bool,
+    expiry: &mut u64,
+) -> Result<(), String> {
+    fn walk(
+        v: &Value,
+        chain: &str,
+        sender: &str,
+        positive: &mut bool,
+        expiry: &mut u64,
+        nested: bool,
+    ) -> Result<(), String> {
+        check_output(v, chain, sender)?;
+        if let Some(code) = v.get("simulationCode") {
+            if code != "000000000" {
+                return Err("preview contains failed or malformed simulation code".into());
+            }
+            *positive = true;
+        }
+        if v.get("simulationErrorDetail")
+            .is_some_and(|e| !e.is_null() && e != "")
+        {
+            return Err("preview contains simulation error detail".into());
+        }
+        for key in ["simulationSuccess", "simulationPassed", "success"] {
+            if let Some(flag) = v.get(key) {
+                if !flag.is_boolean() {
+                    return Err("malformed simulation boolean".into());
+                }
+                *positive |= flag == true && (nested || key != "success");
+            }
+        }
+        if v["simulationStatus"] == "SUCCESS" || (nested && v["status"] == "SUCCESS") {
+            *positive = true;
+        }
+        for key in [
+            "expiresAt",
+            "expireAt",
+            "expireTime",
+            "requestExpireTime",
+            "expiryTime",
+        ] {
+            if let Some(value) = v.get(key) {
+                *expiry = (*expiry).min(timestamp(value).ok_or("invalid preview expiry")?);
+            }
+        }
+        for key in [
+            "simulation",
+            "simulationResult",
+            "simulationDetails",
+            "simulationResults",
+        ] {
+            if let Some(value) = v.get(key) {
+                if let Some(rows) = value.as_array() {
+                    if rows.is_empty() {
+                        return Err("empty simulation results".into());
+                    }
+                    for row in rows {
+                        let mut row_positive = false;
+                        walk(row, chain, sender, &mut row_positive, expiry, true)?;
+                        if !row_positive {
+                            return Err("every simulation result requires explicit success".into());
+                        }
+                        *positive = true;
+                    }
+                } else {
+                    walk(value, chain, sender, positive, expiry, true)?;
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut positive = false;
+    walk(v, chain, sender, &mut positive, expiry, false)?;
+    if !positive {
+        return Err("preview requires explicit successful simulation".into());
+    }
+    // Some real responses omit top-level from/chain. The authenticated preview POST
+    // already carried chain; accept its sender evidence in simulated balance changes.
+    // Any explicit chain/from mismatch is still rejected by check_output above.
+    let sender_evidence = v["from"]
+        .as_str()
+        .is_some_and(|s| same_address(chain, s, sender))
+        || v["simulationResult"]["balanceChanges"]
+            .as_array()
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row["owner"]
+                        .as_str()
+                        .is_some_and(|s| same_address(chain, s, sender))
+                })
+            });
+    if require_binding && !sender_evidence {
+        return Err(
+            "preview requires explicit backend chain and sender binding when prechecks are skipped"
+                .into(),
+        );
+    }
+    if *expiry <= now()? {
+        return Err("preview expired".into());
+    }
+    Ok(())
+}
+pub(crate) async fn memory_fire(
+    client: &mut Client,
+    dir: &Path,
+    args: &ContractFire,
+    skip: bool,
+    timing: &mut FireTimings,
+) -> Result<Value, String> {
+    memory_fire_checked(client, dir, args, skip, timing, &mut || Ok(())).await
+}
+
+pub(crate) async fn memory_fire_checked<F: FnMut() -> Result<(), String> + Send>(
+    client: &mut Client,
+    dir: &Path,
+    args: &ContractFire,
+    skip: bool,
+    timing: &mut FireTimings,
+    state_check: &mut F,
+) -> Result<Value, String> {
+    let prep = std::time::Instant::now();
     if is_solana(&args.binance_chain_id) {
         return Err("fire supports EVM chains only; use preview + execute for Solana".into());
     }
@@ -968,37 +1170,121 @@ async fn fire_contract(
         gas_limit: args.gas_limit,
     };
     let payload = contract_payload(&preview_args)?;
-    let (sender, dev_expiry) =
-        check_wallet(client, &args.binance_chain_id, Some(&args.from)).await?;
-    let preview = preview_call(
+    timing.local_prep_ms += prep.elapsed().as_secs_f64() * 1000.0;
+    let started = std::time::Instant::now();
+    let checked = check_wallet_policy(client, &args.binance_chain_id, Some(&args.from), skip).await;
+    timing.prechecks_ms += started.elapsed().as_secs_f64() * 1000.0;
+    let (sender, dev_expiry) = checked?;
+    let prep = std::time::Instant::now();
+    let cache = Cache::open(dir)?;
+    timing.local_prep_ms += prep.elapsed().as_secs_f64() * 1000.0;
+    let mut record = preview_record(
         client,
-        dir,
+        &cache,
         "contract-call",
         &args.binance_chain_id,
         sender,
         dev_expiry,
         payload,
+        timing,
     )
     .await?;
-    let request_id = preview["requestId"]
+    let started = std::time::Instant::now();
+    let validated = fire_preview_checks(
+        &record.output,
+        &record.chain,
+        &record.sender,
+        skip,
+        &mut record.expires_at,
+    );
+    timing.validation_ms += started.elapsed().as_secs_f64() * 1000.0;
+    validated?;
+    let prep = std::time::Instant::now();
+    // If the backend echoes transaction fields, they must describe the exact request.
+    // Check supported nested transaction wrappers as well as top-level echoes.
+    let mut echoes = vec![&record.output];
+    for key in ["tx", "transaction", "unsignedTx"] {
+        if let Some(v) = record.output.get(key) {
+            if !v.is_object() {
+                return Err("malformed preview transaction echo".into());
+            }
+            echoes.push(v);
+        }
+    }
+    if let Some(parsed) = record.output.get("parsedTx").filter(|v| v.is_object()) {
+        if let Some(target) = parsed.get("contractAddress").filter(|v| !v.is_null()) {
+            if !target
+                .as_str()
+                .zip(record.input["to"].as_str())
+                .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                return Err("preview parsed contract mismatch".into());
+            }
+        }
+    }
+    for echo in echoes {
+        check_output(echo, &record.chain, &record.sender)?;
+        for key in ["to", "inputData"] {
+            if let Some(actual) = echo.get(key) {
+                if !actual
+                    .as_str()
+                    .zip(record.input[key].as_str())
+                    .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+                {
+                    return Err("preview transaction intent mismatch".into());
+                }
+            }
+        }
+        if let Some(value) = echo.get("value") {
+            let text = value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string());
+            if crate::fast::uint256(&text)?
+                != crate::fast::uint256(record.input["value"].as_str().unwrap_or("0"))?
+            {
+                return Err("preview transaction value mismatch".into());
+            }
+        }
+    }
+    let digest = record.digest()?;
+    let request_id = record.request_id.clone();
+    timing.local_prep_ms += prep.elapsed().as_secs_f64() * 1000.0;
+    let started = std::time::Instant::now();
+    let consumed = cache.consume(&request_id, &digest);
+    timing.consume_ms = started.elapsed().as_secs_f64() * 1000.0;
+    consumed?;
+    let started = std::time::Instant::now();
+    let checked = check_wallet_policy(client, &record.chain, Some(&record.sender), skip).await;
+    timing.prechecks_ms += started.elapsed().as_secs_f64() * 1000.0;
+    checked?;
+    if record.expires_at <= now()? {
+        return Err("preview expired; remains consumed".into());
+    }
+    state_check()?;
+    let execution = client
+        .request(
+            Method::POST,
+            &format!("{API}/contract-call/execute"),
+            Some(json!({"requestId":request_id})),
+        )
+        .await;
+    timing.execute = client.last_http.clone();
+    let execution = execution?;
+    let acknowledged = execution["orderId"]
         .as_str()
-        .ok_or("preview requestId missing")?
-        .to_owned();
-    let digest = preview["previewSha256"]
-        .as_str()
-        .ok_or("preview digest missing")?
-        .to_owned();
-    let execution = execute_call(client, dir, "contract-call", &request_id, Some(&digest)).await?;
+        .is_some_and(|s| !s.trim().is_empty())
+        || execution["txHash"].as_str().is_some_and(|s| {
+            s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
+        });
+    if !execution.is_object() || !acknowledged || failed_simulation(&execution) {
+        return Err("execute backend failure or malformed response; never retry".into());
+    }
+    let mut preview = record.output;
+    preview["previewSha256"] = json!(digest);
     Ok(json!({
         "policy": "none (fire performs no policy check)",
-        "preview": {
-            "requestId": request_id,
-            "previewSha256": digest,
-            "requireConfirmation": preview.get("requireConfirmation").cloned().unwrap_or(Value::Null),
-            "risks": preview.get("risks").cloned().unwrap_or(Value::Null),
-            "authorityChanges": preview.get("authorityChanges").cloned().unwrap_or(Value::Null),
-            "allowanceChanges": preview.get("allowanceChanges").cloned().unwrap_or(Value::Null),
-        },
+        "preview": preview,
         "execution": execution,
     }))
 }
@@ -1079,6 +1365,137 @@ mod tests {
             requests,
             handle,
         )
+    }
+    #[tokio::test]
+    async fn fire_keeps_preview_in_memory_and_preserves_nested_authority() {
+        let dir = tempwallet();
+        let mut p = preview();
+        p["simulationResult"] =
+            json!({"success":true,"authorityChanges":["nested"],"allowanceChanges":["allow"]});
+        let mut replies = gates();
+        replies.push(p);
+        replies.extend(gates());
+        replies.push(json!({"orderId":"done"}));
+        let (mut client, _, thread) = fixture(replies);
+        let a = args();
+        let result = fire_contract(
+            &mut client,
+            dir.path(),
+            &ContractFire {
+                binance_chain_id: a.binance_chain_id,
+                from: a.from,
+                to: a.to.unwrap(),
+                value: a.value,
+                input_data: a.input_data,
+                gas_limit: None,
+            },
+        )
+        .await
+        .unwrap();
+        thread.join().unwrap();
+        let files: Vec<_> = std::fs::read_dir(dir.path().join("signing-previews"))
+            .unwrap()
+            .map(|p| p.unwrap().path())
+            .collect();
+        assert!(
+            files.iter().all(|p| p.extension().unwrap() != "json"),
+            "fire must never store preview JSON"
+        );
+        assert_eq!(
+            result["preview"]["simulationResult"]["authorityChanges"],
+            json!(["nested"])
+        );
+        assert!(
+            result["timings"]["preview"]["request_ms"]
+                .as_f64()
+                .unwrap_or(0.0)
+                > 0.0
+        );
+        assert!(result["timings"]["execute"]["body_ms"].is_number());
+        assert!(result["timings"]["validation_ms"].is_number());
+    }
+    #[tokio::test]
+    async fn fast_fire_requires_simulation_and_backend_sender_binding() {
+        for (p, expected) in [
+            (json!({"requestId":"x","simulationSuccess":true}), "binding"),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"1","success":true}),
+                "simulation",
+            ),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"1"}),
+                "simulation",
+            ),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"1","simulationSuccess":true,"simulationResult":{"expiresAt":1}}),
+                "expired",
+            ),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"1","simulationResult":{"success":false}}),
+                "failed",
+            ),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"56","simulationSuccess":true}),
+                "chain",
+            ),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"1","simulationResult":{"success":"true"}}),
+                "simulation",
+            ),
+            (
+                json!({"requestId":"x","from":FROM,"binanceChainId":"1","simulationSuccess":true,"simulationResult":{"from":"0x2222222222222222222222222222222222222222"}}),
+                "sender",
+            ),
+        ] {
+            let dir = tempwallet();
+            let (mut client, _, thread) = fixture(vec![p]);
+            let a = args();
+            let err = memory_fire(
+                &mut client,
+                dir.path(),
+                &ContractFire {
+                    binance_chain_id: a.binance_chain_id,
+                    from: a.from,
+                    to: a.to.unwrap(),
+                    value: a.value,
+                    input_data: a.input_data,
+                    gas_limit: None,
+                },
+                true,
+                &mut FireTimings::default(),
+            )
+            .await
+            .unwrap_err();
+            thread.join().unwrap();
+            assert!(err.contains(expected), "expected {expected}, got {err}");
+        }
+    }
+    #[tokio::test]
+    async fn dispatch_precheck_policy_is_request_local() {
+        use clap::Parser;
+        let dir = tempwallet();
+        let cli = crate::cli::Cli::try_parse_from([
+            "baw-rs",
+            "--wallet-dir",
+            dir.path().to_str().unwrap(),
+            "--instance-id",
+            "synthetic",
+            "--skip-prechecks",
+            "contract-call",
+            "preview",
+            "--binanceChainId",
+            "1",
+            "--from",
+            FROM,
+            "--to",
+            "0x2222222222222222222222222222222222222222",
+        ])
+        .unwrap();
+        let (mut client, seen, thread) = fixture(vec![preview()]);
+        let result = crate::dispatch::execute(&mut client, &cli).await;
+        thread.join().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
     fn gates() -> Vec<Value> {
         vec![

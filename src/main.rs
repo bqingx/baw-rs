@@ -51,6 +51,24 @@ async fn warm_request(cli: &Cli, raw: &[String]) -> Option<serde_json::Value> {
 
 async fn run() -> io::Result<bool> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().is_some_and(|s| s == "fast") {
+        let args = match baw_rs::fast::Args::try_parse_from(raw.iter()) {
+            Ok(args) => args,
+            Err(e) => {
+                let ok = matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion);
+                e.print()?;
+                return Ok(ok);
+            }
+        };
+        let result = baw_rs::fast::run(args).await;
+        let success = result.is_ok();
+        match result {
+            Ok(Some(data)) => emit_json(&mut io::stdout().lock(), &envelope(Ok(data)))?,
+            Ok(None) => {}
+            Err(error) => emit_json(&mut io::stdout().lock(), &envelope(Err(error)))?,
+        }
+        return Ok(success);
+    }
     if raw.first().is_some_and(|s| s == "vaults") {
         let args = match baw_rs::vaults::Args::try_parse_from(raw.iter()) {
             Ok(args) => args,

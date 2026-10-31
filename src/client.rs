@@ -16,7 +16,17 @@ pub(crate) const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
 const STREAM_PATH: &str = "/w3w/stream";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct HttpTiming {
+    /// Local send-to-response-headers latency, NOT backend processing time.
+    pub request_ms: Option<f64>,
+    /// Response headers through bounded body drain and JSON decoding.
+    pub body_ms: Option<f64>,
+    /// Entire local HTTP invocation through body decode (including failures); not backend time.
+    pub full_roundtrip_ms: Option<f64>,
+}
 pub struct Client {
+    pub(crate) last_http: HttpTiming,
     http: reqwest::Client,
     origin: String,
     credentials: Credentials,
@@ -68,6 +78,8 @@ impl Client {
         headers.insert("bnc-uuid", id);
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            // Mutating POSTs are one-shot even for protocol-level retry classifiers.
+            .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .no_proxy()
@@ -76,6 +88,7 @@ impl Client {
             .build()
             .map_err(|_| "failed to create HTTP client")?;
         Ok(Self {
+            last_http: HttpTiming::default(),
             http,
             origin: origin.into(),
             credentials,
@@ -346,6 +359,20 @@ impl Client {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, String> {
+        let mut timing = HttpTiming::default();
+        let started = std::time::Instant::now();
+        let result = self.request_inner(method, path, body, &mut timing).await;
+        timing.full_roundtrip_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+        self.last_http = timing;
+        result
+    }
+    async fn request_inner(
+        &mut self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        timing: &mut HttpTiming,
+    ) -> Result<Value, String> {
         if self.invalidated {
             return Err("session invalidated; restart with a valid session".into());
         }
@@ -367,74 +394,83 @@ impl Client {
         if let Some(body) = body {
             request = request.json(&body);
         }
-        let mut response = request.send().await.map_err(|error| {
+        let started = std::time::Instant::now();
+        let response = request.send().await;
+        timing.request_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+        let mut response = response.map_err(|error| {
             if error.is_timeout() {
                 "HTTP request timed out"
             } else {
                 "HTTP request failed"
             }
         })?;
-        let status = response.status().as_u16();
-        if matches!(status, 401 | 403) {
-            self.invalidate();
-            return Err(format!("HTTP {status}; session invalidated"));
-        }
-        if !(200..300).contains(&status) {
-            return Err(format!("HTTP {status}"));
-        }
-        let pending_cookie = response
-            .headers()
-            .get_all(SET_COOKIE)
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .find_map(|cookie| {
-                cookie
-                    .split(';')
-                    .next()
-                    .and_then(|v| v.strip_prefix("agentSessionId="))
-                    .filter(|v| !v.is_empty())
-                    .map(str::to_owned)
-            });
-        if response
-            .content_length()
-            .is_some_and(|n| n > MAX_RESPONSE as u64)
-        {
-            return Err("HTTP response exceeds 4 MiB".into());
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| "failed to read HTTP response")?
-        {
-            if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
+        let started = std::time::Instant::now();
+        let result = async {
+            let status = response.status().as_u16();
+            if matches!(status, 401 | 403) {
+                self.invalidate();
+                return Err(format!("HTTP {status}; session invalidated"));
+            }
+            if !(200..300).contains(&status) {
+                return Err(format!("HTTP {status}"));
+            }
+            let pending_cookie = response
+                .headers()
+                .get_all(SET_COOKIE)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .find_map(|cookie| {
+                    cookie
+                        .split(';')
+                        .next()
+                        .and_then(|v| v.strip_prefix("agentSessionId="))
+                        .filter(|v| !v.is_empty())
+                        .map(str::to_owned)
+                });
+            if response
+                .content_length()
+                .is_some_and(|n| n > MAX_RESPONSE as u64)
+            {
                 return Err("HTTP response exceeds 4 MiB".into());
             }
-            bytes.extend_from_slice(&chunk);
-        }
-        if serde_json::from_slice::<Value>(&bytes)
-            .ok()
-            .is_some_and(|v| {
-                matches!(
-                    v["code"].as_str(),
-                    Some("100001005" | "10003001" | "10003002")
-                )
-            })
-        {
-            self.invalidate();
-            return Err("session expired; restart with a valid session".into());
-        }
-        let data = unpack_response(status, &bytes)?;
-        if let Some(cookie) = pending_cookie {
-            if cookie.len() <= 16_384
-                && cookie
-                    .bytes()
-                    .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|_| "failed to read HTTP response")?
             {
-                self.credentials.session_id = zeroize::Zeroizing::new(cookie);
+                if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
+                    return Err("HTTP response exceeds 4 MiB".into());
+                }
+                bytes.extend_from_slice(&chunk);
             }
+            if serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .is_some_and(|v| {
+                    matches!(
+                        v["code"].as_str(),
+                        Some("100001005" | "10003001" | "10003002")
+                    )
+                })
+            {
+                self.invalidate();
+                return Err("session expired; restart with a valid session".into());
+            }
+            let data = unpack_response(status, &bytes)?;
+            if let Some(cookie) = pending_cookie {
+                if cookie.len() <= 16_384
+                    && cookie
+                        .bytes()
+                        .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
+                {
+                    self.credentials.session_id = zeroize::Zeroizing::new(cookie);
+                }
+            }
+            Ok(data)
         }
-        Ok(data)
+        .await;
+        timing.body_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+        result
     }
 
     pub(crate) fn invalidate(&mut self) {

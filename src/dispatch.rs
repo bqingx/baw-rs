@@ -109,6 +109,10 @@ pub fn preflight(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
+    signing::request_precheck_policy(cli.skip_prechecks, execute_inner(client, cli)).await
+}
+
+async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> {
     preflight(cli)?;
     if client.credentials().session_id.is_empty()
         && !matches!(

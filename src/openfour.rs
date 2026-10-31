@@ -2,8 +2,7 @@
 //!
 //! The official reference (`agent-id-exclusive-token-launches.mjs quote-buy`) is a Node
 //! script: it starts a process, reads the curve through several JSON-RPC calls and then
-//! simulates the transaction. For a trading race that costs ~0.47 s, of which Node startup
-//! is ~0.07 s and the simulation ~0.3 s.
+//! simulates the transaction. No production latency is inferred from this implementation.
 //!
 //! This module reproduces only what is needed to build a valid buy: read the curve, ask
 //! `Tools.estimateBuyByBudget` for the size, apply the slippage floor and encode
@@ -66,6 +65,8 @@ pub const NAMES: [&str; 2] = ["openfour", "four"];
 pub enum OpenFourCommand {
     /// Read the curve and build a `buyByBudget` transaction (no session, no signing).
     QuoteBuy(QuoteBuyArgs),
+    /// Offline BNB/WBNB budget encoding, options=0; no quote or RPC.
+    EncodeBuy(crate::fast::Buy),
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -90,6 +91,7 @@ pub struct QuoteBuyArgs {
 /// Entry point used by the dispatcher.
 pub async fn run(command: &OpenFourCommand) -> Result<Value, String> {
     match command {
+        OpenFourCommand::EncodeBuy(a) => crate::fast::build(a),
         OpenFourCommand::QuoteBuy(a) => {
             let amount_wei = parse_units(&a.amount, 18)?;
             quote_buy(&QuoteBuy {
@@ -223,19 +225,7 @@ pub async fn quote_buy(args: &QuoteBuy) -> Result<Value, String> {
     }
 
     let min_token_out = slip_down(token_amount, args.slippage_bps);
-    let input_data = format!(
-        "{}{}",
-        sel::BUY_BY_BUDGET,
-        abi_args(
-            &[
-                Word::Address(&token),
-                Word::Uint(args.amount_wei),
-                Word::Uint(min_token_out),
-                Word::Uint(0),
-            ],
-            true
-        )
-    );
+    let input_data = encode_budget(&token, &args.amount_wei.into(), &min_token_out.into())?;
 
     Ok(json!({
         "route": "contract-call",
@@ -271,6 +261,28 @@ pub async fn quote_buy(args: &QuoteBuy) -> Result<Value, String> {
             args.amount_wei
         ),
     }))
+}
+
+/// Shared, offline encoder for the known BNB/WBNB template: options=0, empty proof.
+pub(crate) fn encode_budget(
+    token: &str,
+    budget: &num_bigint::BigUint,
+    minimum: &num_bigint::BigUint,
+) -> Result<String, String> {
+    crate::signing::address(CHAIN_ID, token)?;
+    if budget.bits() > 256 || minimum.bits() > 256 {
+        return Err("uint256 overflow".into());
+    }
+    Ok(format!(
+        "{}{:0>64}{:0>64}{:0>64}{:064x}{:064x}{:064x}",
+        sel::BUY_BY_BUDGET,
+        token[2..].to_ascii_lowercase(),
+        budget.to_str_radix(16),
+        minimum.to_str_radix(16),
+        0,
+        160,
+        0
+    ))
 }
 
 const REGISTRY: &str = "0x912cef0c3ae9ab6eb3ec87cab69371cfb317ab94";
