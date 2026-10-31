@@ -39,6 +39,16 @@
 只支持已知 BNB/WBNB options=0 模板；无 quote **不是百分比滑点保护**。
 日常多钱包继续使用 `vaults`。测试仅使用合成数据与本地 mock，不包含任何真实下单。
 
+## Agent Skill
+
+面向 AI Agent 的中文版操作技能：[`skills/baw-rs/SKILL.md`](skills/baw-rs/SKILL.md)。
+覆盖官方 baw 1.12.0 的 102 条叶子命令，并记录 Rust 新增的多钱包、离线编码与 fast 路径。
+附实际 `--help` 参数快照、登录/交易/签名/对账流程和仅离线的校验工具，不携带任何登录态。
+
+```sh
+python3 tests/test_baw_skill.py --binary <VERIFIED_BINARY>
+```
+
 ## 快速开始
 
 需要 Rust 稳定版工具链（开发时用 1.99.1）。**仓库不发布预编译二进制**——只有你自己构建的产物，

@@ -1,0 +1,22 @@
+{
+  "officialVersion": "1.12.0",
+  "officialCount": 102,
+  "ours": 116,
+  "missing": [],
+  "extras": [
+    "batch",
+    "contract-call fire",
+    "contract-call run",
+    "fast build",
+    "fast serve",
+    "openfour encode-buy",
+    "openfour quote-buy",
+    "serve",
+    "vaults list",
+    "vaults register",
+    "vaults run",
+    "vaults serve",
+    "vaults status",
+    "vaults stop"
+  ]
+}
