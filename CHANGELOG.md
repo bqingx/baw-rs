@@ -7,6 +7,24 @@ the current source.
 
 ## Unreleased
 
+- **Flattened wallet model (breaking).** The wallet name is now a global flag:
+  `baw-rs --wallet alice wallet balance` instead of `baw-rs vaults --registry R run alice -- wallet balance`.
+  Wallet lifecycle is owned by the binary (`wallets add|remove|list|status|serve|stop`), which never
+  requires `--wallet`; `task` moved to the top level (`--wallet alice task arm sell-1 --confirm`).
+  The registry defaults to `$BAW_RS_REGISTRY`, else `$HOME/wallets/registry`, overridable by global
+  `--registry`. A wallet-scoped command without `--wallet` and without the legacy `--wallet-dir` pair
+  now fails with an error naming the flag. `vaults`, `vaults run NAME --`, `vaults register`,
+  `vaults task NAME`, `--wallet-dir`/`--instance-id-file`, `serve` and `--warm` remain supported as
+  documented compatibility paths. Leaf commands stay at 45.
+
+- **Trimmed command surface (breaking).** Removed the `prediction`, `defi`, `x402-payment`,
+  `tracker`, `signal`, `leaderboard`, `limit-order`, `fast` and `batch` families together with
+  their source modules, tests and reference docs. Leaf commands drop from 116 to 45 (root CLI
+  33, plus `vaults` and `openfour`). Kept: `auth`, `wallet`, `market-order`, `contract-call`,
+  `sign-message`, `approvals`, `openfour`, `vaults` (incl. `task`), `cli-check`, `skill-check`,
+  and the single-wallet `serve` / `--warm` machinery. `uint256` parsing moved from `fast.rs` to
+  `src/uint.rs`; `openfour encode-buy` keeps its offline encoder.
+
 - Repo published under the MIT license (`LICENSE`), and absolute build-host paths inside
   `verification/` normalised to `<repo>` / `<scratch>` / `<home>` before the repo went public.
   Only path text changed; counts, exit codes and binary hashes are untouched. See

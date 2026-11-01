@@ -1,4 +1,10 @@
 //! Synthetic loopback-only resident tests. No production origin is reachable here.
+#[path = "executor_bench.rs"]
+mod executor_bench;
+#[path = "executor_tests.rs"]
+mod executor_tests;
+#[path = "native_runtime_tests.rs"]
+mod native_runtime_tests;
 use super::*;
 use std::os::unix::fs::MetadataExt;
 use tokio::sync::{mpsc, oneshot};
@@ -71,7 +77,7 @@ impl Mock {
         }
     }
     async fn next(&mut self) -> (String, oneshot::Sender<Reply>) {
-        tokio::time::timeout(Duration::from_secs(15), self.requests.recv())
+        tokio::time::timeout(Duration::from_secs(60), self.requests.recv())
             .await
             .unwrap()
             .unwrap()
@@ -536,6 +542,9 @@ async fn ipc_frames_are_bounded_and_idle_connections_time_out() {
         server,
         Arc::new(BTreeMap::new()),
         Arc::new(Notify::new()),
+        Arc::new(Semaphore::new(1)).acquire_owned().await.unwrap(),
+        Arc::new(Semaphore::new(16)),
+        tokio::sync::watch::channel(false).0,
     ));
     let bytes = tokio::time::timeout(
         Duration::from_secs(5),

@@ -2,12 +2,12 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带已确认的钱包选择器；`vaults/openfour/fast` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`wallets/openfour` 各有独立参数入口。
 
 ## `wallet`
 
 ```text
-Usage: baw-rs --wallet-dir <WALLET_DIR> wallet [OPTIONS] <COMMAND>
+Usage: baw-rs wallet [OPTIONS] <COMMAND>
 
 Commands:
   status          
@@ -27,6 +27,10 @@ Commands:
   help            Print this message or the help of the given subcommand(s)
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -51,6 +55,10 @@ Options:
 Usage: baw-rs wallet status [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -75,6 +83,10 @@ Options:
 Usage: baw-rs wallet address [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -99,6 +111,10 @@ Options:
 Usage: baw-rs wallet chains [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -123,6 +139,10 @@ Options:
 Usage: baw-rs wallet settings [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -149,6 +169,10 @@ Usage: baw-rs wallet gas-price [OPTIONS] --binanceChainId <BINANCE_CHAIN_ID>
 Options:
       --binanceChainId <BINANCE_CHAIN_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -175,6 +199,10 @@ Usage: baw-rs wallet tx-lock [OPTIONS] --binanceChainId <BINANCE_CHAIN_ID>
 Options:
       --binanceChainId <BINANCE_CHAIN_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -199,6 +227,10 @@ Options:
 Usage: baw-rs wallet agent-id [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -227,15 +259,19 @@ Usage: baw-rs wallet balance [OPTIONS]
 Options:
       --raw
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --symbol <SYMBOL>
           
       --tokenAddress <TOKEN_ADDRESS>
           
       --binanceChainId <BINANCE_CHAIN_ID>
           
-      --json
-          
       --hideLowValue <HIDE_LOW_VALUE>
+          
+      --json
           
       --timing
           
@@ -261,23 +297,27 @@ Usage: baw-rs wallet tx-history [OPTIONS]
 Options:
       --type <HISTORY_TYPE>
           [default: all]
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
       --binanceChainId <BINANCE_CHAIN_ID>
           
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --size <SIZE>
           [default: 20]
-      --json
-          
       --nextCursor <NEXT_CURSOR>
-          
-      --timing
           
       --tx <TX>
           
-      --confirm
+      --json
           
       --startTime <START_TIME>
           
       --endTime <END_TIME>
+          
+      --timing
+          
+      --confirm
           
       --operation-id <OPERATION_ID>
           
@@ -297,6 +337,10 @@ Options:
 Usage: baw-rs wallet left-quota [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -323,22 +367,26 @@ Usage: baw-rs wallet send [OPTIONS] --binanceChainId <BINANCE_CHAIN_ID> --recipi
 Options:
       --binanceChainId <BINANCE_CHAIN_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
       --amount <AMOUNT>
           
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --max
-          
-      --json
           
       --recipient <RECIPIENT>
           
-      --timing
-          
       --tokenAddress <TOKEN_ADDRESS>
-          
-      --confirm
           
       --gasLevel <GAS_LEVEL>
           [default: MEDIUM]
+      --json
+          
+      --timing
+          
+      --confirm
+          
       --operation-id <OPERATION_ID>
           
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
@@ -364,8 +412,12 @@ Arguments:
 Options:
       --level <level>
           Gas bump level: LOW (×1.1), HIGH (×1.25) [default: HIGH]
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
       --binanceChainId <binanceChainId>
           Binance chain ID (optional, auto-detected from txHash)
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -397,6 +449,10 @@ Arguments:
 Options:
       --binanceChainId <binanceChainId>
           Binance chain ID (optional, auto-detected from txHash)
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -425,8 +481,12 @@ Usage: baw-rs wallet resolve-domain [OPTIONS] --name <name> --binanceChainId <bi
 Options:
       --name <name>
           Domain name to resolve, e.g. alice.eth / alice.bnb
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
       --binanceChainId <binanceChainId>
           Binance chain ID, e.g. 56 (BSC)
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing

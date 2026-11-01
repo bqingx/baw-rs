@@ -1,14 +1,32 @@
-//! Single guarded CLI dispatch. Batch cannot carry mutation authority.
+//! Single guarded CLI dispatch: one consent decision per mutating command.
 use crate::{
     approvals, auth,
     cli::{Cli, Command, WalletCommand},
     client::Client,
-    defi,
     execution::{require_consent, OperationGuard},
-    leaderboard, limit_order, prediction, selfcheck, signal, signing, tracker, trade, wallet_ops,
-    x402,
+    selfcheck, signing, trade, wallet_ops,
 };
 use serde_json::{json, Value};
+
+/// The wallet dimension is mandatory. `--wallet` is resolved and forwarded before dispatch,
+/// so reaching dispatch means either the legacy `--wallet-dir` pair was given or the
+/// invocation is wrong.
+pub fn require_wallet_scope(cli: &Cli) -> Result<(), String> {
+    if cli.wallet_dir.is_some() {
+        return Ok(());
+    }
+    Err(match &cli.command {
+        Command::Serve => {
+            "serve requires --wallet-dir with --instance-id or --instance-id-file (legacy single wallet); use `baw-rs wallets serve` for the named registry".into()
+        }
+        Command::Wallets(_) => {
+            "`wallets` is handled before wallet resolution and needs no --wallet".into()
+        }
+        _ => {
+            "wallet-scoped command requires --wallet <NAME> (for example `baw-rs --wallet alice wallet status`); legacy single-wallet callers may pass --wallet-dir with --instance-id or --instance-id-file".into()
+        }
+    })
+}
 
 fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
     Ok(match &cli.command {
@@ -31,27 +49,6 @@ fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
         Command::Approvals { command } if approvals::is_mutation(command) => {
             Some(("approvals.revoke", approvals::mutation_payload(command)?))
         }
-        Command::LimitOrder { command } if limit_order::is_mutation(command) => {
-            Some(("limit-order", limit_order::mutation_payload(command)?))
-        }
-        Command::Prediction { command } if prediction::is_mutation(command) => {
-            Some(("prediction", prediction::mutation_payload(command)?))
-        }
-        Command::Defi { command } if defi::is_mutation(command) => {
-            Some(("defi", defi::mutation_payload(command)?))
-        }
-        Command::X402Payment { command } if x402::is_mutation(command) => {
-            Some(("x402-payment.sign", x402::mutation_payload(command)?))
-        }
-        Command::Leaderboard { command } if leaderboard::is_mutation(command) => {
-            Some(("leaderboard", leaderboard::mutation_payload(command)?))
-        }
-        Command::Tracker { command } if tracker::is_mutation(command) => {
-            Some(("tracker", tracker::mutation_payload(command)?))
-        }
-        Command::Signal { command } if signal::is_mutation(command) => {
-            Some(("signal", signal::mutation_payload(command)?))
-        }
         Command::ContractCall { command } if signing::is_contract_mutating(command) => {
             Some(("contract-call.execute", signing::contract_intent(command)))
         }
@@ -73,22 +70,10 @@ pub fn preflight(cli: &Cli) -> Result<(), String> {
             }
     ) || matches!(&cli.command, Command::MarketOrder { command } if trade::is_mutating(command))
         || matches!(&cli.command, Command::Approvals { command } if approvals::is_mutation(command))
-        || matches!(&cli.command, Command::LimitOrder { command } if limit_order::is_mutation(command))
-        || matches!(&cli.command, Command::Prediction { command } if prediction::is_mutation(command))
-        || matches!(&cli.command, Command::Defi { command } if defi::is_mutation(command))
-        || matches!(&cli.command, Command::X402Payment { command } if x402::is_mutation(command))
-        || matches!(&cli.command, Command::Tracker { command } if tracker::is_mutation(command))
-        || matches!(&cli.command, Command::Signal { command } if signal::is_mutation(command))
-        || matches!(&cli.command, Command::Leaderboard { command } if leaderboard::is_mutation(command))
         || matches!(&cli.command, Command::ContractCall { command } if signing::is_contract_mutating(command))
         || matches!(&cli.command, Command::SignMessage { command } if signing::is_message_mutating(command));
     if writes {
         require_consent(cli.confirm, cli.operation_id.as_deref())?;
-    }
-    if matches!(cli.command, Command::Batch)
-        && (cli.confirm || cli.operation_id.is_some() || cli.accept_preview_sha256.is_some())
-    {
-        return Err("batch cannot authorize mutations or accept previews".into());
     }
     if matches!(&cli.command, Command::ContractCall { command } if signing::needs_accepted_digest(command))
         || matches!(&cli.command, Command::SignMessage { command } if signing::is_message_mutating(command))
@@ -114,6 +99,8 @@ pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
 
 async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> {
     preflight(cli)?;
+    require_wallet_scope(cli)?;
+    let wallet_dir = cli.wallet_dir_path()?.to_path_buf();
     if client.credentials().session_id.is_empty()
         && !matches!(
             &cli.command,
@@ -127,7 +114,7 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
     }
     let mut guard = if let Some((action, intent)) = mutation(cli)? {
         Some(OperationGuard::begin(
-            &cli.wallet_dir,
+            &wallet_dir,
             require_consent(cli.confirm, cli.operation_id.as_deref())?,
             action,
             &intent,
@@ -138,7 +125,7 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
     };
     let result = match &cli.command {
         Command::Auth { command } => {
-            auth::run(client, &cli.wallet_dir, &cli.instance_id, command).await
+            auth::run(client, &wallet_dir, &cli.instance_id, command).await
         }
         Command::Wallet {
             command: WalletCommand::Send(args),
@@ -153,13 +140,6 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
             command: WalletCommand::ResolveDomain(args),
         } => wallet_ops::resolve_domain(client, args).await,
         Command::Approvals { command } => approvals::run(client, command).await,
-        Command::LimitOrder { command } => limit_order::run(client, command).await,
-        Command::Prediction { command } => prediction::run(client, command).await,
-        Command::Defi { command } => defi::run(client, command).await,
-        Command::X402Payment { command } => x402::run(client, command).await,
-        Command::Tracker { command } => tracker::run_with(client, command, cli.json).await,
-        Command::Signal { command } => signal::run(client, command).await,
-        Command::Leaderboard { command } => leaderboard::run(client, command).await,
         Command::CliCheck(args) => selfcheck::cli_check(client, args).await,
         Command::SkillCheck(args) => selfcheck::skill_check(client, args).await,
         Command::Wallet { command } => client.execute(command).await,
@@ -167,7 +147,7 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         Command::ContractCall { command } => {
             signing::contract(
                 client,
-                &cli.wallet_dir,
+                &wallet_dir,
                 command,
                 cli.accept_preview_sha256.as_deref(),
             )
@@ -176,13 +156,15 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         Command::SignMessage { command } => {
             signing::message(
                 client,
-                &cli.wallet_dir,
+                &wallet_dir,
                 command,
                 cli.accept_preview_sha256.as_deref(),
             )
             .await
         }
-        Command::Batch => Err("batch requires streaming dispatch".into()),
+        Command::Task { .. } | Command::Wallets(_) => {
+            Err("task and wallets control are handled before dispatch".into())
+        }
         Command::Serve => Err("serve runs before dispatch".into()),
     };
     if let Some(guard) = &mut guard {

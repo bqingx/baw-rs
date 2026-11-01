@@ -2,16 +2,20 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带已确认的钱包选择器；`vaults/openfour/fast` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`wallets/openfour` 各有独立参数入口。
 
 ## `serve`
 
 ```text
 Resident server: reuse one session and connection pool over a private socket
 
-Usage: baw-rs --wallet-dir <WALLET_DIR> serve [OPTIONS]
+Usage: baw-rs serve [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing

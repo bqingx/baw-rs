@@ -25,7 +25,7 @@ fn nonempty(s: &str) -> Result<(), String> {
         Ok(())
     }
 }
-fn is_solana(chain: &str) -> bool {
+pub(crate) fn is_solana(chain: &str) -> bool {
     chain == "CT_501"
 }
 pub(crate) fn address(chain: &str, s: &str) -> Result<(), String> {
@@ -60,7 +60,7 @@ fn unsigned_value(s: &str) -> bool {
         None => !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()),
     }
 }
-fn contract_payload(a: &ContractPreview) -> Result<Value, String> {
+pub(crate) fn contract_payload(a: &ContractPreview) -> Result<Value, String> {
     nonempty(&a.binance_chain_id)?;
     address(&a.binance_chain_id, &a.from)?;
     let mut p = json!({"binanceChainId":a.binance_chain_id,"from":a.from});
@@ -119,29 +119,10 @@ pub enum ContractCommand {
         #[arg(long = "requestId")]
         request_id: String,
     },
-    /// Preview then execute in one process, only if the pinned policy matches.
-    Run(ContractRun),
     /// Preview then execute in one process with no policy gate and no human digest
     /// review. Consent is still `--confirm` + a unique `--operation-id`; the preview's
     /// risks and authority changes are returned in the output for the caller to log.
     Fire(ContractFire),
-}
-#[derive(Args, Debug, Clone)]
-pub struct ContractRun {
-    #[arg(long = "binanceChainId")]
-    pub binance_chain_id: String,
-    #[arg(long)]
-    pub from: String,
-    #[arg(long)]
-    pub to: String,
-    #[arg(long)]
-    pub value: Option<String>,
-    #[arg(long = "inputData")]
-    pub input_data: Option<String>,
-    #[arg(long = "gasLimit")]
-    pub gas_limit: Option<u64>,
-    #[arg(long)]
-    pub policy: std::path::PathBuf,
 }
 #[derive(Args, Debug, Clone)]
 pub struct ContractFire {
@@ -157,6 +138,10 @@ pub struct ContractFire {
     pub input_data: Option<String>,
     #[arg(long = "gasLimit")]
     pub gas_limit: Option<u64>,
+    /// Optional policy file. Without it `fire` runs with no policy gate; with it every
+    /// pinned field (target, value, selector, calldata digest, gas cap) must match.
+    #[arg(long)]
+    pub policy: Option<std::path::PathBuf>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -284,7 +269,7 @@ async fn check_wallet(
 ) -> Result<(String, u64), String> {
     check_wallet_policy(client, chain, expected, skip_prechecks()).await
 }
-async fn check_wallet_policy(
+pub(crate) async fn check_wallet_policy(
     client: &mut Client,
     chain: &str,
     expected: Option<&str>,
@@ -757,7 +742,6 @@ pub async fn contract(
         ContractCommand::Execute { request_id } => {
             execute_call(client, dir, "contract-call", request_id, accepted_digest).await
         }
-        ContractCommand::Run(a) => run_contract(client, dir, a).await,
         ContractCommand::Fire(a) => fire_contract(client, dir, a).await,
     }
 }
@@ -915,7 +899,7 @@ pub fn needs_accepted_digest(command: &ContractCommand) -> bool {
 pub fn is_contract_mutating(command: &ContractCommand) -> bool {
     matches!(
         command,
-        ContractCommand::Execute { .. } | ContractCommand::Run(_) | ContractCommand::Fire(_)
+        ContractCommand::Execute { .. } | ContractCommand::Fire(_)
     )
 }
 pub fn is_message_mutating(command: &SignCommand) -> bool {
@@ -929,11 +913,8 @@ pub fn contract_intent(command: &ContractCommand) -> Value {
         ContractCommand::Preview(a) => {
             json!({"operation":"contract-call-preview","binanceChainId":a.binance_chain_id,"from":a.from,"to":a.to,"value":a.value,"inputData":a.input_data,"unsignedTx":a.unsigned_tx,"gasLimit":a.gas_limit})
         }
-        ContractCommand::Run(a) => {
-            json!({"operation":"contract-call-run","binanceChainId":a.binance_chain_id,"from":a.from,"to":a.to,"value":a.value,"inputData":a.input_data,"gasLimit":a.gas_limit,"policy":a.policy.to_string_lossy()})
-        }
         ContractCommand::Fire(a) => {
-            json!({"operation":"contract-call-fire","binanceChainId":a.binance_chain_id,"from":a.from,"to":a.to,"value":a.value,"inputData":a.input_data,"gasLimit":a.gas_limit})
+            json!({"operation":"contract-call-fire","binanceChainId":a.binance_chain_id,"from":a.from,"to":a.to,"value":a.value,"inputData":a.input_data,"gasLimit":a.gas_limit,"policy":a.policy.as_ref().map(|p| p.to_string_lossy().into_owned())})
         }
     }
 }
@@ -958,13 +939,14 @@ pub fn message_intent(command: &SignCommand) -> Value {
 async fn run_contract(
     client: &mut Client,
     dir: &Path,
-    args: &ContractRun,
+    args: &ContractFire,
+    policy_path: &Path,
 ) -> Result<Value, String> {
     use crate::policy::{Intent, Policy};
     if is_solana(&args.binance_chain_id) {
         return Err("policy run supports EVM chains only".into());
     }
-    let policy = Policy::load(&args.policy)?;
+    let policy = Policy::load(policy_path)?;
     let value = args.value.as_deref().unwrap_or("0");
     let intent = Intent {
         chain_id: &args.binance_chain_id,
@@ -1027,6 +1009,9 @@ async fn fire_contract(
     dir: &Path,
     args: &ContractFire,
 ) -> Result<Value, String> {
+    if let Some(policy_path) = &args.policy {
+        return run_contract(client, dir, args, policy_path).await;
+    }
     let mut timing = FireTimings::default();
     let mut result = memory_fire(client, dir, args, skip_prechecks(), &mut timing).await?;
     result["timings"] = serde_json::to_value(timing).map_err(|_| "timing encoding failed")?;
@@ -1156,6 +1141,18 @@ pub(crate) async fn memory_fire_checked<F: FnMut() -> Result<(), String> + Send>
     timing: &mut FireTimings,
     state_check: &mut F,
 ) -> Result<Value, String> {
+    memory_fire_guarded(client, dir, args, skip, timing, state_check, None).await
+}
+
+pub(crate) async fn memory_fire_guarded<F: FnMut() -> Result<(), String> + Send>(
+    client: &mut Client,
+    dir: &Path,
+    args: &ContractFire,
+    skip: bool,
+    timing: &mut FireTimings,
+    state_check: &mut F,
+    policy: Option<&crate::policy::Policy>,
+) -> Result<Value, String> {
     let prep = std::time::Instant::now();
     if is_solana(&args.binance_chain_id) {
         return Err("fire supports EVM chains only; use preview + execute for Solana".into());
@@ -1199,6 +1196,50 @@ pub(crate) async fn memory_fire_checked<F: FnMut() -> Result<(), String> + Send>
     );
     timing.validation_ms += started.elapsed().as_secs_f64() * 1000.0;
     validated?;
+    if let Some(policy) = policy {
+        fn check(
+            policy: &crate::policy::Policy,
+            value: &Value,
+            depth: usize,
+        ) -> Result<(), String> {
+            if depth > 32 {
+                return Err("preview policy nesting too deep".into());
+            }
+            if let Some(risks) = value.get("risks").filter(|v| !v.is_null()) {
+                if !risks.is_object() {
+                    return Err("malformed preview risks".into());
+                }
+                if let Some(details) = risks.get("riskDetails").filter(|v| !v.is_null()) {
+                    let rows = details.as_array().ok_or("malformed preview riskDetails")?;
+                    if rows
+                        .iter()
+                        .any(|r| r.get("code").and_then(Value::as_str).is_none())
+                    {
+                        return Err("malformed preview risk code".into());
+                    }
+                }
+            }
+            policy.check_preview(value)?;
+            for key in [
+                "simulation",
+                "simulationResult",
+                "simulationDetails",
+                "simulationResults",
+            ] {
+                if let Some(child) = value.get(key) {
+                    if let Some(rows) = child.as_array() {
+                        for row in rows {
+                            check(policy, row, depth + 1)?;
+                        }
+                    } else {
+                        check(policy, child, depth + 1)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        check(policy, &record.output, 0)?;
+    }
     let prep = std::time::Instant::now();
     // If the backend echoes transaction fields, they must describe the exact request.
     // Check supported nested transaction wrappers as well as top-level echoes.
@@ -1224,6 +1265,21 @@ pub(crate) async fn memory_fire_checked<F: FnMut() -> Result<(), String> + Send>
     }
     for echo in echoes {
         check_output(echo, &record.chain, &record.sender)?;
+        // A backend that has no gas estimate yet echoes `gasLimit: null`; absent and null both
+        // mean "not stated", so only a concrete, unparseable value is a protocol error.
+        if let Some(actual) = echo.get("gasLimit").filter(|v| !v.is_null()) {
+            let gas = actual
+                .as_u64()
+                .or_else(|| actual.as_str().and_then(|s| s.parse::<u64>().ok()))
+                .ok_or("malformed preview gasLimit echo")?;
+            if args.gas_limit.is_some_and(|requested| gas != requested)
+                || policy
+                    .and_then(|p| p.max_gas_limit)
+                    .is_some_and(|ceiling| gas > ceiling)
+            {
+                return Err("preview gasLimit contradicts pinned request or policy ceiling".into());
+            }
+        }
         for key in ["to", "inputData"] {
             if let Some(actual) = echo.get(key) {
                 if !actual
@@ -1240,8 +1296,8 @@ pub(crate) async fn memory_fire_checked<F: FnMut() -> Result<(), String> + Send>
                 .as_str()
                 .map(str::to_owned)
                 .unwrap_or_else(|| value.to_string());
-            if crate::fast::uint256(&text)?
-                != crate::fast::uint256(record.input["value"].as_str().unwrap_or("0"))?
+            if crate::uint::uint256(&text)?
+                != crate::uint::uint256(record.input["value"].as_str().unwrap_or("0"))?
             {
                 return Err("preview transaction value mismatch".into());
             }
@@ -1388,6 +1444,7 @@ mod tests {
                 value: a.value,
                 input_data: a.input_data,
                 gas_limit: None,
+                policy: None,
             },
         )
         .await
@@ -1460,6 +1517,7 @@ mod tests {
                     value: a.value,
                     input_data: a.input_data,
                     gas_limit: None,
+                    policy: None,
                 },
                 true,
                 &mut FireTimings::default(),
@@ -1594,6 +1652,7 @@ mod tests {
             value: None,
             input_data: Some("0x".into()),
             gas_limit: None,
+            policy: None,
         });
         assert!(is_contract_mutating(&fire), "fire must require consent");
         assert!(
@@ -1602,35 +1661,28 @@ mod tests {
         );
     }
 
-    /// Guards the two tests that flip the process-wide skip flag, so a concurrently
-    /// running test that expects the pre-flight reads cannot observe it mid-flight.
-    static SKIP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    // The mutex serialises tests that flip a process-wide flag; holding it across awaits is
-    // the point, and the await never depends on another holder of the same lock.
-    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn skip_prechecks_makes_no_reads_and_trusts_from() {
-        let _guard = SKIP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempwallet();
-        set_skip_prechecks(true);
         let (mut client, seen, thread) = fixture(vec![preview()]);
-        let result = contract(
-            &mut client,
-            dir.path(),
-            &ContractCommand::Preview(ContractPreview {
-                binance_chain_id: "1".into(),
-                from: FROM.into(),
-                to: Some("0x2222222222222222222222222222222222222222".into()),
-                value: None,
-                input_data: Some("0x".into()),
-                unsigned_tx: None,
-                gas_limit: None,
-            }),
-            None,
+        let result = request_precheck_policy(
+            true,
+            contract(
+                &mut client,
+                dir.path(),
+                &ContractCommand::Preview(ContractPreview {
+                    binance_chain_id: "1".into(),
+                    from: FROM.into(),
+                    to: Some("0x2222222222222222222222222222222222222222".into()),
+                    value: None,
+                    input_data: Some("0x".into()),
+                    unsigned_tx: None,
+                    gas_limit: None,
+                }),
+                None,
+            ),
         )
         .await;
-        set_skip_prechecks(false);
         thread.join().unwrap();
         assert!(result.is_ok(), "{result:?}");
         let requests = seen.lock().unwrap();
@@ -1638,29 +1690,28 @@ mod tests {
         assert!(requests[0].contains("/contract-call/preview "));
     }
 
-    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn skip_prechecks_still_requires_an_explicit_sender() {
-        let _guard = SKIP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempwallet();
-        set_skip_prechecks(true);
         let (mut client, seen, thread) = fixture(vec![]);
-        let result = contract(
-            &mut client,
-            dir.path(),
-            &ContractCommand::Preview(ContractPreview {
-                binance_chain_id: "1".into(),
-                from: String::new(),
-                to: Some("0x2222222222222222222222222222222222222222".into()),
-                value: None,
-                input_data: Some("0x".into()),
-                unsigned_tx: None,
-                gas_limit: None,
-            }),
-            None,
+        let result = request_precheck_policy(
+            true,
+            contract(
+                &mut client,
+                dir.path(),
+                &ContractCommand::Preview(ContractPreview {
+                    binance_chain_id: "1".into(),
+                    from: String::new(),
+                    to: Some("0x2222222222222222222222222222222222222222".into()),
+                    value: None,
+                    input_data: Some("0x".into()),
+                    unsigned_tx: None,
+                    gas_limit: None,
+                }),
+                None,
+            ),
         )
         .await;
-        set_skip_prechecks(false);
         thread.join().unwrap();
         assert!(result.is_err(), "empty --from must fail before any network");
         assert!(seen.lock().unwrap().is_empty());
@@ -1684,6 +1735,7 @@ mod tests {
                 value: Some("0".into()),
                 input_data: Some("0x".into()),
                 gas_limit: None,
+                policy: None,
             }),
             None,
         )

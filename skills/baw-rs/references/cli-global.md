@@ -3,31 +3,29 @@
 ```text
 Native wallet client with explicit consent and preview-bound signing
 
-Usage: baw-rs [OPTIONS] --wallet-dir <WALLET_DIR> <COMMAND>
+Usage: baw-rs [OPTIONS] <COMMAND>
 
 Commands:
+  task           Native event task control for the wallet named by --wallet
   auth           
   market-order   
   contract-call  
   sign-message   
   wallet         
   approvals      Token approvals: list, detail, revoke
-  limit-order    Limit orders: buy, sell, list, cancel
-  prediction     Prediction markets: discovery, positions, trading
-  defi           DeFi: protocols, opportunities, positions, deposit/redeem/LP/claim
-  x402-payment   x402 payments: preview an HTTP 402 challenge, then sign an option
-  tracker        Wallet tracker: groups, addresses, monitors
-  signal         Custom signal strategies and backtests
-  leaderboard    Leaderboard, address analysis and alpha radar
   cli-check      Check whether the installed CLI meets a required version
   skill-check    Check whether a skill has a newer version available
-  batch          Read one JSON argv array per stdin line, retaining the in-memory session
+  wallets        Wallet lifecycle and named resident daemon. Never requires --wallet
   serve          Resident server: reuse one session and connection pool over a private socket
   help           Print this message or the help of the given subcommand(s)
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --wallet-dir <WALLET_DIR>
-          [env: BINANCE_BAW_DIR=]
+          Legacy single-wallet directory (compatibility; with --instance-id-file) [env: BINANCE_BAW_DIR=]
       --instance-id <INSTANCE_ID>
           [env: BINANCE_INSTANCE_ID=] [default: ""]
       --instance-id-file <PATH>
@@ -51,5 +49,7 @@ Options:
   -V, --version
           Print version
 
-Named multi-wallet daemon: baw-rs vaults --help (does not require --wallet-dir).
+Named wallets: baw-rs --wallet alice wallet status (needs `baw-rs wallets serve`).
+Wallet lifecycle: baw-rs wallets --help (never requires --wallet).
+Legacy single wallet: --wallet-dir plus --instance-id-file.
 ```

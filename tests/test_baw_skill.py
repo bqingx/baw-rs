@@ -60,12 +60,27 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(leaves, manifest["leaves"])
         self.assertEqual(len(leaves), manifest["leafCount"])
         self.assertEqual(version, manifest["version"])
-        for family in ("vaults", "openfour", "fast", "prediction", "defi", "tracker", "signal"):
+        for family in ("wallets", "task", "openfour", "approvals", "sign-message"):
             self.assertIn(family, manifest["families"])
+        # `vaults` is a hidden alias of `wallets`, so it is not a family in help.
+        self.assertNotIn("vaults", manifest["families"])
+        for family in ("fast", "prediction", "defi", "tracker", "signal", "leaderboard"):
+            self.assertNotIn(family, manifest["families"])
         comparison = json.loads((SKILL / "references/official-comparison.json").read_text())
-        self.assertEqual(comparison["missing"], [])
         self.assertEqual(len(leaves), comparison["ours"])
-        self.assertEqual(comparison["officialCount"] + len(comparison["extras"]), len(leaves))
+        self.assertEqual(
+            comparison["officialCount"] + len(comparison["extras"]),
+            len(leaves) + len(comparison["missing"]),
+        )
+        # The trim removed these official families on purpose; they must be reported as missing.
+        for family in ("defi", "prediction", "tracker", "signal", "leaderboard",
+                       "limit-order", "x402-payment"):
+            self.assertTrue(
+                any(leaf.split()[0] == family for leaf in comparison["missing"]), family
+            )
+            self.assertFalse(
+                any(leaf.split()[0] == family for leaf in comparison["extras"]), family
+            )
 
     def test_generator_suppresses_sensitive_environment_defaults(self):
         keys = ("BINANCE_INSTANCE_ID", "BINANCE_BAW_DIR")
@@ -82,7 +97,7 @@ class SkillTests(unittest.TestCase):
                 else:
                     os.environ[key] = value
 
-    def test_documented_offline_build_and_encode_agree(self):
+    def test_documented_offline_encode_matches_documented_intent(self):
         intent = {"core": "0x2222222222222222222222222222222222222222",
                   "token": "0x3333333333333333333333333333333333333333",
                   "from": "0x1111111111111111111111111111111111111111",
@@ -90,27 +105,26 @@ class SkillTests(unittest.TestCase):
         env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "LANG") if key in os.environ}
         with tempfile.TemporaryDirectory() as home:
             env["HOME"] = home
-            first = subprocess.run([str(BINARY), "fast", "build"], input=json.dumps(intent),
-                                   env=env, capture_output=True, text=True, timeout=10, check=True)
-            second = subprocess.run([str(BINARY), "openfour", "encode-buy", "--core", intent["core"],
-                                     "--token", intent["token"], "--wallet", intent["from"],
-                                     "--amount-wei", intent["budget"], "--min-out-raw", intent["minAmountOut"]],
-                                    env=env, capture_output=True, text=True, timeout=10, check=True)
-            a, b = json.loads(first.stdout), json.loads(second.stdout)
-            self.assertTrue(a["success"])
-            self.assertEqual(a["data"], b["data"])
-            self.assertEqual(a["data"]["value"], intent["budget"])
+            out = subprocess.run([str(BINARY), "openfour", "encode-buy", "--core", intent["core"],
+                                  "--token", intent["token"], "--wallet", intent["from"],
+                                  "--amount-wei", intent["budget"], "--min-out-raw",
+                                  intent["minAmountOut"]],
+                                 env=env, capture_output=True, text=True, timeout=10, check=True)
+            row = json.loads(out.stdout)
+            self.assertTrue(row["success"])
+            self.assertEqual(row["data"]["value"], intent["budget"])
+            self.assertEqual(row["data"]["from"], intent["from"])
+            self.assertTrue(row["data"]["inputData"].startswith("0x"))
             self.assertEqual(list(Path(home).rglob("session.json")), [])
 
     def test_skill_explains_rust_specific_safety_and_modes(self):
         text = (SKILL / "SKILL.md").read_text()
-        for token in ("--instance-id-file", "--operation-id", "--accept-preview-sha256", "fast serve",
+        for token in ("--instance-id-file", "--operation-id", "--accept-preview-sha256", "serve",
                       "vaults", "openfour encode-buy", "--json", "BROADCASTED", "--acknowledge-token-risk"):
             self.assertIn(token, text)
-        fast = (SKILL / "references/fast-buy.md").read_text()
-        for token in ("allowZeroMinOut", "minAmountOut", "skipPrechecks", "HTTP", "FAILED_OR_UNKNOWN"):
-            self.assertIn(token, fast)
-        self.assertIn("不是百分比滑点", fast)
+        modes = (SKILL / "references/wallet-modes.md").read_text()
+        self.assertIn("--warm", modes)
+        self.assertNotIn("fast serve", modes)
 
 
 if __name__ == "__main__":

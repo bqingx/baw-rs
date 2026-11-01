@@ -2,12 +2,12 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带已确认的钱包选择器；`vaults/openfour/fast` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`wallets/openfour` 各有独立参数入口。
 
 ## `sign-message`
 
 ```text
-Usage: baw-rs --wallet-dir <WALLET_DIR> sign-message [OPTIONS] <COMMAND>
+Usage: baw-rs sign-message [OPTIONS] <COMMAND>
 
 Commands:
   preview  
@@ -17,6 +17,10 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -43,8 +47,12 @@ Usage: baw-rs sign-message preview [OPTIONS] --binanceChainId <BINANCE_CHAIN_ID>
 Options:
       --binanceChainId <BINANCE_CHAIN_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
       --message <MESSAGE>
           
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --signType <SIGN_TYPE>
           
       --json
@@ -73,6 +81,10 @@ Usage: baw-rs sign-message execute [OPTIONS] --requestId <REQUEST_ID>
 Options:
       --requestId <REQUEST_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -99,6 +111,10 @@ Usage: baw-rs sign-message result [OPTIONS] --order-id <ORDER_ID>
 Options:
       --order-id <ORDER_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -125,21 +141,25 @@ Usage: baw-rs sign-message history [OPTIONS]
 Options:
       --binanceChainId <BINANCE_CHAIN_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
       --limit <LIMIT>
           [default: 20]
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --nextToken <NEXT_TOKEN>
-          
-      --json
           
       --startTime <START_TIME>
           
       --endTime <END_TIME>
           
+      --json
+          
+      --sortType <SORT_TYPE>
+          
       --timing
           
       --confirm
-          
-      --sortType <SORT_TYPE>
           
       --operation-id <OPERATION_ID>
           

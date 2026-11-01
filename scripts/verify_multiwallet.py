@@ -40,7 +40,7 @@ def smoke(binary):
     with tempfile.TemporaryDirectory(prefix="baw-multi-", dir=SCRATCH) as temp:
         root = Path(temp)
         registry = root / "registry"
-        common = [str(binary), "vaults", "--registry", str(registry)]
+        common = [str(binary), "--registry", str(registry), "wallets"]
         for name in ("alice", "bob"):
             wallet = root / name
             wallet.mkdir(mode=0o700)
@@ -66,14 +66,14 @@ def smoke(binary):
                 children = Path(f"/proc/{process.pid}/task/{process.pid}/children")
                 if children.exists():
                     assert not children.read_text().strip(), "daemon spawned child processes"
-                command("unknown-wallet", common + ["run", "missing", "--", "wallet", "status"], 1)
+                command("unknown-wallet", common[:3] + ["--wallet", "missing", "wallet", "status"], 1)
                 for name in ("alice", "bob"):
                     # Empty directory -> fail before any HTTP, never silently choose another wallet.
-                    command("empty-" + name, common + ["run", name, "--", "wallet", "status"], 1)
+                    command("empty-" + name, common[:3] + ["--wallet", name, "wallet", "status"], 1)
                     assert not (root / name / "session.json").exists()
-                command("selector-rejected", common + ["run", "alice", "--", "--instance-id=forbidden",
-                        "wallet", "status"], 1)
-                command("stream-rejected", common + ["run", "alice", "--", "tracker", "ws", "--following"], 1)
+                command("selector-rejected", common[:3] + ["--wallet", "alice",
+                        "--instance-id=forbidden", "wallet", "status"], 1)
+                command("stream-rejected", common[:3] + ["--wallet", "alice", "tracker", "ws", "--following"], 1)
                 command("stop", common + ["stop"])
                 rc = process.wait(timeout=10)
                 results.append({"name": "daemon", "argv": common + ["serve"], "exit_code": rc, "expected_exit_code": 0})
@@ -98,7 +98,7 @@ def main():
     command("release-build", ["cargo", "build", "--release"])
     binary = TARGET / "release" / "baw-rs"
     command("release-version", [str(binary), "--version"])
-    command("vaults-help", [str(binary), "vaults", "--help"])
+    command("wallets-help", [str(binary), "wallets", "--help"])
     smoke(binary)
     manifest = {}
     for folder in ("src", "tests", "scripts", "docs"):

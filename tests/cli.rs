@@ -1,7 +1,6 @@
-use baw_rs::cli::{parse_batch_line, Cli, Command, WalletCommand};
+use baw_rs::cli::{Cli, Command, WalletCommand};
 use clap::Parser;
-use std::io::Write;
-use std::process::{Command as Process, Stdio};
+use std::process::Command as Process;
 
 fn binary() -> Process {
     let mut command = Process::new(env!("CARGO_BIN_EXE_baw-rs"));
@@ -42,79 +41,6 @@ fn executable_errors_are_single_sanitized_json_without_session_access() {
         assert!(row["error"]["message"].is_string());
         assert!(!text.contains("secret-argument"));
     }
-}
-
-fn synthetic_wallet() -> tempfile::TempDir {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let content = r#"{"clientId":"01234567-89ab-4cde-8fab-0123456789ab","sessionId":"AAECAwQFBgcICQoLDA0OD5bjeqbdyeBoraR8XA6uMlE0+39LF7Kj+vOLW2/aVI4LHlNiZ6em1Q=="}"#;
-    std::fs::write(dir.path().join("session.json"), content).unwrap();
-    std::fs::set_permissions(
-        dir.path().join("session.json"),
-        std::fs::Permissions::from_mode(0o600),
-    )
-    .unwrap();
-    dir
-}
-
-#[test]
-fn executable_batch_rejects_invalid_input_without_writing_synthetic_wallet() {
-    let dir = synthetic_wallet();
-    let before = std::fs::read(dir.path().join("session.json")).unwrap();
-    let mut child = binary()
-        .arg("--wallet-dir")
-        .arg(dir.path())
-        .args([
-            "--instance-id",
-            "synthetic-baw-test-instance",
-            "--timing",
-            "batch",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(b"[\"batch\"]\n[\"wallet\",\"gas-price\"]\n[\"--wallet-dir=/other\",\"wallet\",\"status\"]\n").unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(!output.status.success());
-    let rows: Vec<serde_json::Value> = String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert_eq!(rows.len(), 3);
-    assert!(rows.iter().all(|row| row["success"] == false));
-    assert_eq!(String::from_utf8(output.stderr).unwrap().lines().count(), 3);
-    assert_eq!(
-        before,
-        std::fs::read(dir.path().join("session.json")).unwrap()
-    );
-}
-
-#[test]
-fn executable_batch_exits_cleanly_on_broken_pipe() {
-    let dir = synthetic_wallet();
-    let mut child = binary()
-        .arg("--wallet-dir")
-        .arg(dir.path())
-        .args(["--instance-id", "synthetic-baw-test-instance", "batch"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    drop(child.stdout.take());
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"[\"batch\"]\n")
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -160,22 +86,63 @@ fn explicit_wallet_selection_and_read_only_allowlist() {
     .is_err());
 }
 
+/// The trimmed build must not keep the removed families reachable by accident.
 #[test]
-fn batch_rejects_overrides_nested_batch_and_unbounded_inputs() {
-    assert!(parse_batch_line(r#"["wallet","status"]"#).is_ok());
-    assert!(parse_batch_line(r#"["wallet","balance"]"#).is_ok());
-    assert!(parse_batch_line(r#"["wallet","balance","--raw"]"#).is_ok());
-    for input in [
-        r#"["batch"]"#,
-        r#"["--wallet-dir","/other","wallet","status"]"#,
-        r#"["wallet","status","--instance-id=x"]"#,
-        r#"["wallet","status","--json"]"#,
-        r#"["wallet","gas-price"]"#,
-        "{}",
-        "[1]",
-        "null",
+fn removed_command_families_are_not_parsed() {
+    for family in [
+        "prediction",
+        "defi",
+        "x402-payment",
+        "tracker",
+        "signal",
+        "leaderboard",
+        "limit-order",
+        "fast",
+        "batch",
     ] {
-        assert!(parse_batch_line(input).is_err(), "accepted {input}");
+        assert!(
+            Cli::try_parse_from([
+                "baw-rs",
+                "--wallet-dir",
+                "/synthetic",
+                "--instance-id",
+                "x",
+                family
+            ])
+            .is_err(),
+            "removed family still parses: {family}"
+        );
     }
-    assert!(parse_batch_line(&" ".repeat(65537)).is_err());
+}
+
+/// The flattened CLI: the wallet is a global flag, management is wallet-free, and the
+/// pre-flattening `vaults` namespace still parses.
+#[test]
+fn flattened_wallet_flag_and_management_namespace() {
+    let out = binary().args(["wallet", "status"]).output().unwrap();
+    assert!(!out.status.success());
+    let row: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(row["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("--wallet <NAME>"));
+    for namespace in ["wallets", "vaults"] {
+        let out = binary()
+            .args([
+                "--registry",
+                "/synthetic-absent-registry",
+                namespace,
+                "list",
+            ])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{namespace} list should fail");
+        let row: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let message = row["error"]["message"].as_str().unwrap();
+        assert!(message.contains("does not exist"), "{namespace}: {message}");
+        assert!(
+            !message.contains("--wallet <NAME>"),
+            "{namespace} management must not demand a wallet: {message}"
+        );
+    }
 }

@@ -20,13 +20,13 @@ sign-message execute 同样需要 accept-preview-sha256；不要照搬官方缺�
 value 是原生币最小单位整数（wei），不能把0.1当0.1 BNB；requestId 是服务器返回的不透明串，原样保留。
 摘要是本工具的本地绑定，不是链上交易哈希。
 
-## run 与 fire
+## 策略执行与 fire
 
-- contract-call run：同进程 preview→策略文件检查→execute。策略字段必须查当前帮助/源码，不能编造。
-- contract-call fire：明确授权的自动 preview→execute，无中途人工复核/策略白名单；仍需 confirm + 唯一 ID。
+- contract-call fire --policy FILE：同进程 preview→策略文件检查→execute。策略字段必须查当前帮助/源码，不能编造。
+- contract-call fire（不带 --policy）：明确授权的自动 preview→execute，无中途人工复核/策略白名单；仍需 confirm + 唯一 ID。
   新构建使用内存 preview 并输出阶段计时，老构建未必支持；先检查帮助与选用二进制。
 - `requireConfirmation:false` 只是后端不需要 App二次确认，不等于用户已经授权交易。
-- 需要极致速度、已获边界明确的策略授权时，优先直接走 fast/fire；不要为计时再额外 preview。
+- 需要低本地开销、已获边界明确的策略授权时，优先走 typed resident 或 `contract-call fire`；不要为计时再额外 preview。
 - --skip-prechecks 只跳过本地设置/地址查询，不关闭后端开发者模式要求，也不是绕过签名权限。
 - 操作日志与 consumed 标记在尝试后阻止重放；网络失败/过期不自动换 ID 重试。
 

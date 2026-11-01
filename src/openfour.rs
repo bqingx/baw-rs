@@ -12,7 +12,7 @@
 //!
 //! Everything here is a read: no credentials, no wallet session, no signing.
 use clap::Subcommand;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -66,7 +66,49 @@ pub enum OpenFourCommand {
     /// Read the curve and build a `buyByBudget` transaction (no session, no signing).
     QuoteBuy(QuoteBuyArgs),
     /// Offline BNB/WBNB budget encoding, options=0; no quote or RPC.
-    EncodeBuy(crate::fast::Buy),
+    EncodeBuy(Buy),
+}
+
+/// Offline `buyByBudget` intent. No quote, no registry discovery and no session.
+#[derive(clap::Args, Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Buy {
+    #[arg(long)]
+    pub core: String,
+    #[arg(long)]
+    pub token: String,
+    #[arg(long = "wallet")]
+    pub from: String,
+    #[arg(long = "amount-wei")]
+    pub budget: String,
+    #[arg(long = "min-out-raw")]
+    #[serde(rename = "minAmountOut")]
+    pub min_amount_out: String,
+    #[arg(long = "allow-zero-min-out")]
+    #[serde(default, rename = "allowZeroMinOut")]
+    pub allow_zero_min_out: bool,
+}
+
+/// Encode the exact `Core.buyByBudget` call for a fixed BNB/WBNB budget.
+pub fn build(a: &Buy) -> Result<Value, String> {
+    for address in [&a.core, &a.token, &a.from] {
+        crate::signing::address("56", address)?;
+        if address[2..].bytes().all(|b| b == b'0') {
+            return Err("zero address is forbidden".into());
+        }
+    }
+    let budget = crate::uint::uint256(&a.budget)?;
+    let min = crate::uint::uint256(&a.min_amount_out)?;
+    if min.bits() == 0 && !a.allow_zero_min_out {
+        return Err("zero minAmountOut requires explicit allowZeroMinOut=true".into());
+    }
+    if budget.bits() == 0 {
+        return Err("budget must be positive".into());
+    }
+    let input = encode_budget(&a.token, &budget, &min)?;
+    Ok(
+        json!({"binanceChainId":"56","from":a.from,"to":a.core,"value":budget.to_str_radix(10),"inputData":input}),
+    )
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -91,7 +133,7 @@ pub struct QuoteBuyArgs {
 /// Entry point used by the dispatcher.
 pub async fn run(command: &OpenFourCommand) -> Result<Value, String> {
     match command {
-        OpenFourCommand::EncodeBuy(a) => crate::fast::build(a),
+        OpenFourCommand::EncodeBuy(a) => build(a),
         OpenFourCommand::QuoteBuy(a) => {
             let amount_wei = parse_units(&a.amount, 18)?;
             quote_buy(&QuoteBuy {
@@ -474,6 +516,69 @@ mod tests {
 
     /// Captured from the reference script on BSC mainnet (0.001 BNB budget buy).
     const REFERENCE_INPUT: &str = "0x995ee6da0000000000000000000000006ff638d7bc89cac3567b99cafeaf13f18c51ffff00000000000000000000000000000000000000000000000000038d7ea4c6800000000000000000000000000000000000000000000000234fb471955f0cd7ab2c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+
+    fn buy() -> Buy {
+        serde_json::from_value(json!({"core":"0x2222222222222222222222222222222222222222","token":"0x3333333333333333333333333333333333333333","from":"0x1111111111111111111111111111111111111111","budget":"1","minAmountOut":"0","allowZeroMinOut":true})).unwrap()
+    }
+
+    #[test]
+    fn zero_minimum_requires_separate_explicit_opt_in() {
+        let mut v = serde_json::to_value(buy()).unwrap();
+        v.as_object_mut().unwrap().remove("allowZeroMinOut");
+        let a: Buy = serde_json::from_value(v.clone()).unwrap();
+        assert!(
+            build(&a).is_err(),
+            "zero minimum must not silently disable price protection"
+        );
+        v["allowZeroMinOut"] = json!(true);
+        assert!(build(&serde_json::from_value(v).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn full_width_boundaries_and_strict_schema() {
+        let max = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+        let mut a = buy();
+        a.budget = max.into();
+        a.min_amount_out = format!("0x{}", "f".repeat(64));
+        let tx = build(&a).unwrap();
+        let data = tx["inputData"].as_str().unwrap();
+        assert_eq!(&data[74..138], "f".repeat(64));
+        assert_eq!(&data[138..202], "f".repeat(64));
+        assert_eq!(&data[202..266], "0".repeat(64));
+        assert_eq!(&data[266..330], format!("{:064x}", 160));
+        assert_eq!(&data[330..394], "0".repeat(64));
+        for bad in [
+            "",
+            "-1",
+            "+1",
+            " 1",
+            "1.0",
+            "1e18",
+            "0x",
+            "0X1",
+            "１２",
+            "115792089237316195423570985008687907853269984665640564039457584007913129639936",
+        ] {
+            a.min_amount_out = bad.into();
+            assert!(build(&a).is_err(), "{bad}");
+        }
+        a = buy();
+        a.budget = "0".into();
+        assert!(build(&a).is_err());
+        for bad in [
+            "0x0000000000000000000000000000000000000000",
+            "0x111",
+            "0xZZ11111111111111111111111111111111111111",
+            " 0x1111111111111111111111111111111111111111",
+        ] {
+            a = buy();
+            a.core = bad.into();
+            assert!(build(&a).is_err());
+        }
+        let mut v = serde_json::to_value(buy()).unwrap();
+        v.as_object_mut().unwrap().remove("minAmountOut");
+        assert!(serde_json::from_value::<Buy>(v).is_err());
+    }
 
     #[test]
     fn encodes_buy_by_budget_exactly_like_the_reference() {

@@ -10,10 +10,6 @@ use std::time::Duration;
 
 const ORIGIN: &str = "https://www.binance.com";
 pub(crate) const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
-/// Bundle: `wss://${n.includes("qa") ? n.replace("www","nbstream") : n.replace("www","web3-stream")}/w3w/stream`
-/// where `n` is the API host. Derived from the client's own origin so tests can point at
-/// a loopback server; the production origin always yields the bundle's URL.
-const STREAM_PATH: &str = "/w3w/stream";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -25,8 +21,20 @@ pub struct HttpTiming {
     /// Entire local HTTP invocation through body decode (including failures); not backend time.
     pub full_roundtrip_ms: Option<f64>,
 }
+#[derive(serde::Serialize)]
+pub(crate) struct HttpTrace {
+    #[serde(skip)]
+    received: std::time::Instant,
+    #[serde(skip)]
+    last_response: Option<std::time::Instant>,
+    first_request_gap_ms: Option<f64>,
+    network_wait_ms: f64,
+    response_to_next_request_ms: Vec<f64>,
+    requests: u64,
+}
 pub struct Client {
     pub(crate) last_http: HttpTiming,
+    trace: Option<HttpTrace>,
     http: reqwest::Client,
     origin: String,
     credentials: Credentials,
@@ -57,6 +65,19 @@ fn check_ttl() -> std::time::Duration {
 }
 
 impl Client {
+    pub(crate) fn begin_trace(&mut self, received: std::time::Instant) {
+        self.trace = Some(HttpTrace {
+            received,
+            last_response: None,
+            first_request_gap_ms: None,
+            network_wait_ms: 0.0,
+            response_to_next_request_ms: Vec::new(),
+            requests: 0,
+        });
+    }
+    pub(crate) fn take_trace(&mut self) -> Option<HttpTrace> {
+        self.trace.take()
+    }
     pub fn new(credentials: Credentials) -> Result<Self, String> {
         Self::build(credentials, ORIGIN)
     }
@@ -89,6 +110,7 @@ impl Client {
             .map_err(|_| "failed to create HTTP client")?;
         Ok(Self {
             last_http: HttpTiming::default(),
+            trace: None,
             http,
             origin: origin.into(),
             credentials,
@@ -168,24 +190,6 @@ impl Client {
 
     pub(crate) fn credentials(&self) -> &Credentials {
         &self.credentials
-    }
-
-    /// WebSocket endpoint for WSP pushes, derived from this client's origin.
-    ///
-    /// Mirrors the installed bundle: `https` → `wss`, `http` → `ws`, and the API host
-    /// `www.binance.com` becomes `web3-stream.binance.com` (`nbstream` on qa hosts).
-    /// Subscription authorisation comes from the pre-subscribe `subKeys`, not from the
-    /// session cookie, so no credentials are placed in the socket URL.
-    pub(crate) fn stream_url(&self) -> Result<String, String> {
-        let url = Url::parse(&self.origin).map_err(|_| "invalid fixed API endpoint")?;
-        let host = url.host_str().ok_or("invalid fixed API endpoint")?;
-        let derived = if host.contains("qa") {
-            host.replace("www", "nbstream")
-        } else {
-            host.replace("www", "web3-stream")
-        };
-        let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
-        Ok(format!("{scheme}://{derived}{STREAM_PATH}"))
     }
 
     /// Only explicit signin may replace an invalidated session with a fresh auth flow.
@@ -364,6 +368,9 @@ impl Client {
         let result = self.request_inner(method, path, body, &mut timing).await;
         timing.full_roundtrip_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
         self.last_http = timing;
+        if let Some(trace) = &mut self.trace {
+            trace.last_response = Some(std::time::Instant::now());
+        }
         result
     }
     async fn request_inner(
@@ -395,7 +402,23 @@ impl Client {
             request = request.json(&body);
         }
         let started = std::time::Instant::now();
+        if let Some(trace) = &mut self.trace {
+            trace
+                .first_request_gap_ms
+                .get_or_insert_with(|| trace.received.elapsed().as_secs_f64() * 1000.0);
+            if let Some(last) = trace.last_response {
+                if trace.response_to_next_request_ms.len() < 32 {
+                    trace
+                        .response_to_next_request_ms
+                        .push(last.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            trace.requests += 1;
+        }
         let response = request.send().await;
+        if let Some(trace) = &mut self.trace {
+            trace.network_wait_ms += started.elapsed().as_secs_f64() * 1000.0;
+        }
         timing.request_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
         let mut response = response.map_err(|error| {
             if error.is_timeout() {
@@ -434,11 +457,15 @@ impl Client {
                 return Err("HTTP response exceeds 4 MiB".into());
             }
             let mut bytes = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| "failed to read HTTP response")?
-            {
+            loop {
+                let waiting = std::time::Instant::now();
+                let chunk = response.chunk().await;
+                if let Some(trace) = &mut self.trace {
+                    trace.network_wait_ms += waiting.elapsed().as_secs_f64() * 1000.0;
+                }
+                let Some(chunk) = chunk.map_err(|_| "failed to read HTTP response")? else {
+                    break;
+                };
                 if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE {
                     return Err("HTTP response exceeds 4 MiB".into());
                 }
@@ -958,50 +985,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn batch_runs_sequentially_rotates_session_and_never_caches_business_results() {
+    async fn consecutive_calls_rotate_session_and_never_cache_business_results() {
         let (base, requests, handle) = mock(vec![
             response(
                 json!({"connectionStatus":"CONNECTED","walletCreateStatus":"CREATED"}),
-                Some("batch-rotated"),
+                Some("rotated"),
             ),
             response(json!({"connectionStatus":"NO"}), None),
         ]);
         let mut client = Client::test_client(credentials(), &base).unwrap();
-        let lines = b"[\"wallet\",\"status\"]\n[\"batch\"]\n{invalid\n[\"wallet\",\"status\"]\n";
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let all_ok = crate::cli::run_batch(
-            &mut client,
-            std::io::Cursor::new(lines),
-            &mut out,
-            &mut err,
-            true,
-        )
-        .await
-        .unwrap();
-        assert!(!all_ok);
-        let rows: Vec<Value> = String::from_utf8(out)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(rows.len(), 4);
         assert_eq!(
-            rows[0],
-            json!({"success":true,"data":{"status":"CONNECTED"}})
+            client.execute(&WalletCommand::Status).await.unwrap(),
+            json!({"status":"CONNECTED"})
         );
-        assert_eq!(rows[1]["success"], false);
-        assert_eq!(rows[2]["success"], false);
         assert_eq!(
-            rows[3],
-            json!({"success":true,"data":{"status":"UNCONNECTED"}})
+            client.execute(&WalletCommand::Status).await.unwrap(),
+            json!({"status":"UNCONNECTED"})
         );
-        assert_eq!(String::from_utf8(err).unwrap().lines().count(), 4);
         requests.recv().unwrap();
-        assert!(requests
-            .recv()
-            .unwrap()
-            .contains("agentSessionId=batch-rotated"));
+        assert!(requests.recv().unwrap().contains("agentSessionId=rotated"));
         handle.join().unwrap();
     }
 
@@ -1029,7 +1031,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn batch_reuses_one_real_tcp_connection() {
+    async fn one_client_reuses_one_real_tcp_connection_across_calls() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let handle = std::thread::spawn(move || {
@@ -1057,17 +1059,14 @@ mod tests {
             }
         });
         let mut client = Client::test_client(credentials(), &base).unwrap();
-        let mut output = Vec::new();
-        assert!(crate::cli::run_batch(
-            &mut client,
-            std::io::Cursor::new(b"[\"wallet\",\"status\"]\n[\"wallet\",\"status\"]\n"),
-            &mut output,
-            &mut Vec::new(),
-            false
-        )
-        .await
-        .unwrap());
-        assert_eq!(String::from_utf8(output).unwrap().lines().count(), 2);
+        assert_eq!(
+            client.execute(&WalletCommand::Status).await.unwrap(),
+            json!({"status":"CONNECTED"})
+        );
+        assert_eq!(
+            client.execute(&WalletCommand::Status).await.unwrap(),
+            json!({"status":"UNCONNECTED"})
+        );
         handle.join().unwrap();
     }
 

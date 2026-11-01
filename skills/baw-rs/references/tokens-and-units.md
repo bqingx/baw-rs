@@ -2,8 +2,8 @@
 
 - 先区分chainId、token合约地址、原生币占位地址与钱包地址；不能因为ticker相同就跨链复用地址。
 - 原生BNB在某些币安报价API用占位地址，不是WBNB合约。Core内盘支付的value是原生BNB的wei。
-- contract-call value / fast budget：原生最小单位整数；EVM常用18位，但非原生token按其decimals。
-- fast minAmountOut：代币最小单位整数；不是数量小数、百分比、美元价格。无报价就没有相对滑点基准。
+- contract-call value / openfour encode-buy budget：原生最小单位整数；EVM常用18位，但非原生token按其decimals。
+- openfour encode-buy 的 --min-out-raw：代币最小单位整数；不是数量小数、百分比、美元价格。无报价就没有相对滑点基准。
 - openfour quote-buy amount：人类可读BNB小数字符串；不要将wei传进去造成巨大预算。
 - market-order fromTokenQty / wallet send amount：按具体帮助与资产约定的人类可读数量，不能自动从value格式推断。
 - 使用整数/Decimal/BigUint，不转JS Number或Python float；显示时四舍五入只影响展示，不修改交易payload。

@@ -205,22 +205,8 @@ impl Policy {
 }
 
 fn normalize_uint(v: &str) -> Result<String, String> {
-    if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
-        if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("value must be unsigned decimal or hex wei".into());
-        }
-        let n = u128::from_str_radix(hex, 16).map_err(|_| "value out of range")?;
-        return Ok(n.to_string());
-    }
-    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
-        return Err("value must be unsigned decimal or hex wei".into());
-    }
-    let trimmed = v.trim_start_matches('0');
-    Ok(if trimmed.is_empty() {
-        "0".to_owned()
-    } else {
-        trimmed.to_owned()
-    })
+    let upper_hex = v.strip_prefix("0X").map(|digits| format!("0x{digits}"));
+    Ok(crate::uint::uint256(upper_hex.as_deref().unwrap_or(v))?.to_str_radix(10))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

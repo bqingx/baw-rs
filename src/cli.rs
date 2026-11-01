@@ -1,10 +1,8 @@
-//! Explicit-wallet command grammar. Batch remains read-only; API origin is fixed.
-use crate::client::Client;
+//! Explicit-wallet command grammar. The API origin is fixed.
 use clap::{Args, Parser, Subcommand};
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
-use std::time::Instant;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 pub fn envelope(result: Result<Value, String>) -> Value {
     match result {
@@ -19,126 +17,26 @@ pub fn emit_json(writer: &mut impl Write, value: &Value) -> io::Result<()> {
     writer.flush()
 }
 
-pub async fn run_batch<R: BufRead, W: Write, E: Write>(
-    client: &mut Client,
-    mut input: R,
-    output: &mut W,
-    errors: &mut E,
-    timing: bool,
-) -> io::Result<bool> {
-    let mut all_ok = true;
-    while let Some(line) = read_bounded_line(&mut input)? {
-        let start = Instant::now();
-        let result = match line.and_then(|line| parse_batch_line(&line)) {
-            Ok(command) => client.execute(&command).await,
-            Err(error) => Err(error),
-        };
-        all_ok &= result.is_ok();
-        emit_json(output, &envelope(result))?;
-        if timing {
-            writeln!(
-                errors,
-                "command_ms={:.3}",
-                start.elapsed().as_secs_f64() * 1000.0
-            )?;
-        }
-    }
-    Ok(all_ok)
-}
-
-// Drain oversized lines without ever allocating their full contents. One line -> one result.
-fn read_bounded_line(input: &mut impl BufRead) -> io::Result<Option<Result<String, String>>> {
-    let mut line = Vec::new();
-    let mut oversized = false;
-    let mut saw_bytes = false;
-    loop {
-        let chunk = input.fill_buf()?;
-        if chunk.is_empty() {
-            if !saw_bytes {
-                return Ok(None);
-            }
-            break;
-        }
-        saw_bytes = true;
-        let end = chunk.iter().position(|b| *b == b'\n');
-        let count = end.unwrap_or(chunk.len());
-        if !oversized {
-            if line.len().saturating_add(count) > MAX_BATCH_LINE {
-                oversized = true;
-                line.clear();
-            } else {
-                line.extend_from_slice(&chunk[..count]);
-            }
-        }
-        input.consume(count + usize::from(end.is_some()));
-        if end.is_some() {
-            break;
-        }
-    }
-    if oversized {
-        return Ok(Some(Err("batch line exceeds 65536 bytes".into())));
-    }
-    if line.last() == Some(&b'\r') {
-        line.pop();
-    }
-    Ok(Some(
-        String::from_utf8(line).map_err(|_| "batch line must be UTF-8".into()),
-    ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bounded_reader_drains_oversized_and_invalid_utf8_lines_then_recovers() {
-        let mut bytes = vec![b'x'; MAX_BATCH_LINE * 4];
-        bytes.extend_from_slice(b"\n\xff\n[\"wallet\",\"status\"]\r\n");
-        let mut reader = std::io::BufReader::with_capacity(17, std::io::Cursor::new(bytes));
-        assert!(read_bounded_line(&mut reader)
-            .unwrap()
-            .unwrap()
-            .unwrap_err()
-            .contains("exceeds"));
-        assert!(read_bounded_line(&mut reader)
-            .unwrap()
-            .unwrap()
-            .unwrap_err()
-            .contains("UTF-8"));
-        let next = read_bounded_line(&mut reader).unwrap().unwrap().unwrap();
-        assert!(matches!(
-            parse_batch_line(&next).unwrap(),
-            WalletCommand::Status
-        ));
-        assert!(read_bounded_line(&mut reader).unwrap().is_none());
-    }
-
-    #[test]
-    fn bounded_reader_processes_final_unterminated_line_and_empty_line() {
-        let mut reader = std::io::Cursor::new(b"\n[\"wallet\",\"status\"]");
-        assert!(
-            parse_batch_line(&read_bounded_line(&mut reader).unwrap().unwrap().unwrap()).is_err()
-        );
-        assert!(matches!(
-            parse_batch_line(&read_bounded_line(&mut reader).unwrap().unwrap().unwrap()).unwrap(),
-            WalletCommand::Status
-        ));
-        assert!(read_bounded_line(&mut reader).unwrap().is_none());
-    }
-}
-
-pub const MAX_BATCH_LINE: usize = 65_536;
-
 #[derive(Parser)]
 #[command(
     name = "baw-rs",
     version,
     about = "Native wallet client with explicit consent and preview-bound signing",
-    after_help = "Named multi-wallet daemon: baw-rs vaults --help (does not require --wallet-dir)."
+    after_help = "Named wallets: baw-rs --wallet alice wallet status (needs `baw-rs wallets serve`).\n\
+                  Wallet lifecycle: baw-rs wallets --help (never requires --wallet).\n\
+                  Legacy single wallet: --wallet-dir plus --instance-id-file."
 )]
 pub struct Cli {
+    /// Name of a registered wallet. Required for every wallet-scoped command unless the
+    /// legacy --wallet-dir pair is given.
+    #[arg(long, global = true, value_name = "NAME", value_parser = nonempty)]
+    pub wallet: Option<String>,
+    /// Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub registry: Option<PathBuf>,
+    /// Legacy single-wallet directory (compatibility; with --instance-id-file).
     #[arg(long, env = "BINANCE_BAW_DIR", value_parser = nonempty_path)]
-    pub wallet_dir: PathBuf,
+    pub wallet_dir: Option<PathBuf>,
     #[arg(long, env = "BINANCE_INSTANCE_ID", default_value = "")]
     pub instance_id: String,
     /// Read the instance identity from a private (0600) file instead of the command line.
@@ -180,6 +78,11 @@ fn nonempty(value: &str) -> Result<String, String> {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Native event task control for the wallet named by --wallet.
+    Task {
+        #[command(subcommand)]
+        command: crate::wallets::TaskAction,
+    },
     Auth {
         #[command(subcommand)]
         command: crate::auth::AuthCommand,
@@ -205,49 +108,71 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::approvals::ApprovalsCommand,
     },
-    /// Limit orders: buy, sell, list, cancel.
-    LimitOrder {
-        #[command(subcommand)]
-        command: crate::limit_order::LimitOrderCommand,
-    },
-    /// Prediction markets: discovery, positions, trading.
-    Prediction {
-        #[command(subcommand)]
-        command: crate::prediction::PredictionCommand,
-    },
-    /// DeFi: protocols, opportunities, positions, deposit/redeem/LP/claim.
-    Defi {
-        #[command(subcommand)]
-        command: crate::defi::DefiCommand,
-    },
-    /// x402 payments: preview an HTTP 402 challenge, then sign an option.
-    X402Payment {
-        #[command(subcommand)]
-        command: crate::x402::X402Command,
-    },
-    /// Wallet tracker: groups, addresses, monitors.
-    Tracker {
-        #[command(subcommand)]
-        command: crate::tracker::TrackerCommand,
-    },
-    /// Custom signal strategies and backtests.
-    Signal {
-        #[command(subcommand)]
-        command: crate::signal::SignalCommand,
-    },
-    /// Leaderboard, address analysis and alpha radar.
-    Leaderboard {
-        #[command(subcommand)]
-        command: crate::leaderboard::LeaderboardCommand,
-    },
     /// Check whether the installed CLI meets a required version.
     CliCheck(crate::selfcheck::CliCheckArgs),
     /// Check whether a skill has a newer version available.
     SkillCheck(crate::selfcheck::SkillCheckArgs),
-    /// Read one JSON argv array per stdin line, retaining the in-memory session.
-    Batch,
+    /// Wallet lifecycle and named resident daemon. Never requires --wallet.
+    #[command(name = "wallets", alias = "vaults")]
+    Wallets(crate::wallets::Wallets),
     /// Resident server: reuse one session and connection pool over a private socket.
     Serve,
+}
+
+impl Cli {
+    /// Wallet directory for the legacy single-wallet path. Only callable after
+    /// `dispatch::require_wallet_scope` accepted the invocation.
+    pub fn wallet_dir_path(&self) -> Result<&Path, String> {
+        self.wallet_dir.as_deref().ok_or_else(|| {
+            "wallet-scoped command requires --wallet <NAME>; legacy callers may pass --wallet-dir with --instance-id or --instance-id-file".to_string()
+        })
+    }
+}
+
+/// Selector flags the resident daemon owns; the named path strips its own and rejects the rest.
+const NAMED_STRIPPED: [&str; 2] = ["--wallet", "--registry"];
+const NAMED_REJECTED: [&str; 4] = [
+    "--wallet-dir",
+    "--instance-id",
+    "--instance-id-file",
+    "--warm",
+];
+
+/// Forwarded argv for `--wallet <NAME> ...`: the caller's command with the named-path
+/// selectors removed, so the daemon parses exactly the business command. `--wallet` and
+/// `--registry` never appear in the result.
+pub fn forward_argv(raw: &[String]) -> Result<Vec<String>, String> {
+    let mut out = Vec::with_capacity(raw.len());
+    let mut skip_next = false;
+    for arg in raw {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let flag = arg.split('=').next().unwrap_or(arg.as_str());
+        if NAMED_REJECTED.contains(&flag) {
+            return Err(format!(
+                "--wallet mode does not accept {flag}; it selects the wallet from the registry and the daemon owns the identity"
+            ));
+        }
+        if NAMED_STRIPPED.contains(&flag) {
+            // Keep `=value` inside the same token; otherwise drop the following value.
+            skip_next = !arg.contains('=');
+            continue;
+        }
+        if arg == "--" {
+            // `--` is accepted as a no-op separator for symmetry with `wallets run NAME --`.
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    if out.is_empty() {
+        return Err(
+            "missing command after --wallet <NAME>; for example `baw-rs --wallet alice wallet status`"
+                .into(),
+        );
+    }
+    Ok(out)
 }
 
 #[derive(Args, Debug)]
@@ -279,48 +204,122 @@ pub enum WalletCommand {
     ResolveDomain(crate::wallet_ops::ResolveDomainArgs),
 }
 
-#[derive(Parser)]
-#[command(
-    name = "batch-command",
-    disable_help_flag = true,
-    disable_version_flag = true
-)]
-struct BatchCommand {
-    #[command(subcommand)]
-    command: Command,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn parse_batch_line(line: &str) -> Result<WalletCommand, String> {
-    if line.len() > MAX_BATCH_LINE {
-        return Err("batch line exceeds 65536 bytes".into());
+    fn forward(args: &[&str]) -> Result<Vec<String>, String> {
+        let raw: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        forward_argv(&raw)
     }
-    let args: Vec<String> =
-        serde_json::from_str(line).map_err(|_| "batch line must be a JSON array of strings")?;
-    if args.iter().any(|arg| {
-        matches!(
-            arg.split('=').next().unwrap_or(""),
-            "--wallet-dir"
-                | "--instance-id"
-                | "--json"
-                | "--timing"
-                | "--help"
-                | "--version"
-                | "--confirm"
-                | "--operation-id"
-                | "--accept-preview-sha256"
-        )
-    }) {
-        return Err("global overrides are forbidden in batch".into());
+
+    #[test]
+    fn named_flag_is_global_and_strips_itself_from_the_forwarded_argv() {
+        assert_eq!(
+            forward(&["--wallet", "alice", "wallet", "status"]).unwrap(),
+            ["wallet", "status"]
+        );
+        // Both flag positions and both `=value` spellings.
+        assert_eq!(
+            forward(&[
+                "--wallet=alice",
+                "--registry",
+                "/r",
+                "wallet",
+                "balance",
+                "--json"
+            ])
+            .unwrap(),
+            ["wallet", "balance", "--json"]
+        );
+        assert_eq!(
+            forward(&[
+                "--confirm",
+                "--wallet",
+                "alice",
+                "--operation-id",
+                "op-1",
+                "auth",
+                "signin"
+            ])
+            .unwrap(),
+            ["--confirm", "--operation-id", "op-1", "auth", "signin"]
+        );
+        // `--` is accepted as a separator, then dropped.
+        assert_eq!(
+            forward(&["--wallet", "alice", "--", "wallet", "status"]).unwrap(),
+            ["wallet", "status"]
+        );
+        for out in [
+            forward(&["--wallet", "alice", "wallet", "status"]).unwrap(),
+            forward(&["--wallet=alice", "wallet", "status"]).unwrap(),
+        ] {
+            assert!(!out.iter().any(|a| a.contains("--wallet")));
+        }
     }
-    let parsed =
-        BatchCommand::try_parse_from(std::iter::once("batch-command".to_owned()).chain(args))
-            .map_err(|_| "unsupported or malformed read-only batch command")?;
-    match parsed.command {
-        Command::Wallet {
-            command: WalletCommand::Send(_),
-        } => Err("mutations are forbidden in batch".into()),
-        Command::Wallet { command } => Ok(command),
-        Command::Batch => Err("nested batch is forbidden".into()),
-        _ => Err("only read-only wallet commands are supported in batch".into()),
+
+    #[test]
+    fn named_mode_rejects_legacy_selectors_and_empty_argv() {
+        for rejected in [
+            "--wallet-dir",
+            "--instance-id",
+            "--instance-id-file",
+            "--warm",
+        ] {
+            let error =
+                forward(&["--wallet", "alice", rejected, "x", "wallet", "status"]).unwrap_err();
+            assert!(error.contains(rejected), "{error}");
+        }
+        assert!(forward(&["--wallet", "alice"])
+            .unwrap_err()
+            .contains("missing command"));
+        assert!(forward(&["--wallet=alice", "--"]).is_err());
+    }
+
+    #[test]
+    fn wallet_flag_and_legacy_pair_parse_exactly_once() {
+        let named =
+            Cli::try_parse_from(["baw-rs", "--wallet", "alice", "wallet", "status"]).unwrap();
+        assert_eq!(named.wallet.as_deref(), Some("alice"));
+        assert!(named.wallet_dir.is_none());
+        assert!(named.registry.is_none());
+        assert!(matches!(named.command, Command::Wallet { .. }));
+
+        let management =
+            Cli::try_parse_from(["baw-rs", "--registry", "/r", "wallets", "list"]).unwrap();
+        assert!(management.wallet.is_none());
+        assert!(management.wallet_dir.is_none());
+        assert_eq!(management.registry.as_deref(), Some(Path::new("/r")));
+        assert!(matches!(management.command, Command::Wallets(_)));
+
+        // `vaults` remains a hidden alias of `wallets`.
+        let alias = Cli::try_parse_from(["baw-rs", "vaults", "list"]).unwrap();
+        assert!(matches!(alias.command, Command::Wallets(_)));
+
+        let legacy = Cli::try_parse_from([
+            "baw-rs",
+            "--wallet-dir",
+            "/synthetic",
+            "--instance-id",
+            "synthetic",
+            "wallet",
+            "status",
+        ])
+        .unwrap();
+        assert!(legacy.wallet.is_none());
+        assert_eq!(legacy.wallet_dir.as_deref(), Some(Path::new("/synthetic")));
+
+        // Task control is wallet-scoped at the top level.
+        let task = Cli::try_parse_from([
+            "baw-rs",
+            "--wallet",
+            "alice",
+            "task",
+            "arm",
+            "sell-1",
+            "--confirm",
+        ])
+        .unwrap();
+        assert!(matches!(task.command, Command::Task { .. }));
     }
 }

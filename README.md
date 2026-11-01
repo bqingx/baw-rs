@@ -23,26 +23,34 @@
 
 | | |
 |---|---|
-| **命令面** | 官方 1.12.0 的 102 条叶子命令语法全覆盖，另有 `batch`（只读批处理）、`serve`（常驻）、`contract-call run`（策略约束执行）、`contract-call fire`（预览+执行合成一次调用）、`openfour quote-buy`（four.meme 内盘报价）、`openfour encode-buy`（离线精确编码）、`fast serve`（单钱包持久 JSONL 买入） |
-| **交易** | 写操作要求显式授权；普通外部签名支持「预览 → 人工确认 → 执行」。`fire` / `fast serve` 是显式授权的自动预览→执行，没有中途人工审核 |
+| **命令面** | 45 条叶子命令：`auth`、`wallet`、`market-order`、`contract-call`、`sign-message`、`approvals`、`task`（事件任务）、`wallets`（钱包生命周期与控制面）、`cli-check`、`skill-check`、`serve`，另有独立入口 `openfour`（`quote-buy` / `encode-buy`） |
+| **交易** | 写操作要求显式授权；普通外部签名支持「预览 → 人工确认 → 执行」。`contract-call fire` 是显式授权的自动预览→执行，没有中途人工审核 |
 | **查询** | 余额、历史、额度、gas、授权（approvals）、Agent ID、会话到期时间 |
-| **DeFi** | 协议与机会发现、持仓、存取、LP、领取 |
-| **预测市场** | 类别、市场、持仓、下单、赎回 |
-| **其他** | 地址跟踪（含 WebSocket 实时推送）、自定义信号与回测、排行榜、x402 支付 |
-| **多钱包** | 一个后台进程管理多个具名钱包，各自独立登录，可并行 |
-| **常驻后台** | 复用会话和 HTTP Client；`fast serve` 可通过同一管道直接编码→预览→执行，不需每笔启动 CLI。性能以同次调用计时与可复现测试为准，不宣称生产延迟下限 |
+| **多钱包** | 一个后台进程管理多个具名钱包，各自独立登录，可并行；钱包名是全局参数 `--wallet <NAME>` |
+| **常驻后台** | 复用会话和 HTTP Client：单钱包 `serve`（配 `--warm` 走本地 socket），多钱包 `wallets serve`，每笔不必重启进程。性能以同次调用计时与可复现测试为准，不宣称生产延迟下限 |
 
-## 单钱包低开销买入
+## 离线编码与低本地开销路径
 
-见 [单钱包 fast 路径说明](docs/FAST_BUY_ZH.md)：离线 `openfour encode-buy`，常驻 `fast serve`，
-精确 uint256、必填绝对最低数量、内存 preview、持久去重和同次调用分阶段计时。
+离线 `openfour encode-buy` 不联网、不需要会话：精确 uint256、必填绝对最低数量。
 只支持已知 BNB/WBNB options=0 模板；无 quote **不是百分比滑点保护**。
-日常多钱包继续使用 `vaults`。测试仅使用合成数据与本地 mock，不包含任何真实下单。
+日常多钱包继续使用 `--wallet <NAME>`。测试仅使用合成数据与本地 mock，不包含任何真实下单。
+
+通用 EVM 固定调用的低本地开销路径见 [typed resident 执行器](docs/resident-executor.md)：
+同用户持久 socket 的 `prepare → trigger / disarm`，固定参数、钱包预约、提交前截止时间和持久防重。
+这不是新增 CLI 子命令；代码接口不等于已部署或实盘验收。
+基准命令与指标口径见该文，本文不提供未经实测的加速数字。
+
+自动触发合约调用见 [原生任务](docs/native-event-tasks.md)：常驻订阅 WS 已出块日志，或显式选择
+**待处理交易**，按发送方/目标/方法/静态参数匹配后执行任意已授权调用。
+**必须填写有效时长 `valid_for_ms`，从启用起算，无固定五分钟上限**；不再让用户填写截止日期。
+支持固定调用、受控字段绑定和触发后实时路由，无外部监听脚本依赖。旧日志版已实跑，
+本次新增时长/pending能力尚未切换运行服务；测试结果、节点可见性与断线限制见该文。
 
 ## Agent Skill
 
 面向 AI Agent 的中文版操作技能：[`skills/baw-rs/SKILL.md`](skills/baw-rs/SKILL.md)。
-覆盖官方 baw 1.12.0 的 102 条叶子命令，并记录 Rust 新增的多钱包、离线编码与 fast 路径。
+覆盖本仓库实际提供的 45 条叶子命令（已裁剪官方 baw 中的 DeFi、预测、跟踪、信号、榜单、限价与 x402 面），
+并记录 Rust 新增的多钱包、原生事件任务与离线编码路径。
 附实际 `--help` 参数快照、登录/交易/签名/对账流程和仅离线的校验工具，不携带任何登录态。
 
 ```sh
@@ -109,34 +117,47 @@ $B $W --confirm --operation-id send-1 --json wallet send \
 
 ## 多钱包：一个后台管全部
 
-`vaults` 是独立入口（不需要 `--wallet-dir`）：一个进程管理多个命名钱包，**不**为每个钱包起子进程，
+钱包名是**全局参数**：每条钱包作用域命令都写 `--wallet <NAME>`；管理子命令 `wallets`
+（增删、列表、状态、常驻）**不需要**钱包名。一个进程管理多个命名钱包，**不**为每个钱包起子进程，
 也**不**调用官方 CLI。
 
 ```sh
 B=./target/release/baw-rs
-R=/abs/accounts/registry
+R=$HOME/wallets/registry
+export BAW_RS_REGISTRY=$R      # 也可每次传全局 --registry
 
-# 注册两个已存在的独立钱包目录（各自 0700，各自口令文件 0600）
-$B vaults --registry $R register alice --wallet-dir /abs/accounts/alice --instance-id-file /abs/accounts/alice.key
-$B vaults --registry $R register bob   --wallet-dir /abs/accounts/bob   --instance-id-file /abs/accounts/bob.key
-
-$B vaults --registry $R list        # 注册表
-$B vaults --registry $R serve       # 前台常驻，一个进程服务全部钱包
+# 生命周期：add 创建 0700 目录 + 0600 identity 并注册；已有目录用 register
+$B wallets add alice
+$B wallets add bob
+$B wallets list
+$B wallets serve               # 前台常驻，一个进程服务全部钱包
 
 # 另开终端：每次必须写明钱包名，没有默认值、不回退
-$B vaults --registry $R run alice -- wallet status
-$B vaults --registry $R run bob   -- wallet address
-$B vaults --registry $R status
-$B vaults --registry $R stop
+$B --wallet alice wallet status
+$B --wallet bob wallet address
+$B --wallet alice auth signin --confirm --operation-id alice-signin-001
+$B --wallet alice task arm sell-1 --confirm      # 原生事件任务
+$B wallets status
+$B wallets remove bob                            # 默认保留数据；--delete-data --confirm 才删
+$B wallets stop
 ```
 
 设计要点：
 
 - **不同钱包并行**：各自独立的客户端、连接池、会话与队列；一个钱包等网络不阻塞另一个。
-- **同一钱包串行**：命令按 FIFO 执行，写操作另有互斥锁与意图日志，避免并发覆盖。
-- **绝不串号**：名字写错、未登录、目录被替换都直接报错；命令里夹带 `--wallet-dir` / `--instance-id`
-  等选择器会被拒绝。
-- **注册表是启动快照**：运行期间不能修改，新增钱包需 `stop` → `register` → `serve`。
+- **同一钱包串行**：普通命令按钱包锁串行，写操作另有互斥锁与意图日志；typed 任务预约期间，
+  同钱包普通命令（包括查询）拒绝 BUSY，typed 锁争用不排队。持久连接内响应逐请求串行。
+- **绝不串号**：名字写错、未登录、目录被替换都直接报错；`--wallet` 模式里夹带
+  `--wallet-dir` / `--instance-id` / `--warm` 会被拒绝。
+- **注册表是启动快照**：运行期间不能修改，新增钱包需 `wallets stop` → `wallets add` → `wallets serve`。
+- **registry 位置**：全局 `--registry`，否则 `$BAW_RS_REGISTRY`，否则 `$HOME/wallets/registry`。
+
+兼容旧形式（语义不变，现役脚本可直接继续跑）：
+
+- 传统单钱包：`--wallet-dir ... --instance-id-file ...`，`serve` 与 `--warm` 仍走
+  `<wallet-dir>/.baw-rs.sock`。
+- 旧命名形式：`vaults --registry R run NAME -- <命令>`；`vaults` 是 `wallets` 的隐藏别名，
+  `register`、`run`、`task NAME` 仍解析。
 
 完整语义见 [docs/MULTIWALLET.md](docs/MULTIWALLET.md)。
 
@@ -161,7 +182,8 @@ $B vaults --registry $R stop
 
 ## 与官方 CLI 的关系
 
-- 命令名、参数名、默认值按官方 `--help` 逐条对齐，对照表见 [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md)。
+- 保留命令面的命令名、参数名、默认值按官方 `--help` 逐条对齐；官方完整帮助快照见
+  [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md)（其中已裁剪的命令仅作官方语法参考，本仓库不再实现）。
 - 两者互不干扰：官方用 `BINANCE_BAW_DIR` 与系统钥匙串，本项目只读自己指定目录下的文件。
 - 有意的行为差异（例如余额默认做 RWA 规范化、`settings` 返回无损结构、交易结果区分 SUBMITTED 与 FILLED）
   记录在 [CHANGELOG.md](CHANGELOG.md) 与各 `docs/*.md`。
@@ -170,10 +192,10 @@ $B vaults --registry $R stop
 ## 项目状态
 
 - **版本**：0.3.0，主要测试平台 Linux
-- **测试**：326 项通过、0 失败；另有 1 项本地基准默认忽略，已单独通过（离线：回环 HTTP fixture + 合成会话文件）
+- **测试**：220 项通过、0 失败；另有 1 项本地基准默认忽略（离线：回环 HTTP fixture + 合成会话文件）
 - **实盘验证**：完成过一次真实二维码登录，并通过 `status` / `address` / `balance` / `left-quota` /
   `settings` 只读查询（会话有效期实测 48 小时）
-- **未验证**：转账、swap、限价单、DeFi 存取、x402 签名、contract-call 执行等**任何真实资金动作**。
+- **未验证**：转账、swap、approvals 撤销、contract-call / sign-message 执行等**任何真实资金动作**。
   这些路径目前只有离线测试覆盖；首次在真实账户上执行前请自行小额试跑
 - **可复现**：`sh scripts/verify.sh` 重跑 fmt / clippy / test / release 并重写 `verification/` 下的
   日志与源码清单；多钱包专项证据在 `verification/multiwallet/`
@@ -184,11 +206,12 @@ $B vaults --registry $R stop
 |---|---|
 | [docs/AUTH.md](docs/AUTH.md) | 登录、验证、登出与本地存储 |
 | [docs/SESSION-LIFECYCLE.md](docs/SESSION-LIFECYCLE.md) | 登录态从生成到失效的全过程 |
-| [docs/TRADE.md](docs/TRADE.md) | swap、限价单与风控检查 |
+| [docs/TRADE.md](docs/TRADE.md) | swap 与风控检查 |
 | [docs/SIGNING.md](docs/SIGNING.md) | 合约调用与消息签名的预览/执行绑定 |
 | [docs/PORTFOLIO.md](docs/PORTFOLIO.md) | 余额、历史与 RWA 规范化 |
 | [docs/MULTIWALLET.md](docs/MULTIWALLET.md) | 多钱包后台、IPC 与并发语义 |
-| [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md) | 与官方 CLI 的命令面逐条对照 |
+| [docs/resident-executor.md](docs/resident-executor.md) | 通用 EVM typed resident 协议、预约/期限/防重、离线基准 |
+| [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md) | 官方 `baw` 帮助快照（含已裁剪命令的原始语法，仅作参考） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更与已知缺口 |
 
 ## 许可与免责

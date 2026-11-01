@@ -63,7 +63,7 @@ session.json 0644             -> session file must be private (0600)
 
 `src/main.rs` picks one of two paths per command: `auth *` → `auth::bootstrap`
 (may create), everything else → `session::load(dir, instance)` (never creates).
-The native resident engine (`serve` and named `vaults`) retains independent clients,
+The native resident engine (`serve` and `--wallet NAME`) retains independent clients,
 but rechecks each selected wallet's disk session before every command. Auth commands
 rebuild from disk and discard transient client cookies after success or failure;
 subsequent commands reload committed auth state. See [MULTIWALLET.md](MULTIWALLET.md).

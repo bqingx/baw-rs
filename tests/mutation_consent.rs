@@ -32,7 +32,7 @@ fn unauthorized_writes_fail_before_wallet_access() {
         ],
         vec!["contract-call", "execute", "--requestId", "synthetic"],
         vec!["sign-message", "execute", "--requestId", "synthetic"],
-        // Parity families: one representative writing leaf each.
+        // Remaining parity family with a writing leaf.
         vec![
             "approvals",
             "revoke",
@@ -45,68 +45,6 @@ fn unauthorized_writes_fail_before_wallet_access() {
             "--type",
             "approve",
         ],
-        vec![
-            "limit-order",
-            "buy",
-            "--triggerPrice",
-            "1",
-            "--fromTokenQty",
-            "1",
-            "--fromToken",
-            "0x0000000000000000000000000000000000000001",
-            "--toToken",
-            "0x0000000000000000000000000000000000000002",
-            "--binanceChainId",
-            "56",
-        ],
-        vec![
-            "prediction",
-            "trade",
-            "place-order",
-            "--quoteId",
-            "synthetic",
-            "--slippageBps",
-            "50",
-        ],
-        vec![
-            "defi",
-            "deposit",
-            "--investmentId",
-            "1",
-            "--tokenAddress",
-            "0x0000000000000000000000000000000000000001",
-            "--amount",
-            "1",
-        ],
-        vec![
-            "x402-payment",
-            "sign",
-            "--paymentId",
-            "synthetic",
-            "--selectedIndex",
-            "0",
-        ],
-        vec![
-            "tracker",
-            "address",
-            "add",
-            "--chain-id",
-            "56",
-            "--address",
-            "0x0000000000000000000000000000000000000001",
-        ],
-        vec![
-            "signal",
-            "strategy",
-            "delete",
-            "--chain-id",
-            "56",
-            "--type",
-            "1",
-            "--job-id",
-            "1",
-        ],
-        vec!["leaderboard", "preset", "save", "--config", "[]"],
         vec![
             "wallet",
             "speed-up",
@@ -142,12 +80,8 @@ fn unauthorized_writes_fail_before_wallet_access() {
     }
 }
 #[test]
-fn blanket_batch_and_unreviewed_signing_fail_before_session_access() {
+fn unreviewed_signing_fails_before_session_access() {
     for (args, expected) in [
-        (
-            vec!["--confirm", "--operation-id", "blanket", "batch"],
-            "batch cannot authorize",
-        ),
         (
             vec![
                 "--confirm",
@@ -191,15 +125,5 @@ fn blanket_batch_and_unreviewed_signing_fail_before_session_access() {
             row["error"]["message"].as_str().unwrap().contains(expected),
             "{row}"
         );
-    }
-}
-#[test]
-fn batch_rejects_mutations_and_consent_overrides() {
-    for line in [
-        r#"["auth","signin"]"#,
-        r#"["contract-call","execute","--requestId","x"]"#,
-        r#"["wallet","status","--confirm","--operation-id","x"]"#,
-    ] {
-        assert!(baw_rs::cli::parse_batch_line(line).is_err());
     }
 }

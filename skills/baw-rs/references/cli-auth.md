@@ -2,12 +2,12 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带已确认的钱包选择器；`vaults/openfour/fast` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`wallets/openfour` 各有独立参数入口。
 
 ## `auth`
 
 ```text
-Usage: baw-rs --wallet-dir <WALLET_DIR> auth [OPTIONS] <COMMAND>
+Usage: baw-rs auth [OPTIONS] <COMMAND>
 
 Commands:
   signin   
@@ -16,6 +16,10 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -40,6 +44,10 @@ Options:
 Usage: baw-rs auth signin [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -66,6 +74,10 @@ Usage: baw-rs auth verify [OPTIONS] --qrCodeId <QR_CODE_ID>
 Options:
       --qrCodeId <QR_CODE_ID>
           
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing
@@ -90,6 +102,10 @@ Options:
 Usage: baw-rs auth signout [OPTIONS]
 
 Options:
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
           
       --timing

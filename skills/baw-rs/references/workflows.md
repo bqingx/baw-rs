@@ -1,7 +1,9 @@
 # 日常操作流程
 
 参数由 `cli-*.md` 的实际帮助给出；先选好 `$B/$WALLET_DIR/$IDENTITY_FILE`，经 `terminal` 调用。
-以下用单钱包形式；具名钱包改用 `vaults --registry ... run NAME -- <业务参数>`，不混用选择器。
+以下用单钱包形式；具名钱包改用 `--wallet NAME <业务参数>`（如
+`--registry R --wallet alice wallet status`）。旧形式 `vaults --registry R run NAME -- <业务参数>` 仍可用，
+但不要与新形式混写选择器。
 
 ## 登录与退出
 
@@ -33,39 +35,20 @@
 - 地址簿/日限额/App确认可能由后端要求；报错照实说明，不绕开审批。
 - `speed-up` / `cancel` 是新的资金/链上操作，需要另行确认；cancel 不是删除本地记录，也不保证抢先成功。
 
-## 市价与限价
+## 市价交易
 
 1. 明确链、完整 fromToken/toToken、支付数量；按 [tokens-and-units.md](tokens-and-units.md) 检查单位。
 2. 先读 quote。准备阶段做代币审计；审计不可用就说明并等用户选择，不能把风险确认旗标当作审计通过。
 3. 明确 slippage（帮助默认 auto，非固定20%）、MEV、gasLevel；不要擅自增大滑点或关闭保护。
 4. 获授权后 swap；非本地已审计目标可能要求 `--acknowledge-token-risk`。明确说明该标志仅风险接受。
 5. `market-order list` 按返回的 orderId 查状态，直到终态或任务超时；超时报告待确认，不默认成功/重新买。
-6. 限价使用 buy/sell，参数 `--triggerPrice` 等严格按帮助。提交订单成功不是已成交；取消也是写操作。
-7. 用户带价格/时间/状态条件时保留条件；不支持该条件就停，不将限价失败兜底为立刻 swap。
-8. RWA 同名不同提供方/后缀不能混淆；先确认资产身份再查询，休市/不支持等以真实接口为准。
+6. 用户带价格/时间/状态条件时保留条件；本构建没有限价单入口，不支持该条件就停，不把无法满足的条件兜底为立刻 swap。
+7. RWA 同名不同提供方/后缀不能混淆；先确认资产身份再查询，休市/不支持等以真实接口为准。
 
-## 授权、DeFi、预测与 x402
+## 授权与撤销
 
 **授权**：list/detail 先展示链、token、spender、额度；revoke 前确认。卖出合约代币可能先需要 approve，
 只给已复核 spender 和需要的额度，不因一次卖出默认无限授权。approve receipt 成功后重新报价/预览卖单。
 
-**DeFi**：protocol-list/info → investment-list/info → position，明确资产、协议、锁定期、收益展示口径。
-deposit/redeem/lp-add/lp-remove/claim 先按帮助获取所需标识和交易预览，确认授权/资金流再执行。
-`defi preview` 不等于资金动作成功；APY、TVL 不构成收益保证。未知参数/返回字段不编造。
-
-**预测**：category/market/order-book → position/portfolio → trade quote → 获授权后 place-order。
-市场 outcome/tokenId 等必须来自实际查询，不根据队名推测。cancel/redeem 都需确认，orderId 不等于成交。
-position 的 pnl/settled-history 与持仓数量分别报告，不拿总资金变化伪装成某单收益。
-
-**x402**：读取实际 HTTP402 challenge → preview → 展示网络、币、收款、最大付款、时效 → 明确同意后 sign。
-输出的支付签名可能可直接付款，按敏感数据处理；签一个 option 只消费一次，失败后不盲目换 ID 重签。
-不知道响应结构就查帮助/实际只读结果，不伪造支付成功。
-
-## 跟踪、信号与榜单
-
-- tracker 查询和 ws 用于币安跟踪服务，不是 OpenFour 链上监控的替代品；订阅数据不是交易授权。
-- group/address 的增删改关注、signal 策略/回测调度、leaderboard 保存配置等可能改动后端状态，
-  不能因为“不是转账”就当作只读；按 preflight 的要求给明确授权和唯一 operation-id。
-- 长连接按用户范围指定地址/链/时长；不要让持续推送命令经不支持流式的多钱包 IPC 执行。
-- signal 回测可能消耗 credits；先查询/说明成本，别为测试无限 schedule/retry。
-- 榜单排名/分析值只是数据，不能据此自动交易。模糊报错只报告观察，不推断“币安锁死并发”。
+需要链上事件驱动的自动动作时，用 `--wallet NAME task`（见 [native-event-tasks.md](native-event-tasks.md)）：
+事件命中后执行的是已授权的固定合约调用，不是“看榜单自动交易”。
