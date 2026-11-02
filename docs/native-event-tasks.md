@@ -123,6 +123,23 @@ baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输
 - 可选的 `multiply`/`divide`/`add` 只接受整数，结果必须 `<= max`，否则整笔拒绝。
 - **不支持的动态形式会明确报错**，不会退化成“随便透传”。
 
+### `route`：装载时解析与空转演练
+
+`route` 动作里两个由提供方决定的字段可以省略，`task load` 时自动补：
+
+- `expected_spender`：OKX `/approve-transaction` 返回的 `dexContractAddress`（按链固定，全平台共用）
+- `allowed_router_addresses`：当前报价的 `tx.to`
+
+补完之后立刻用这次报价把整条构造+校验走一遍，**拿到的 calldata 直接丢弃**，只把结果写进装载响应的
+`prepared` 字段（`to`、`selector`、`gasLimit`、`gas_quoted`/`gas_preview_cap`、`reported_minimum_output`、
+`discovered`）。一次装载最多两次签字请求 + 一次报价，都发生在装载时，不占触发路径。
+
+这么做的理由是一次性任务没有第二次机会：装不出来的东西，触发时同样装不出来，早失败远好过占用钱包两小时后
+在真实事件上失败。装载时报错形如 `route discovery failed: …` 或 `route dry run failed: …`，会带 OKX 的
+`code`/`msg`。
+
+不想在装载时联网（例如用 mock origin 跑测试），在 route 配置里写 `"prepare_at_load": false`。
+
 ### `route`：事件后实时取路由
 
 路由构造器把报价 gas 当**预览上限**使用：默认按 `max(报价×3, 报价+500000)`（`gas_buffer_percent=300`、

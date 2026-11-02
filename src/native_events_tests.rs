@@ -300,6 +300,25 @@ async fn route_action_is_resolved_only_after_the_event_and_never_before() {
     let e = c.build(&event()).await.unwrap_err();
     assert!(e.contains("deadline"), "unexpected route failure: {e}");
 }
+#[tokio::test]
+async fn route_load_without_targets_explains_the_missing_discovery_input() {
+    // A `route` task may omit `expected_spender` / `allowed_router_addresses`: they are resolved
+    // from OKX at load. When the credential file is unusable, discovery must name the cause instead
+    // of falling through to "invalid route config (strict fields/types)", which hides it.
+    let dir = tempfile::tempdir().unwrap();
+    let key = synthetic_route_key(dir.path());
+    let mut v = config();
+    let mut r = route_config(&key);
+    let fields = r.as_object_mut().unwrap();
+    fields.remove("expected_spender");
+    fields.remove("allowed_router_addresses");
+    fields["credential_file"] = json!("/nonexistent/okx.json");
+    v["action"] = json!({"kind":"route","config":r});
+    let e = prepare_route(&mut v).await.unwrap_err();
+    assert!(e.starts_with("route discovery failed"), "{e}");
+    assert!(e.contains("credential"), "{e}");
+}
+
 #[test]
 fn native_route_rejects_user_absolute_deadline_even_with_relative_duration() {
     let dir = tempfile::tempdir().unwrap();

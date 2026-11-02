@@ -1314,6 +1314,9 @@ async fn native_route_load_delay_and_build_timeout_keep_first_arm_budget_and_zer
     c["ws_url"] = json!(source.ws_url);
     c["valid_for_ms"] = json!(5000);
     let mut r = route_config(&key);
+    // This test drives load to completion and builds against a mock origin; the load-time dry run
+    // would otherwise make a real OKX call.
+    r["prepare_at_load"] = json!(false);
     r["timeout_ms"] = json!(10000);
     r["max_wait_ms"] = json!(10000);
     c["action"] = json!({"kind":"route", "config":r});

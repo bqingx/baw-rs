@@ -264,7 +264,10 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 - 三个字段的稳定性不同，别混为一谈（2026-11-02 实测 5 个交易对）：
   - **稳定**：`tx.to`（这次 5 个对全是 `0x5994814f…2dec`）、`expected_spender`（OKX `/approve-transaction` 返回的 `dexContractAddress`，全平台按链固定，可现取）
   - **不稳定**：选择器（同一条 U→BNB 数小时内从 `0xf2c42696` 换成 `0x9871efa4` 又换回来）、gas 估算（310k→1,013k→836k）、中间 hop 与池子地址（每单都可能变）
-- 因此：只钉死 router 白名单，**不要**给选择器白名单、也不要把中间 hop 写进白名单。装载前现取一次 `/swap` 确认 `to` 与 gas 量级即可。
+- 因此：只钉死 router 白名单，**不要**给选择器白名单、也不要把中间 hop 写进白名单。
+- `expected_spender` 与 `allowed_router_addresses` **可以整段省略**：`task load` 会用一次 `/approve-transaction` 和一次 `/swap` 自动补上，并把结果写进装载响应的 `prepared.discovered`。手工填的值只在你想强制某个地址时才写。
+- 装载同时做一次**空转演练**：用当前报价把构造+校验整条走完，calldata 丢弃，只把 `to`/`selector`/`gasLimit`/`gas_quoted`/`gas_preview_cap`/`reported_minimum_output` 写进 `prepared.dryRun`。装载就报 `route dry run failed: …` 说明触发时必然失败——先修再 arm，别占着钱包等两小时后才知道。
+- 测试或 mock origin 场景用 `"prepare_at_load": false` 关掉装载时联网。
 - `retry_policy` 是 `never`：预览被后端拒一次（错误原文形如 `Binance API code 351805`，属模拟阶段拒绝）整个一次性任务就落 FAILED 并释放钱包，不会有第二次尝试。长时间监听前先单独 `contract-call preview` 跑通，再 `arm`。
 - 命中失败后先看 `detail.submission_attempted`：`false` 表示一笔交易都没发、余额不会动，可以直接换新任务 ID 重来；只有 `true` 才需要按未知结果去链上对账。
 

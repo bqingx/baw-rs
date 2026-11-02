@@ -604,6 +604,73 @@ fn native_route_builder(
     fields.insert("deadline_unix_ms".into(), json!(deadline));
     crate::route_action::RouteActionBuilder::new(&internal)
 }
+
+/// Load-time preparation for a `route` action.
+///
+/// Two things are resolved here instead of at trigger time:
+///
+/// 1. The provider-chosen targets (`expected_spender`, `allowed_router_addresses`) when the task
+///    leaves them out, so a task never carries a value copied from an earlier session.
+/// 2. A full construction against a live quote, whose call is discarded. A task that cannot build
+///    now cannot build at trigger time either — and a one-shot task has no second chance, so this
+///    has to fail in `load`, where the operator is still looking.
+pub(super) async fn prepare_route(config: &mut Value) -> Result<Option<Value>, String> {
+    let route = match config.get_mut("action") {
+        Some(a) if a.get("kind").and_then(Value::as_str) == Some("route") => a.get_mut("config"),
+        _ => None,
+    };
+    let Some(route) = route else {
+        return Ok(None);
+    };
+    if route.get("prepare_at_load").and_then(Value::as_bool) == Some(false) {
+        return Ok(None);
+    }
+    let absent = |v: &Value, k: &str| match v.get(k) {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.trim().is_empty(),
+        Some(Value::Array(a)) => a.is_empty(),
+        _ => false,
+    };
+    let mut discovered = serde_json::Map::new();
+    let want_spender = absent(route, "expected_spender");
+    let want_router = absent(route, "allowed_router_addresses");
+    if want_spender || want_router {
+        let (spender, router) = crate::route_action::discover_targets(route)
+            .await
+            .map_err(|e| format!("route discovery failed: {e}"))?;
+        if want_spender {
+            let s = spender.ok_or("OKX approve-transaction returned no dexContractAddress")?;
+            route["expected_spender"] = json!(s);
+            discovered.insert("expected_spender".into(), json!(s));
+        }
+        if want_router {
+            let r = router.ok_or("OKX swap returned no tx.to")?;
+            route["allowed_router_addresses"] = json!([r]);
+            discovered.insert("allowed_router_addresses".into(), json!(r));
+        }
+    }
+    let deadline = clock()?.saturating_add(60_000);
+    let builder = native_route_builder(route, deadline)?;
+    let call = builder
+        .build(&json!({"phase":"load"}))
+        .await
+        .map_err(|e| format!("route dry run failed: {e}"))?;
+    let selector = call
+        .get("input_data")
+        .and_then(Value::as_str)
+        .and_then(|s| s.get(..10))
+        .map(str::to_owned);
+    Ok(Some(json!({
+        "dryRun": {
+            "to": call.get("to").cloned().unwrap_or(Value::Null),
+            "selector": selector,
+            "gasLimit": call.get("gas_limit").cloned().unwrap_or(Value::Null),
+            "validation": call.get("route_validation").cloned().unwrap_or(Value::Null),
+        },
+        "discovered": discovered,
+    })))
+}
+
 fn validate_read(to: &str, input: &str) -> Result<(), String> {
     if !hex(to, 20) || !data(input) || input.len() < 10 {
         Err("invalid fixed read target/calldata".into())
@@ -1049,6 +1116,8 @@ impl Wallet {
                 Ok(b.status())
             }
             Control::Load { config } => {
+                let mut config = config.clone();
+                let prepared = prepare_route(&mut config).await?;
                 let config = Config::parse(config)?;
                 let mut b = self.native.lock().await;
                 b.restore(&self.entry.dir)?;
@@ -1080,7 +1149,11 @@ impl Wallet {
                     detail: Value::Null,
                 });
                 b.persist(&self.entry.dir)?;
-                Ok(b.status())
+                let mut status = b.status();
+                if let Some(p) = prepared {
+                    status["prepared"] = p;
+                }
+                Ok(status)
             }
             Control::Status {} => {
                 let mut b = self.native.lock().await;

@@ -34,6 +34,10 @@ struct Config {
     /// sit within 0.2% of the execution requirement, which turns a normal
     /// quote into a `351805` simulation rejection. A cap has no fee impact: the
     /// backend still charges actual gas used.
+    /// Load-time discovery + dry run. On by default; a caller that drives `task load` against a
+    /// mock origin (tests) turns it off explicitly rather than relying on a cfg flag.
+    #[serde(default = "default_true")]
+    prepare_at_load: bool,
     /// OKX documents `priceImpactPercent` as a value the caller must check before submitting and
     /// block on when it is too high. Route tasks therefore carry the same threshold.
     #[serde(default = "default_max_price_impact_percent")]
@@ -56,6 +60,9 @@ struct Config {
     require_runtime_preview: bool,
 }
 
+fn default_true() -> bool {
+    true
+}
 fn default_max_price_impact_percent() -> String {
     "2".into()
 }
@@ -709,6 +716,130 @@ impl RouteActionBuilder {
         })
     }
 }
+
+/// Fields the provider decides per deployment rather than per task. Resolved once at `task load`
+/// so a task never carries a value copied from an earlier session.
+///
+/// `expected_spender` is the shared OKX approve target (`dexContractAddress`, identical for every
+/// token on a chain, measured 2026-11-02) and the router is whatever `tx.to` the current quote
+/// returns. Both are discoverable with one signed GET each; neither is stable enough to hard-code
+/// across tasks, and getting them wrong costs a whole one-shot task.
+pub async fn discover_targets(c: &Value) -> Result<(Option<String>, Option<String>), String> {
+    let field = |k: &str| c.get(k).and_then(Value::as_str).map(str::to_owned);
+    let chain = field("chain_index").ok_or("route discovery needs chain_index")?;
+    let from = field("from_token_address").ok_or("route discovery needs from_token_address")?;
+    let to = field("to_token_address").ok_or("route discovery needs to_token_address")?;
+    let amount = field("amount").ok_or("route discovery needs amount")?;
+    let slippage = field("slippage_percent").unwrap_or_else(|| "1".into());
+    let wallet = field("user_wallet_address").ok_or("route discovery needs user_wallet_address")?;
+    let credential_file =
+        field("credential_file").ok_or("route discovery needs credential_file")?;
+    let timeout_ms = c.get("timeout_ms").and_then(Value::as_u64).unwrap_or(3000);
+    let connect_ms = c
+        .get("connect_timeout_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(1000);
+    let credentials = load_credentials(&credential_file)?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(Duration::from_millis(connect_ms))
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|_| "cannot construct route discovery client")?;
+    let spender = {
+        let q = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("chainIndex", &chain)
+            .append_pair("tokenContractAddress", &from)
+            .append_pair("approveAmount", &amount)
+            .finish();
+        let v = signed_get(
+            &client,
+            &credentials,
+            "/api/v6/dex/aggregator/approve-transaction",
+            &q,
+        )
+        .await?;
+        v.pointer("/data/0/dexContractAddress")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let router = {
+        let q = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("chainIndex", &chain)
+            .append_pair("fromTokenAddress", &from)
+            .append_pair("toTokenAddress", &to)
+            .append_pair("amount", &amount)
+            .append_pair("slippagePercent", &slippage)
+            .append_pair("userWalletAddress", &wallet)
+            .append_pair("swapMode", "exactIn")
+            .append_pair("autoSlippage", "false")
+            .finish();
+        let v = signed_get(&client, &credentials, "/api/v6/dex/aggregator/swap", &q).await?;
+        v.pointer("/data/0/tx/to")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    Ok((spender, router))
+}
+
+/// Single signed OKX GET. Used by load-time discovery only: the trigger path keeps its own
+/// rate-limit and retry accounting in `fetch`.
+async fn signed_get(
+    client: &reqwest::Client,
+    credentials: &Credentials,
+    path: &str,
+    query: &str,
+) -> Result<Value, String> {
+    use base64::Engine;
+    let target = format!("{path}?{query}");
+    let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let signature = base64::engine::general_purpose::STANDARD.encode(hmac_sha256(
+        credentials.secret_key.as_bytes(),
+        format!("{timestamp}GET{target}").as_bytes(),
+    ));
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (name, value) in [
+        ("ok-access-key", credentials.api_key.as_str()),
+        ("ok-access-passphrase", credentials.passphrase.as_str()),
+        ("ok-access-timestamp", timestamp.as_str()),
+        ("ok-access-sign", signature.as_str()),
+    ] {
+        let mut v = reqwest::header::HeaderValue::from_str(value)
+            .map_err(|_| "invalid authentication field")?;
+        v.set_sensitive(true);
+        headers.insert(name, v);
+    }
+    let response = client
+        .get(format!("https://web3.okx.com{target}"))
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|_| "OKX discovery request failed (details redacted)")?;
+    if !response.status().is_success() {
+        return Err(format!("OKX discovery HTTP {}", response.status().as_u16()));
+    }
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|_| "OKX discovery response is not JSON")?;
+    if body.get("code").and_then(Value::as_str) != Some("0") {
+        // The provider's code/message is diagnostic metadata, never a credential: surfacing it is
+        // the difference between "rejected" and knowing which parameter was wrong.
+        return Err(format!(
+            "OKX discovery rejected the request: code={} msg={}",
+            body.get("code").and_then(Value::as_str).unwrap_or("?"),
+            body.get("msg")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .chars()
+                .take(160)
+                .collect::<String>()
+        ));
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 #[path = "route_action_tests.rs"]
 mod tests;
