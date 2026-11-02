@@ -153,6 +153,9 @@ baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输
 - **策略是按这笔 approve 现推的**：任务的 `policy` 钉的是 swap 的 router，直接套用会拒掉对代币合约的 approve。
   所以补授权用一份派生策略——同链、同 `allowRisks`、`to` = 输入代币、`valueWei` = 0、`selector` = `0x095ea7b3`，
   `allowAuthorityChanges` 置 true（这正是打开 `auto_approve` 所授权的那个变更）。真正把 swap 策略放宽仍然不允许。
+- **gas 上限会带过去**：派生策略里的 `maxGasLimit` 取任务 policy 的 `maxGasLimit`，没有就取 route 的 `max_gas_limit`，
+  再夹到 **[100k, 500k]**（approve 实测约 60k，上限不是目标）。`fire` 同时显式带同一个上限——`Policy` 在钉了上限时
+  拒绝 `gas_limit: None`，不传就会把自己拒掉。
 - **失败分两类**：确定没被受理的（预览被拒等）记 `submission_attempted:false`；提交超时或已广播但额度未落地记
   `submission_attempted:true` 并带 `txHash`/`orderId`，提示先对账再重新 arm——不会把可能在链上存在的交易说成"没发"。
 - **revert 会被识别**：轮询回执，`status 0x0` 直接报 revert，而不是干等额度。

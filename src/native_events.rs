@@ -653,6 +653,13 @@ pub(super) async fn auto_approve_if_needed(
     let wallet = field("user_wallet_address").map_err(|e| fail(e, false, Value::Null))?;
     let spender = field("expected_spender").map_err(|e| fail(e, false, Value::Null))?;
     let amount = field("amount").map_err(|e| fail(e, false, Value::Null))?;
+    if token.trim().is_empty() {
+        return Err(fail(
+            "auto_approve: from_token_address is empty".into(),
+            false,
+            Value::Null,
+        ));
+    }
     if spends_native(&token) {
         return Ok(None);
     }
@@ -664,9 +671,8 @@ pub(super) async fn auto_approve_if_needed(
     }
     let data = crate::approvals::approve_calldata(&spender, &amount, false)
         .map_err(|e| fail(e, false, Value::Null))?;
-    // The task policy pins the *swap* target, so it cannot be applied to the approve intent. Check
-    // the approve shape here instead, and still pass the policy down so its preview-level gates
-    // (risks, authority changes) apply: an approve is exactly an authority change.
+    // The approve's calldata is built here, so check it against the intent before anything else
+    // (the derived policy below pins the same fields, but a mismatch should fail without a preview).
     if !approve_intent_matches(&data, &spender, &amount) {
         return Err(fail(
             "auto_approve calldata does not match token/spender/amount".into(),
@@ -678,6 +684,24 @@ pub(super) async fn auto_approve_if_needed(
     // Derive one that describes exactly this call instead: same chain and risk allowances, pinned to
     // the token with selector + zero value, and `allowAuthorityChanges` set because the approval is
     // the authority change the operator asked for by enabling `auto_approve`.
+    // The gas ceiling must survive into the derived policy: an approve is the one call whose gas the
+    // backend reads before we do, and dropping the operator's cap would let a hostile preview run
+    // unbounded. `Policy` requires an explicit limit when a cap is set, so the same number is passed
+    // to the fire itself.
+    let gas_cap = config
+        .policy
+        .get("maxGasLimit")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            route
+                .get("max_gas_limit")
+                .and_then(Value::as_u64)
+                .filter(|v| *v > 0)
+        })
+        .unwrap_or(5_000_000);
+    // An ERC-20 approve needs ~60k gas; the task's ceiling is a bound, not a target. Cap the approve
+    // at 500k (still far above any observed requirement) and never below 100k.
+    let gas_cap = gas_cap.clamp(100_000, 500_000);
     let approve_policy = crate::policy::Policy::parse(
         &approve_policy_json(
             &config.chain_id,
@@ -687,6 +711,7 @@ pub(super) async fn auto_approve_if_needed(
                 .get("allowRisks")
                 .cloned()
                 .unwrap_or(json!([])),
+            gas_cap,
         )
         .to_string(),
     )
@@ -708,26 +733,53 @@ pub(super) async fn auto_approve_if_needed(
     // concurrent CLI write must not sign from this wallet while an approval is in flight. The
     // journal file is created O_EXCL and kept forever, so the id carries a unique suffix: a task
     // re-run (or a wiped state file) must not collide with a previous attempt and wedge permanently.
-    let op_id = format!(
-        "autoauth-{}-{}",
-        short_id(&config.task_id),
-        clock().unwrap_or(0) % 1_000_000
-    );
-    let mut guard = crate::execution::OperationGuard::begin(
-        &agent.entry.dir,
-        &op_id,
-        "native.auto-approve",
-        &json!({"chain":config.chain_id,"to":token,"spender":spender,"amount":amount,"task":config.task_id}),
-        &creds.client_id,
-    )
-    .map_err(|e| fail(e, false, Value::Null))?;
+    // The journal is created O_EXCL and kept forever, so the id must not repeat for the same task:
+    // a nanosecond stamp plus a retry on collision, rather than a value that repeats every window.
+    let intent = json!({"chain":config.chain_id,"to":token,"spender":spender,"amount":amount,"task":config.task_id});
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let mut begin = None;
+    let mut op_id = String::new();
+    for attempt in 0..3u32 {
+        op_id = format!(
+            "autoauth-{}-{}",
+            short_id(&config.task_id),
+            nanos.wrapping_add(attempt.wrapping_mul(7919))
+        );
+        match crate::execution::OperationGuard::begin(
+            &agent.entry.dir,
+            &op_id,
+            "native.auto-approve",
+            &intent,
+            &creds.client_id,
+        ) {
+            Ok(g) => {
+                begin = Some(g);
+                break;
+            }
+            Err(e) => {
+                if attempt == 2 {
+                    return Err(fail(e, false, Value::Null));
+                }
+            }
+        }
+    }
+    let mut guard = begin.ok_or_else(|| {
+        fail(
+            "auto_approve: cannot create operation journal".into(),
+            false,
+            Value::Null,
+        )
+    })?;
     let fire = crate::signing::ContractFire {
         binance_chain_id: config.chain_id.clone(),
         from: wallet.clone(),
         to: token.clone(),
         value: Some("0".into()),
         input_data: Some(data),
-        gas_limit: None,
+        gas_limit: Some(gas_cap),
         policy: None,
     };
     let mut timing = crate::signing::FireTimings::default();
@@ -757,9 +809,15 @@ pub(super) async fn auto_approve_if_needed(
     let was_sent = sent.load(std::sync::atomic::Ordering::SeqCst);
     let result = match submitted {
         Err(_) => {
-            let e = "UNKNOWN; auto_approve submit timed out; the approve may still land, reconcile before arming again";
+            // Report what actually happened: a timeout inside preview/prechecks sent nothing, while a
+            // timeout after the POST may leave a transaction behind.
+            let e = if sent.load(std::sync::atomic::Ordering::SeqCst) {
+                "UNKNOWN; auto_approve submit timed out after the execute POST; the approve may still land, reconcile before arming again"
+            } else {
+                "auto_approve submit timed out before the execute POST; nothing was sent"
+            };
             let _ = guard.finish(&Err(e.to_string()));
-            return Err(fail(e.into(), true, json!({"stage":"submit-timeout"})));
+            return Err(fail(e.into(), was_sent, json!({"stage":"submit-timeout"})));
         }
         Ok(Err(e)) => {
             // A post-send transport/back-end error still means the request may have been accepted;
@@ -803,25 +861,47 @@ pub(super) async fn auto_approve_if_needed(
                         ));
                     }
                     if status == "0x1" {
-                        seen = read_allowance(config, &token, &wallet, &spender)
-                            .await
-                            .map_err(|e| fail(e, true, evidence.clone()))?;
-                        if !approval_needed(&seen, &amount)
-                            .map_err(|e| fail(e, true, evidence.clone()))?
-                        {
-                            confirmed = true;
-                            break;
+                        // Every return from here on must close the journal: an unfinished entry stays
+                        // SUBMITTING forever and loses the txHash the operator needs to reconcile.
+                        seen = match read_allowance(config, &token, &wallet, &spender).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let _ = guard.finish(&Err(e.clone()));
+                                return Err(fail(e, true, evidence.clone()));
+                            }
+                        };
+                        match approval_needed(&seen, &amount) {
+                            Ok(false) => {
+                                confirmed = true;
+                                break;
+                            }
+                            Ok(true) => {}
+                            Err(e) => {
+                                let _ = guard.finish(&Err(e.clone()));
+                                return Err(fail(e, true, evidence.clone()));
+                            }
                         }
                     }
                 }
             }
         } else {
-            seen = read_allowance(config, &token, &wallet, &spender)
-                .await
-                .map_err(|e| fail(e, true, evidence.clone()))?;
-            if !approval_needed(&seen, &amount).map_err(|e| fail(e, true, evidence.clone()))? {
-                confirmed = true;
-                break;
+            seen = match read_allowance(config, &token, &wallet, &spender).await {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = guard.finish(&Err(e.clone()));
+                    return Err(fail(e, true, evidence.clone()));
+                }
+            };
+            match approval_needed(&seen, &amount) {
+                Ok(false) => {
+                    confirmed = true;
+                    break;
+                }
+                Ok(true) => {}
+                Err(e) => {
+                    let _ = guard.finish(&Err(e.clone()));
+                    return Err(fail(e, true, evidence.clone()));
+                }
             }
         }
     }
@@ -851,13 +931,19 @@ pub(super) async fn auto_approve_if_needed(
 /// Policy describing exactly the approve this task is allowed to send: pinned to the token, the
 /// ERC-20 `approve` selector and zero value, with the operator's risk allowances carried over and
 /// `allowAuthorityChanges` set because that change is the point of enabling `auto_approve`.
-pub(super) fn approve_policy_json(chain: &str, token: &str, allow_risks: Value) -> Value {
+pub(super) fn approve_policy_json(
+    chain: &str,
+    token: &str,
+    allow_risks: Value,
+    gas_cap: u64,
+) -> Value {
     json!({
         "version": 1,
         "chainId": chain,
         "to": token,
         "valueWei": "0",
         "selector": "0x095ea7b3",
+        "maxGasLimit": gas_cap,
         "allowRisks": allow_risks,
         "allowAuthorityChanges": true,
     })
@@ -1426,11 +1512,10 @@ impl Wallet {
                     Err(e) => {
                         // The approval may already be mined: report it as submitted evidence rather
                         // than claiming nothing was sent.
+                        // The approval may already be mined; the swap itself was never submitted, so
+                        // the task-level flag stays false and the approve evidence rides separately.
                         let mut detail = json!({"error":e,"submission_attempted":false});
                         if let Some(a) = &auto_approve {
-                            if a.get("txHash").and_then(Value::as_str).is_some() {
-                                detail["submission_attempted"] = json!(true);
-                            }
                             detail["auto_approve"] = a.clone();
                         }
                         self.native_finish(&config.task_id, "FAILED", detail)
@@ -1456,14 +1541,13 @@ impl Wallet {
                 {
                     if r.status == "PREPARING" {
                         r.status = if expired { "FAILED" } else { "DISARMED" }.into();
+                        // `submission_attempted` describes the task's own fire, not the approval:
+                        // keep it false and carry the approve evidence separately.
                         let mut detail = json!({
                             "error":"native task disarmed/expired during readiness",
                             "submission_attempted":false
                         });
                         if let Some(a) = &auto_approve {
-                            if a.get("txHash").and_then(Value::as_str).is_some() {
-                                detail["submission_attempted"] = json!(true);
-                            }
                             detail["auto_approve"] = a.clone();
                         }
                         r.detail = detail;

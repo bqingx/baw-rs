@@ -348,23 +348,32 @@ fn auto_approve_policy_pins_the_token_and_allows_only_this_authority_change() {
     // The swap policy pins the router, so the approve needs its own intent. It must accept the
     // approve on the token and refuse anything else (wrong target, non-zero value, other selector).
     let token = "0xcE24439F2D9C6a2289F741120FE202248B666666";
-    let policy =
-        crate::policy::Policy::parse(&approve_policy_json("56", token, json!([])).to_string())
-            .unwrap();
+    let policy = crate::policy::Policy::parse(
+        &approve_policy_json("56", token, json!([]), 200_000).to_string(),
+    )
+    .unwrap();
     let calldata = crate::approvals::approve_calldata(
         "0x2c34A2Fb1d0b4f55de51E1d0bDEfaDDce6b7cDD6",
         "1000000000000000000",
         false,
     )
     .unwrap();
+    // A pinned cap requires the fire to carry an explicit limit, which is exactly what the approve
+    // path passes (gas_limit = the same cap).
     let ok = crate::policy::Intent {
         chain_id: "56",
         to: token,
         value: "0",
         input_data: Some(&calldata),
-        gas_limit: None,
+        gas_limit: Some(200_000),
     };
     assert!(policy.check_intent(&ok).is_ok(), "approve intent refused");
+    // No limit at all is refused when a ceiling is pinned.
+    let no_limit = crate::policy::Intent {
+        gas_limit: None,
+        ..ok
+    };
+    assert!(policy.check_intent(&no_limit).is_err());
     let other_target = crate::policy::Intent {
         to: "0x5994814f2c4040b863a0125a45de152a8c2a4dec",
         ..ok
@@ -377,6 +386,17 @@ fn auto_approve_policy_pins_the_token_and_allows_only_this_authority_change() {
         ..ok
     };
     assert!(policy.check_intent(&other_selector).is_err());
+    // The operator's gas ceiling must survive into the approve policy.
+    let over_gas = crate::policy::Intent {
+        gas_limit: Some(2_000_000),
+        ..ok
+    };
+    assert!(policy.check_intent(&over_gas).is_err());
+    let at_cap = crate::policy::Intent {
+        gas_limit: Some(200_000),
+        ..ok
+    };
+    assert!(policy.check_intent(&at_cap).is_ok());
 }
 
 #[tokio::test]
