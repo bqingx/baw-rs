@@ -50,6 +50,11 @@ pub(super) struct Config {
     /// cannot be decoded here. Accepting that is an explicit, per-task decision, never a default.
     #[serde(default)]
     pub allow_unbound_route_calldata: bool,
+    /// A `route` action spends an ERC-20 input token through the aggregator spender, and a swap
+    /// without allowance fails the backend simulation with a generic code that says nothing about
+    /// the cause. The check is therefore added automatically at load; set this to opt out.
+    #[serde(default)]
+    pub skip_allowance_check: bool,
 }
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -133,6 +138,48 @@ pub(super) struct ReadCheck {
     word_index: usize,
     min: String,
 }
+/// The ERC-20 allowance of the task wallet for the aggregator spender, as an `arm`-time read.
+///
+/// Measured 2026-11-02: with allowance 0 and balance 20.39 U, OKX still answered the swap with an
+/// empty `signatureData`, so nothing in the response tells us an approval is missing — the only
+/// reliable signal is the chain. Without this check the task arms happily and dies at the first
+/// real event on a generic simulation error.
+fn allowance_check(route: &Value) -> Result<Option<ReadCheck>, String> {
+    let field = |key: &str| {
+        route
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("route config missing {key}"))
+    };
+    let token = field("from_token_address")?;
+    let wallet = field("user_wallet_address")?;
+    let spender = field("expected_spender")?;
+    let amount = field("amount")?;
+    // Spending native coin needs no allowance; the sentinel is all-zero or 0xEeee…
+    let native = token.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
+        || token.trim_start_matches("0x").chars().all(|c| c == '0');
+    if native {
+        return Ok(None);
+    }
+    if !amount.chars().all(|c| c.is_ascii_digit()) || amount.trim_start_matches('0').is_empty() {
+        return Err("route amount must be a positive integer for the allowance check".into());
+    }
+    let pad = |a: &str| {
+        let body = a.trim_start_matches("0x");
+        if body.len() != 40 {
+            return Err("allowance check address shape invalid".to_string());
+        }
+        Ok(format!("{body:0>64}"))
+    };
+    let input_data = format!("0xdd62ed3e{}{}", pad(wallet)?, pad(spender)?);
+    Ok(Some(ReadCheck {
+        to: token.to_string(),
+        input_data,
+        word_index: 0,
+        min: amount.to_string(),
+    }))
+}
+
 fn clock() -> Result<u64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -211,7 +258,7 @@ impl Config {
         ]
         .iter()
         .all(|key| v.get(key).is_some());
-        let c: Self = serde_json::from_value(v)
+        let mut c: Self = serde_json::from_value(v)
             .map_err(|e| format!("unsupported native task configuration: {e}"))?;
         crate::execution::require_consent(true, Some(&c.task_id))?;
         validate_duration(c.valid_for_ms)?;
@@ -350,6 +397,28 @@ impl Config {
             Action::Route { config } => {
                 native_route_builder(config, 1)?; // Validation-only sentinel, never an authorization.
             }
+        }
+        if !c.skip_allowance_check {
+            if let Action::Route { config } = &c.action {
+                if let Some(check) = allowance_check(config)? {
+                    c.prerequisites.push(check);
+                }
+            }
+        }
+        // The policy ceiling is authoritative and the route's own cap may only tighten it. A route
+        // builder cannot see the policy, so a buffered preview cap built under a wider
+        // `max_gas_limit` would otherwise be refused at fire time — after the event was consumed.
+        if let Action::Route { config } = &mut c.action {
+            if let Some(pol) = crate::policy::Policy::parse(&c.policy.to_string())
+                .ok()
+                .and_then(|p| p.max_gas_limit)
+            {
+                let route_cap = config.get("max_gas_limit").and_then(Value::as_u64);
+                if route_cap.is_some_and(|cap| cap > pol) {
+                    config["max_gas_limit"] = json!(pol);
+                }
+            }
+            native_route_builder(config, 1)?;
         }
         if c.prerequisites.len() > 16 {
             return Err("too many prerequisites".into());
@@ -910,7 +979,14 @@ impl Wallet {
                             check.word_index,
                         )?)?;
                         if n < crate::uint::uint256(&check.min)? {
-                            return Err("native prerequisite below minimum".into());
+                            // Name what was read: a bare "below minimum" cost a real event last time.
+                            return Err(format!(
+                                "native prerequisite below minimum: {} returned {}, need {} (word {})",
+                                check.to,
+                                n.to_str_radix(10),
+                                check.min,
+                                check.word_index
+                            ));
                         }
                     }
                     Ok::<_, String>(binding)
@@ -1184,7 +1260,15 @@ async fn backfill(
         return Ok(());
     }
     if end - *cursor >= c.max_backfill_blocks {
-        return Err("backfill gap exceeds authorized bound; not READY".into());
+        // A loaded task that waited before `arm` is the common cause; say how far behind it is so the
+        // fix (reload with a fresh start_block) is obvious instead of looking like a node fault.
+        return Err(format!(
+            "backfill gap exceeds authorized bound; not READY (cursor {}, head {}, gap {}, limit {}; reload the task with a fresh start_block)",
+            *cursor,
+            end,
+            end - *cursor,
+            c.max_backfill_blocks
+        ));
     }
     while *cursor <= end {
         let last = cursor.saturating_add(c.chunk_blocks - 1).min(end);
@@ -1208,6 +1292,26 @@ async fn backfill(
     }
     Ok(())
 }
+/// Record a frame that is not this subscription's notification. The engine ignores such frames
+/// (a stray provider message must not end a long-lived listener) but the operator needs the
+/// evidence, so the first frames per connection go to stderr, which the resident service appends
+/// to `serve.log`. Bounded in both count and length.
+fn note_ws_frame(c: &Config, kind: &str, text: &str, seen: &mut usize) {
+    *seen += 1;
+    if *seen > 20 {
+        return;
+    }
+    let snippet: String = text
+        .chars()
+        .take(400)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect();
+    eprintln!(
+        "native task {}: ignored {} WS frame #{}: {}",
+        c.task_id, kind, seen, snippet
+    );
+}
+
 async fn source(
     wallet: Arc<Wallet>,
     c: Config,
@@ -1221,9 +1325,16 @@ async fn source(
         }
         let filter = c.filter.as_ref().ok_or("log filter required")?;
         let mut cursor=c.start_block;let mut seen=RecentIds::default();let mut reconnects=0u32;
+        // Per-connection budget for recorded non-subscription frames: chatty providers must not
+        // turn into unbounded log growth, and no frame may silently terminate the task.
+        let mut odd_frames:usize;
+        // Protocol faults (unparseable frame, non-text frame, foreign-frame flood) carry their own
+        // budget so a peer that breaks every connection cannot turn the listener into a hot loop.
+        let mut faults=0u32;
         loop {
             if *cancel.borrow(){return Ok(());}
             wallet.native_invalid.store(true,std::sync::atomic::Ordering::SeqCst);
+            odd_frames=0;
             health.send_replace(Health::Connecting);
             let connected=tokio::time::timeout(Duration::from_secs(10),tokio_tungstenite::connect_async_with_config(&c.ws_url,Some(tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default().max_message_size(Some(65536)).max_frame_size(Some(65536))),false)).await;
             let mut ws=match connected {Ok(Ok((ws,_)))=>ws,_=>{
@@ -1243,21 +1354,40 @@ async fn source(
             reconnects=0;
             let mut tick=tokio::time::interval(Duration::from_millis(250));
             let mut last=Instant::now();
+            let mut fault=false;
             loop {
                 tokio::select! {
                     biased;
                     _=cancel.changed()=> {let _=ws.close(None).await;return Ok(());},
                     msg=ws.next()=> {
-                        let text=match msg {Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t)))=>t,Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(p)))=>{ws.send(tokio_tungstenite::tungstenite::Message::Pong(p)).await.map_err(|_|"WS pong failed")?;continue;},Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(_)))=>{last=Instant::now();continue;},Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))|None|Some(Err(_))=>break,_=>return Err("unsupported WS frame".into())};
+                        let text=match msg {Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t)))=>t,Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(p)))=>{ws.send(tokio_tungstenite::tungstenite::Message::Pong(p)).await.map_err(|_|"WS pong failed")?;continue;},Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(_)))=>{last=Instant::now();continue;},Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))|None|Some(Err(_))=>break,_=>{fault=true;break}};
                         last=Instant::now();
-                        let v:Value=serde_json::from_str(&text).map_err(|_|"WS malformed notification")?;
-                        if v["jsonrpc"]!="2.0" || v["method"]!="eth_subscription" || v["params"]["subscription"]!=sub{return Err("WS unexpected subscription notification".into());}
+                        let v:Value=match serde_json::from_str(&text){
+                            Ok(v)=>v,
+                            // A frame we cannot parse is a protocol fault, not a trigger: record it,
+                            // then reconnect instead of failing the whole task.
+                            Err(_)=>{note_ws_frame(&c,"malformed",&text,&mut odd_frames);fault=true;break;}
+                        };
+                        if v["jsonrpc"]!="2.0" || v["method"]!="eth_subscription" || v["params"]["subscription"]!=sub{
+                            // Provider chatter, an RPC error object or a notification for another
+                            // subscription must not kill a 24h listener: record it and keep waiting.
+                            note_ws_frame(&c,"foreign",&text,&mut odd_frames);
+                            // A flood is not chatter: past the budget it becomes a protocol fault so the
+                            // reconnect guard (and its backoff) takes over instead of spinning forever.
+                            if odd_frames>50{fault=true;break;}
+                            continue;
+                        }
                         let e=&v["params"]["result"];
                         if e.get("removed").and_then(Value::as_bool)==Some(true){
                             // A reorg notification is not a trigger: ignore it and keep listening.
                             continue;
                         }
-                        event_id(&c,e)?;
+                        if event_id(&c,e).is_err(){
+                            // Our subscription id with an unusable payload is provider damage, not our
+                            // trigger: record it and keep waiting rather than killing the listener.
+                            note_ws_frame(&c,"malformed-result",&text,&mut odd_frames);
+                            continue;
+                        }
                         if c.confirmation_depth==0{enqueue(&c,e.clone(),"ws",&tx,&mut seen)?;}
                     },
                     _=tick.tick()=> {
@@ -1267,6 +1397,12 @@ async fn source(
                         ws.send(tokio_tungstenite::tungstenite::Message::Ping(Vec::new().into())).await.map_err(|_|"WS ping failed")?;
                     }
                 }
+            }
+            if fault{
+                faults+=1;
+                if faults>5{return Err("WS protocol faults exhausted".into());}
+                tokio::select!{_=cancel.changed()=>return Ok(()),_=tokio::time::sleep(Duration::from_millis(100*faults as u64))=>{}}
+                continue;
             }
             reconnects+=1;if reconnects>5{return Err("WS reconnect exhausted".into());}
         }
@@ -1335,21 +1471,31 @@ impl Wallet {
                             Ok(Err(e))=>return Ok(("FAILED",json!({"error":e,"submission_attempted":false,"stage":"action_build"}))),
                             Err(_)=>return Ok(("FAILED",json!({"error":"action build deadline expired","submission_attempted":false})))
                         };
-                        let (call,route_note)=call;
+                        let (mut call,route_note)=call;
+                        clamp_gas_to_policy(&c.policy,&mut call);
                         let action_build_ms=build_start.elapsed().as_secs_f64()*1000.0;
                         if self.native_invalid.load(std::sync::atomic::Ordering::SeqCst){return Ok(("FAILED",json!({"error":"source became unsafe before fire","submission_attempted":false})));}
                         let before_fire=Instant::now();
+                        // Persist exactly what would have been sent. Without it a rejected preview
+                        // leaves only a code and no way to tell gas starvation from slippage.
+                        let call_evidence=call_evidence(&call);
                         // Anything provably rejected before submission is a FAILED task, not an
                         // unknown outcome: it must not be reported as "maybe sent, reconcile".
                         if let Err(e)=c.validate_call(&call) {
-                            return Ok(("FAILED",json!({"error":e,"submission_attempted":false,"stage":"precedes_fire"})));
+                            return Ok(("FAILED",json!({"error":e,"submission_attempted":false,"stage":"precedes_fire","call":call_evidence,"route":route_note})));
                         }
                         let result=self.native_fire(id,(c.deadline_ms,deadline.into_std()),call,c.policy.clone(),binding.clone(),event.received).await;
                         let metrics=json!({"event_to_build_start_ms":build_start.duration_since(event.received).as_secs_f64()*1000.0,"action_build_ms":action_build_ms,"build_to_fire_gap_ms":before_fire.duration_since(build_start).as_secs_f64()*1000.0-action_build_ms,"event_to_result_ms":event.received.elapsed().as_secs_f64()*1000.0,"clock":"monotonic","source":event.origin});
                         // A failure before the execute POST is provably not submitted, so it must be
                         // reported as FAILED rather than sent to journal reconciliation as UNKNOWN.
                         let submitted=self.native_submitted.load(std::sync::atomic::Ordering::SeqCst);
-                        return Ok(fire_outcome(submitted,result,&route_note,metrics));
+                        let (status,mut detail)=fire_outcome(submitted,result,&route_note,metrics);
+                        if status!="SUCCESS"{
+                            if let Some(map)=detail.as_object_mut(){
+                                map.insert("call".into(),call_evidence);
+                            }
+                        }
+                        return Ok((status,detail));
                     }
                 }
             }
@@ -1418,6 +1564,52 @@ fn rpc_client() -> Result<&'static reqwest::Client, String> {
         .as_ref()
         .map_err(Clone::clone)
 }
+/// A policy `maxGasLimit` is a hard ceiling on what may be signed and is enforced again in
+/// `Policy::check_intent`. The route builder cannot see the policy, so a widened preview cap could be
+/// built above that ceiling and only fail after the event had already been consumed — burning a
+/// one-shot task over a number the configuration already knew. Clamp where both are in hand.
+pub(super) fn clamp_gas_to_policy(policy: &Value, call: &mut executor::Call) {
+    if let (Some(cap), Some(gas)) = (
+        policy.get("maxGasLimit").and_then(Value::as_u64),
+        call.gas_limit,
+    ) {
+        call.gas_limit = Some(gas.min(cap));
+    }
+}
+
+/// The exact call the engine was about to submit: chain, sender, target, value, gas cap and
+/// calldata. Persisted on every non-success terminal record so a rejected preview can be
+/// reproduced instead of guessed at. A provider may return calldata up to 262 KB; past a few KB the
+/// evidence stores a digest, the length and a prefix so the record cannot be truncated away by the
+/// state budget (which would drop `submission_attempted` too).
+pub(super) fn call_evidence(call: &executor::Call) -> Value {
+    let calldata = if call.input_data.len() > 4096 {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(call.input_data.as_bytes());
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        json!({
+            "sha256": digest,
+            "len": call.input_data.len(),
+            "prefix": &call.input_data[..74.min(call.input_data.len())]
+        })
+    } else {
+        json!(call.input_data)
+    };
+    json!({
+        "binance_chain_id": call.binance_chain_id,
+        "from": call.from,
+        "to": call.to,
+        "value": call.value,
+        "gas_limit": call.gas_limit,
+        "input_data": calldata
+    })
+}
+
 /// Map a fire result to a terminal status. Only reaching the execute POST may be called unknown;
 /// anything failing before it is a plain failure and must not trigger journal reconciliation.
 pub(super) fn fire_outcome(

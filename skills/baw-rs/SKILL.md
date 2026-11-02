@@ -79,7 +79,7 @@ metadata:
 | gas/额度/设置/域名/加速取消 | `wallet gas-price/left-quota/settings/resolve-domain/speed-up/cancel` | [参数](references/cli-wallet.md) |
 | 转账 | `wallet send` | [查询与发送](references/workflows.md#查询与发送)、[参数](references/cli-wallet.md) |
 | swap/市价报价/订单状态 | `market-order quote/swap/list` | [交易流程](references/workflows.md#市价与限价)、[参数](references/cli-market-order.md) |
-| ERC-20 授权管理 | `approvals list/detail/revoke` | [授权等操作](references/workflows.md#授权defi预测与-x402)、[参数](references/cli-approvals.md) |
+| ERC-20 授权管理 | `approvals list/detail/revoke/approve` | [授权等操作](references/workflows.md#授权defi预测与-x402)、[参数](references/cli-approvals.md) |
 | 合约预览/执行/自动执行 | `contract-call preview/execute/fire`（`fire --policy` 即原 `run` 的严格模式） | [外部签名](references/signing.md)、[参数](references/cli-contract-call.md) |
 | EIP-712 预览/签名/结果/历史 | `sign-message preview/execute/result/history` | [外部签名](references/signing.md)、[参数](references/cli-sign-message.md) |
 | 钱包生命周期（新增/删除/列表/后台） | `wallets add/remove/list/status/serve/stop` | [钱包模式](references/wallet-modes.md) |
@@ -176,7 +176,7 @@ metadata:
 
 ## 本机部署状态（2026-11-01）
 
-- 新版已替换 `/root/baw-rs/target/release/baw-rs`（sha256 `63c0354d…`），旧二进制备份 `baw-rs.prev-1101-1309`；`baw-rs-vaults.service` 已重启，六个钱包名单齐全。
+- 新版已替换部署目录下的 `target/release/baw-rs`，旧二进制另存为 `baw-rs.prev-<日期>` 备份；钱包后台服务已重启，六个钱包名单齐全。部署后先用 `wallet status` 逐钱包核对，不凭服务 active 推断可用。
 - 升级部署顺序：备份二进制与各钱包 `native-event-state.json` → 先单独跑新二进制 `--version` → 替换 → 重启 → `systemctl is-active` + `wallets status`（pid 已变、名单齐）→ **逐钱包** `wallet status` 与 `task status`（后者触发旧状态迁移，必须确认状态与历史保留）→ 抽测协议（绝对 deadline 被拒、legacy 终态任务 arm 被拒）。
 - 服务 active 不代表钱包可用：未登录钱包仍返回 `session invalidated`，需重新扫码。
 
@@ -238,7 +238,33 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 4. 路由 calldata 选择器不是 V2 `swapExactTokensForTokens` 时：任务配置要 `allow_unbound_route_calldata: true` **且** 动作配置 `require_runtime_preview: true`，两个都要，只给一个仍被拒。
 5. 预览可能包含正常消耗额度的 `allowanceChanges`，默认策略会拒绝；必须核对 token、spender、owner 和额度变化。`allowAuthorityChanges: true` 是宽泛放行开关，不是仅允许额度扣减，不能作为所有卖出的默认配置，也不能借报错擅自放宽用户授权。
 6. 任务 ID **一次性**：同名重载报 `native task id already used`；重试必须换新 ID。
-7. 任务配置文件要放在私有目录、`0600`、单链接；`0644` 会在装载时报 `file must be owned, private (0600), single-link and regular`。
+7. `arm` 之后该钱包被任务独占，任何钱包作用域命令（含 `contract-call preview`）都回 `BUSY; wallet reserved by native event task`。要验证路由/预览，**先 preview、后 arm**。
+8. `disarm` 是终态：状态落到 `DISARMED` 后再 `arm` 报 `native task not LOADED; no replay`，同 ID 也不能重新 `load`。想重来只能换新 ID 重新装载，`valid_for_ms` 也从新 `arm` 重新计时——不要为了一次预览就把在跑的任务 disarm 掉。
+9. 任务配置文件要放在私有目录、`0600`、单链接；`0644` 会在装载时报 `file must be owned, private (0600), single-link and regular`。
+
+## 路由 gas 与 WS 帧的既定策略
+
+- `route` 动作把报价 `tx.gas` 当**预览上限**用，并按 `gas_buffer_percent`（默认 130）+ `gas_buffer_absolute`（默认 80000）加余量、再用 `max_gas_limit` 夹住；`route_validation.gas_quoted` / `gas_preview_cap` 两个字段会写进结果，方便对账。上限不是费用，后端按实际消耗收费。
+- WS 上非本订阅的帧只记录（前 20 条进 `serve.log`）并忽略，不再整任务判死；无法解析的帧和关闭/传输错误按协议故障重连。查找“任务为什么死了”先看 registry 目录下的 `serve.log`（`$BAW_RS_REGISTRY/serve.log`，默认 `$HOME/wallets/registry/serve.log`）。
+- 非成功终态会落盘 `detail.call`（chain/from/to/value/gas_limit/input_data），加上 `Binance API code NNNNN: <原因>` 的原文（仅 3518xx 家族保留原因），所以失败可复现，不用靠猜。
+- 失败后**不要**指望自动重试：`retry_policy` 是 `never`，要重来必须换新任务 ID 重新 load + arm。
+- `approvals approve --binanceChainId 56 --tokenContract <币> --spender <OKX dexContractAddress> --amount <最小单位|max> --from <钱包> --confirm --operation-id <id>`：ERC-20 授权走的是和 `contract-call fire` 同一条预览→执行核心，calldata 本地拼（`0x095ea7b3`），不依赖 OKX 接口。任务要花新代币前先用它把额度开好，否则会死在模拟阶段。
+- `--amount max` 是无限授权，**不带 `--unlimited` 会被直接拒**；只在明确要长期免复授权时才用，能用具体额度就用具体额度。返回里的 `approval.unlimited` 记下当时是不是无限授权。
+- `--policy <文件>` 可选：不加就没有策略门槛（只凭 `--confirm` + 一次性编号）；加了就按 policy 钉住代币合约、`valueWei`、选择器、`calldataSha256`、`maxGasLimit`。approve 的 calldata 是本地拼的，写死摘要可行（同一组 token/spender/amount 每次字节相同），所以 approve 想要强校验就尽管写 `calldataSha256`。
+- 授权成功后立即用 `cast call` 核对链上 allowance 再 arm 任务，别只看返回的 `BROADCASTED`。
+- `route` 动作装载时自动加一条授权检查（`allowance(user, expected_spender) ≥ amount`），`arm` 不通过就失败并报出实际额度；`skip_allowance_check: true` 可关。OKX 在授权为 0 时同样返回空 `signatureData`，所以"缺授权"只能靠链上读，不能靠响应字段判断。
+- 任务 `policy.maxGasLimit` 是硬上限：装载时会把 route 动作的 `max_gas_limit` 收到不超过它，运行时再夹一次。配置里两个值冲突时以 policy 为准，不要指望触发时的 gas 缓冲能越过它。
+- WS 协议故障（坏帧/非文本帧/外来帧洪泛 >50）有独立预算：累计 5 次判 FAILED，每次重连前指数退避；不再出现无上限热重连。
+- 路由校验只做 V6 文档定义的项（chain/from/to 白名单/选择器/金额回显/value/gas/minReceive 非零/滑点回显/signatureData 非空即停），外加 `max_price_impact_percent`（默认 2%）价格冲击阈值；`gasPrice`/`maxFeePerGas`、`approve*` 回声、用滑点重算最小收到量都已删除——文档没定义这些，校验它们只会误杀。
+- gas 缓冲默认 **150%**（OKX 文档要求对 `gas` 加 50%），另有 `gas_buffer_absolute` 兜底。
+- 后端错误文本只对 `351805/351806/351807/351818/351821` 保留原因；`351801/351802/351803/351804` 与其它码只留裸码，避免把会话材料写进记录。
+
+## 路由配置快照会过期，一次性任务没有第二次机会
+
+- OKX 的 `tx.to`、选择器和 gas 估计会随行情与内部版本变化：同一条 1 USDT→BNB 路由，几分钟内选择器从 `0xf2c42696` 换成 `0x9871efa4`、gas 从 292k 涨到 1,013k。`allowed_selectors` 只盯当下的值，下一次就会因“selector 不在白名单”整单失败；`max_gas_limit` 卡太紧同理（`gas > cap` 时直接拒绝整单）。
+- 装载前必做：现取一次 `/swap` 记下 `to`/selector/`gas`，`allowed_selectors` 至少放进当前两个值，`max_gas_limit` 按实测 gas 留 1.2–1.5 倍余量（实测 1,013,123 → 设 1,200,000）。
+- `retry_policy` 是 `never`：预览被后端拒一次（错误原文形如 `Binance API code 351805`，属模拟阶段拒绝）整个一次性任务就落 FAILED 并释放钱包，不会有第二次尝试。长时间监听前先单独 `contract-call preview` 跑通，再 `arm`。
+- 命中失败后先看 `detail.submission_attempted`：`false` 表示一笔交易都没发、余额不会动，可以直接换新任务 ID 重来；只有 `true` 才需要按未知结果去链上对账。
 
 调试期暴露的四个“后端合法占位值被校验当成攻击”问题（已修源码 `signing.rs`/`route_action.rs`，未提交）：
 
@@ -262,7 +288,7 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 
 ## 原生任务上线后：原型脚本按退役处理
 
-自建 WS 卖出脚本（`/root/wallets/fire/` 里 `trigger.py` 一类）与 `task` 原生事件任务是同一件事的两套实现。原生版覆盖后不要再维护第二套。
+自建 WS 卖出脚本（用户自备目录里的 `trigger.py` 一类脚本）与 `task` 原生事件任务是同一件事的两套实现。原生版覆盖后不要再维护第二套。
 
 1. **问“这是什么/怎么还在”时先查实机，不背记忆**：`systemctl is-enabled` / `is-active`、`cat /etc/systemd/system/<unit>`（看 `Restart=`）、程序自己的 JSON 配置和日志。`enabled` 但 `inactive` 的服务不耗资源，危险在两处：重启后会自己起来，以及留下第二套实现继续漂移。
 2. **`Restart=always` + 正常完成即 `exit 0` + `once` 型配置 = 重启后的空转循环**：命中一次就正常退出，systemd 3 秒后再拉起，再命中……`dry_run` 只挡真钱，不挡 RPC 和接口刷量。修法是把服务 `disable`（保留 unit 与代码）或让程序长驻不退出；只改 `Restart=` 不算修好。
@@ -280,9 +306,9 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 3. 不得擅自把“借一个在线钱包发触发交易”当成技术细节隐去不说；用户的钱包资金变动必须事前报告。
 4. 设置监听前先确认运行版本允许的有效期并告知等待边界；不靠反复重载偷偷延长用户授权，也不能拿取消固定上限的开发计划承诺旧后台可以长期等待。
 
-## 裁剪后的命令面（45 叶子）
+## 裁剪后的命令面（46 叶子）
 
-当前保留：`auth` 3、`wallet` 14、`market-order` 3、`contract-call` 3、`sign-message` 4、`approvals` 3、`openfour` 2、`wallets` 6、`task` 4，另加 `serve` 与 `cli-check`/`skill-check`。
+当前保留：`auth` 3、`wallet` 14、`market-order` 3、`contract-call` 3、`sign-message` 4、`approvals` 4（含 `approve`）、`openfour` 2、`wallets` 6、`task` 4，另加 `serve` 与 `cli-check`/`skill-check`，合计 **46** 条叶子命令。
 
 裁剪规则（用户明确要求「只保留必要的交易部分」）：
 

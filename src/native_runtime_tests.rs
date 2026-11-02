@@ -1070,6 +1070,103 @@ async fn native_ws_fixed_event_reuses_resident_fire_and_is_one_shot() {
     assert!(a.check_reservation().is_ok());
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_logs_source_ignores_foreign_frames_and_still_fires() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = Mock::new().await;
+    let source = SourceFixture::new().await;
+    let a = wallet(
+        root.path(),
+        "a",
+        "instance-a",
+        A,
+        Some("cookie-a"),
+        &backend.origin,
+    );
+    let mut c = config();
+    c["rpc_url"] = json!(source.rpc_url);
+    c["ws_url"] = json!(source.ws_url);
+    a.native_control(Control::Load { config: c }).await.unwrap();
+    arm_common(&a, &mut backend).await;
+    status_is(&a, "READY").await;
+    // A live listener sees more than its own notifications: a notification for another
+    // subscription, an RPC error object, and provider chatter. None of them may end a 24h task.
+    for raw in [
+        json!({"jsonrpc":"2.0","method":"eth_subscription","params":{"subscription":"other-sub","result":{}}}),
+        json!({"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limited"}}),
+        json!({"method":"notice","params":["maintenance window"]}),
+    ] {
+        source.events.send(json!({"__raw": raw})).await.unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    status_is(&a, "READY").await;
+    assert!(a.check_reservation().is_err(), "reservation dropped");
+    let e = super::super::native_events_tests::event();
+    source.events.send(e).await.unwrap();
+    let (req, reply) = backend_until(&mut backend, "contract-call/preview").await;
+    assert!(req.contains("0x12345678"));
+    reply
+        .send((executor_tests::valid_preview("native-preview"), None))
+        .unwrap();
+    let (_req, reply) = backend_until(&mut backend, "contract-call/execute").await;
+    reply
+        .send((json!({"orderId":"native-accepted"}), None))
+        .unwrap();
+    let s = status_is(&a, "SUCCESS").await;
+    assert_eq!(
+        s["detail"]["success_scope"],
+        "backend_acknowledged_not_chain_confirmation"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_preview_rejection_persists_the_call_and_the_backend_reason() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = Mock::new().await;
+    let source = SourceFixture::new().await;
+    let a = wallet(
+        root.path(),
+        "a",
+        "instance-a",
+        A,
+        Some("cookie-a"),
+        &backend.origin,
+    );
+    let mut c = config();
+    c["rpc_url"] = json!(source.rpc_url);
+    c["ws_url"] = json!(source.ws_url);
+    a.native_control(Control::Load { config: c }).await.unwrap();
+    arm_common(&a, &mut backend).await;
+    status_is(&a, "READY").await;
+    source
+        .events
+        .send(super::super::native_events_tests::event())
+        .await
+        .unwrap();
+    let (_req, reply) = backend_until(&mut backend, "contract-call/preview").await;
+    // Exactly what the backend answers when the simulation runs out of gas.
+    reply
+        .send((
+            json!({"code":"351805","message":"The transaction ran out of gas. Please increase the gas limit and try again."}),
+            None,
+        ))
+        .unwrap();
+    let s = status_is(&a, "FAILED").await;
+    let err = s["detail"]["error"].as_str().unwrap();
+    assert!(err.contains("351805"), "{err}");
+    assert!(
+        err.contains("ran out of gas"),
+        "backend reason dropped: {err}"
+    );
+    assert_eq!(s["detail"]["submission_attempted"], false);
+    // The rejected call is on disk, so the failure can be reproduced instead of guessed at.
+    assert_eq!(s["detail"]["call"]["input_data"], "0x12345678");
+    assert_eq!(
+        s["detail"]["call"]["to"],
+        "0x2222222222222222222222222222222222222222"
+    );
+    assert_eq!(s["detail"]["call"]["gas_limit"], 100000);
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_shutdown_disarms_waiter_and_does_not_leave_source_owned() {
     let root = tempfile::tempdir().unwrap();
     let mut backend = Mock::new().await;
@@ -1220,6 +1317,8 @@ async fn native_route_load_delay_and_build_timeout_keep_first_arm_budget_and_zer
     r["timeout_ms"] = json!(10000);
     r["max_wait_ms"] = json!(10000);
     c["action"] = json!({"kind":"route", "config":r});
+    // This test is about the arm budget, not allowance: the fixture RPC returns 9 for every call.
+    c["skip_allowance_check"] = json!(true);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let loaded = a.native_control(Control::Load { config: c }).await.unwrap();

@@ -1,9 +1,10 @@
 {
   "version": "baw-rs 0.3.0",
   "source": "actual --help; no wallet/backend calls",
-  "binarySha256": "4503c39392d0535f61d52f4478ab3e24e8675a51284d84219127267308b24d4f",
-  "leafCount": 45,
+  "binarySha256": "6684123545727e14fc4043eedc5637e670907772609af0e520fb0bd967497d75",
+  "leafCount": 46,
   "leaves": [
+    "approvals approve",
     "approvals detail",
     "approvals list",
     "approvals revoke",

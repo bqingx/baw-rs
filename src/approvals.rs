@@ -1,4 +1,5 @@
-//! Token approvals: list, detail, revoke. Wire protocol mirrored from `baw` 1.12.0.
+//! Token approvals: list, detail, revoke, approve. Wire protocol for the first three is
+//! mirrored from `baw` 1.12.0; `approve` is a local addition (see `ApprovalsApproveArgs`).
 //!
 //! Endpoints and payloads are taken verbatim from the installed bundle
 //! `/usr/lib/node_modules/@binance/agentic-wallet/dist/index.js`:
@@ -48,6 +49,7 @@ pub enum ApprovalsCommand {
     List(ApprovalsListArgs),
     Detail(ApprovalsDetailArgs),
     Revoke(ApprovalsRevokeArgs),
+    Approve(ApprovalsApproveArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -82,6 +84,43 @@ pub struct ApprovalsDetailArgs {
     pub approval_type: String,
 }
 
+/// `approvals approve`: an ERC-20 `approve(spender, amount)` submitted through the same
+/// preview-then-execute path as `contract-call fire`.
+///
+/// Measured 2026-11-02: the OKX swap response carries no signal that an approval is missing
+/// (an unapproved token still comes back with an empty `signatureData`), so a task that spends a
+/// new token fails at simulation unless the allowance exists. Building the approval here keeps
+/// the whole path inside baw-rs instead of shelling out to another tool.
+#[derive(clap::Args, Debug)]
+pub struct ApprovalsApproveArgs {
+    /// Binance chain ID
+    #[arg(long = "binanceChainId", value_name = "binanceChainId")]
+    pub binance_chain_id: String,
+    /// Token contract address
+    #[arg(long = "tokenContract", value_name = "address")]
+    pub token_contract: String,
+    /// Spender contract address (OKX `dexContractAddress`)
+    #[arg(long, value_name = "address")]
+    pub spender: String,
+    /// Raw amount in the token's smallest unit, or `max` for uint256::MAX (needs --unlimited)
+    #[arg(long, value_name = "amount")]
+    pub amount: String,
+    /// Permit uint256::MAX, i.e. an approval that stays valid for the whole balance forever.
+    /// `--amount max` is refused without this flag so an unlimited grant has to be asked for.
+    #[arg(long)]
+    pub unlimited: bool,
+    /// Optional policy file. Pins token contract, value, selector, calldata digest and gas cap;
+    /// anything that does not match is refused before the preview is requested.
+    #[arg(long)]
+    pub policy: Option<std::path::PathBuf>,
+    /// Sender wallet address on the target chain
+    #[arg(long, value_name = "address")]
+    pub from: String,
+    /// Optional gas limit for the approve call
+    #[arg(long = "gasLimit", value_name = "n")]
+    pub gas_limit: Option<u64>,
+}
+
 #[derive(clap::Args, Debug)]
 pub struct ApprovalsRevokeArgs {
     /// Binance chain ID
@@ -99,7 +138,10 @@ pub struct ApprovalsRevokeArgs {
 }
 
 pub fn is_mutation(command: &ApprovalsCommand) -> bool {
-    matches!(command, ApprovalsCommand::Revoke(_))
+    matches!(
+        command,
+        ApprovalsCommand::Revoke(_) | ApprovalsCommand::Approve(_)
+    )
 }
 
 /// Intent digest input for `approvals revoke`. Deliberately network-free: it is
@@ -123,12 +165,81 @@ pub fn mutation_payload(command: &ApprovalsCommand) -> Result<Value, String> {
                 "type": target.kind,
             }))
         }
+        ApprovalsCommand::Approve(args) => Ok(json!({
+            "binanceChainId": args.binance_chain_id,
+            "tokenContract": args.token_contract,
+            "spender": args.spender,
+            "amount": args.amount,
+            "from": args.from,
+        })),
         _ => Err("approvals: read-only command has no mutation payload".into()),
     }
 }
 
-pub async fn run(client: &mut Client, command: &ApprovalsCommand) -> Result<Value, String> {
+/// `approve(address,uint256)` calldata: `0x095ea7b3` + two ABI words.
+fn approve_calldata(spender: &str, amount: &str, unlimited: bool) -> Result<String, String> {
+    let spender_word = abi_address_word(spender)?;
+    let amount_word = if amount.eq_ignore_ascii_case("max") {
+        if !unlimited {
+            return Err(
+                "--amount max is an unlimited approval; pass --unlimited to say so explicitly"
+                    .into(),
+            );
+        }
+        "f".repeat(64)
+    } else {
+        let n = crate::uint::uint256(amount)?;
+        format!("{n:0>64x}")
+    };
+    Ok(format!("0x095ea7b3{spender_word}{amount_word}"))
+}
+
+fn abi_address_word(a: &str) -> Result<String, String> {
+    let body = a
+        .strip_prefix("0x")
+        .or_else(|| a.strip_prefix("0X"))
+        .ok_or("address must be 0x-prefixed")?;
+    if body.len() != 40 || !body.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("address must be 20 bytes of hex".into());
+    }
+    // Hex case is not significant on chain; normalising keeps the calldata byte-identical to what
+    // the provider builds for the same inputs and makes digests comparable.
+    Ok(format!("{:0>64}", body.to_ascii_lowercase()))
+}
+
+pub async fn run(
+    client: &mut Client,
+    dir: &std::path::Path,
+    command: &ApprovalsCommand,
+) -> Result<Value, String> {
     match command {
+        ApprovalsCommand::Approve(args) => {
+            let data = approve_calldata(&args.spender, &args.amount, args.unlimited)?;
+            let fire = crate::signing::ContractCommand::Fire(crate::signing::ContractFire {
+                binance_chain_id: args.binance_chain_id.clone(),
+                from: args.from.clone(),
+                to: args.token_contract.clone(),
+                value: Some("0".into()),
+                input_data: Some(data.clone()),
+                gas_limit: args.gas_limit,
+                policy: args.policy.clone(),
+            });
+            // Same preview-then-execute core as `contract-call fire`: previews, checks the echo,
+            // then submits once with the journaled operation id.
+            let result = crate::signing::contract(client, dir, &fire, None).await?;
+            Ok(json!({
+                "approval": {
+                    "binanceChainId": args.binance_chain_id,
+                    "tokenContract": args.token_contract,
+                    "spender": args.spender,
+                    "amount": args.amount,
+                    "unlimited": args.amount.eq_ignore_ascii_case("max"),
+                    "policy": args.policy.as_ref().map(|p| p.display().to_string()),
+                    "inputData": data,
+                },
+                "result": result,
+            }))
+        }
         ApprovalsCommand::List(args) => list(client, args).await,
         ApprovalsCommand::Detail(args) => {
             let target = Target::new(
@@ -386,6 +497,30 @@ fn risk_filters(value: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn approve_builds_the_erc20_approve_calldata_and_refuses_bad_input() {
+        let spender = "0x2c34A2Fb1d0b4f55de51E1d0bDEfaDDce6b7cDD6";
+        let data = approve_calldata(spender, "1000000000000000000", false).unwrap();
+        let expected = format!(
+            "0x095ea7b3{:0>64}{:0>64x}",
+            "2c34a2fb1d0b4f55de51e1d0bdefaddce6b7cdd6", 1_000_000_000_000_000_000u128
+        );
+        assert_eq!(data, expected);
+        // `max` maps to uint256::MAX, which is what an unlimited approval encodes.
+        // An unlimited grant has to be asked for: `max` alone is refused.
+        assert!(approve_calldata(spender, "max", false).is_err());
+        let unlimited = approve_calldata(spender, "max", true).unwrap();
+        assert!(unlimited.ends_with(&"f".repeat(64)));
+        // Malformed addresses and amounts fail before anything is previewed.
+        assert!(approve_calldata("0x1234", "1", false).is_err());
+        assert!(approve_calldata(spender, "1.5", false).is_err());
+        // Hex amounts are accepted (the same uint parser as every other amount) and encode to 16.
+        assert!(approve_calldata(spender, "0x10", false)
+            .unwrap()
+            .ends_with(&format!("{:0>64x}", 16u64)));
+    }
+
     use super::*;
     use serde_json::json;
     use std::{
@@ -502,7 +637,9 @@ mod tests {
             offset: Some("cur+1=".into()),
         });
 
-        let got = run(&mut client, &command).await.unwrap();
+        let got = run(&mut client, std::path::Path::new("."), &command)
+            .await
+            .unwrap();
         assert_eq!(got, payload);
 
         let request = rx.recv().unwrap();
@@ -527,7 +664,9 @@ mod tests {
         });
 
         assert_eq!(
-            run(&mut client, &command).await.unwrap(),
+            run(&mut client, std::path::Path::new("."), &command)
+                .await
+                .unwrap(),
             json!({"list":[],"total":0})
         );
         assert_eq!(
@@ -558,7 +697,9 @@ mod tests {
             approval_type: "approve".into(),
         });
 
-        let got = run(&mut client, &command).await.unwrap();
+        let got = run(&mut client, std::path::Path::new("."), &command)
+            .await
+            .unwrap();
         assert_eq!(got, json!({"detail":detail,"records":records}));
 
         assert_eq!(
@@ -604,7 +745,9 @@ mod tests {
         });
 
         assert_eq!(
-            run(&mut client, &command).await.unwrap(),
+            run(&mut client, std::path::Path::new("."), &command)
+                .await
+                .unwrap(),
             json!({"txHash":"0xsynthetic"})
         );
 
@@ -643,7 +786,9 @@ mod tests {
             approval_type: "approve".into(),
         });
 
-        run(&mut client, &command).await.unwrap();
+        run(&mut client, std::path::Path::new("."), &command)
+            .await
+            .unwrap();
         let _wallets = rx.recv().unwrap();
         let _networks = rx.recv().unwrap();
         let _detail = rx.recv().unwrap();
@@ -706,7 +851,9 @@ mod tests {
             offset: None,
         });
 
-        let error = run(&mut client, &command).await.unwrap_err();
+        let error = run(&mut client, std::path::Path::new("."), &command)
+            .await
+            .unwrap_err();
         assert_eq!(error, "Binance API code 100999");
         assert!(!error.contains("do-not-echo-backend-text"));
         rx.recv().unwrap();
@@ -726,7 +873,7 @@ mod tests {
             limit: "0".into(),
             offset: None,
         });
-        assert!(run(&mut client, &zero_limit)
+        assert!(run(&mut client, std::path::Path::new("."), &zero_limit)
             .await
             .unwrap_err()
             .contains("--limit"));
@@ -737,7 +884,7 @@ mod tests {
             spender: SPENDER.into(),
             approval_type: "transfer".into(),
         });
-        assert!(run(&mut client, &bad_type)
+        assert!(run(&mut client, std::path::Path::new("."), &bad_type)
             .await
             .unwrap_err()
             .contains("approval type"));
@@ -748,7 +895,7 @@ mod tests {
             spender: SPENDER.into(),
             approval_type: "approve".into(),
         });
-        assert!(run(&mut client, &bad_address)
+        assert!(run(&mut client, std::path::Path::new("."), &bad_address)
             .await
             .unwrap_err()
             .contains("address"));

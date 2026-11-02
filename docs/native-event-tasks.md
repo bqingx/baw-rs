@@ -60,6 +60,24 @@ baw-rs --registry <REG> --wallet <钱包名> task disarm <task_id>
 baw-rs vaults --registry <REG> task <钱包名> status
 ```
 
+`route` 动作会自动追加一条**授权额度检查**：装载时生成 `allowance(user, expected_spender)` 的
+`eth_call`，`arm` 时要求结果 ≥ 本次 `amount`，不足即装载失败并报出实际值。原因是实测（2026-11-02：
+U 余额 20.39、授权 0，OKX 仍返回空的 `signatureData`）——响应里没有任何字段能告诉你"缺授权"，
+只有链上读得到；没有这条检查，任务会照常 arm，然后在第一次真实事件上以通用的模拟错误报废。
+用 `skip_allowance_check: true` 可关闭（例如输入币是原生 BNB，本来不需要授权，这种情况会自动跳过）。
+
+额度不足时用同一条 CLI 的 `approvals approve` 补授权（calldata 本地拼、走 fire 同一条预览→执行核心），
+不要临时换脚本或聚合器接口：
+
+```sh
+baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输入币> \
+  --spender <OKX dexContractAddress> --amount <最小单位> --from <钱包地址> \
+  --confirm --operation-id approve-$(date +%s) --json
+```
+
+授权是长期有效的链上状态，`--amount max`（无限授权）必须额外加 `--unlimited`；补完授权先用
+`eth_call allowance` 核对再 `arm`，别看 `BROADCASTED` 就当成了。
+
 `arm` 会检查会话、开发者模式、发送方和链，并执行显式 prerequisites；余额/gas/allowance 未配置就不能声称检查过。启用会预约该钱包，
 避免日常查询占住执行通道。任务与钱包绑定；身份或会话变化即失效。
 
@@ -107,6 +125,20 @@ baw-rs vaults --registry <REG> task <钱包名> status
 
 ### `route`：事件后实时取路由
 
+路由构造器把报价 gas 当**预览上限**使用，并按 `gas_buffer_percent`（默认 **150**，OKX 文档明确
+要求"increase this value by 50%"）与 `gas_buffer_absolute`（默认 80000）加余量，最后被 `max_gas_limit`
+与任务 `policy.maxGasLimit` 中较小者夹住：上限不是费用，后端按实际消耗收费。实测同一笔 1 USDT→BNB
+的报价 gas 在 230,400–1,013,123 之间跳，与真实需求余量低到 0.2%。
+
+校验以 OKX V6 文档（https://web3.okx.com/onchainos/dev-docs/trade/dex-swap）为准，只保留文档定义
+且能挡住真实风险的项：`code`、单条 `data`、链 ID、`tx.from`、`tx.to` 白名单、选择器白名单、
+calldata 形状、`fromTokenAmount` 回显、`tx.value` 上限、`minReceiveAmount` 非零、`gas` 上限、
+`slippagePercent` 回显、`signatureData` 非空即停。`gasPrice`/`maxFeePerGas`/`maxPriorityFeePerGas`
+不再交叉校验（文档为参考值且不转发）；`minReceiveAmount` 不再用滑点重算下界（文档定义即为滑点极限
+值）；`approveTransaction`/`approveAddress`/`approveContract` 不在文档 schema 内，一律忽略。
+新增 `max_price_impact_percent`（默认 "2"）：文档要求提交前检查 `priceImpactPercent`，超过阈值即拒单；
+字段缺失时记录但放行。
+
 `route` 的动作在**事件命中之后**才发起请求，绝不会在装载或等待阶段预取报价或 calldata。
 配置要求显式给出链、输入/输出代币、**固定数量**、滑点、钱包、期望授权方、允许的路由地址与 selector、
 `value` 与 gas 上限、请求超时与重试上限、以及凭证文件路径（0600）。原生任务的action.config不填写`deadline_unix_ms`，填写会被拒绝；内部使用首次arm解析的同一任务截止点，触发时不重新给时长。独立路由构造器原接口不变。
@@ -136,7 +168,14 @@ baw-rs vaults --registry <REG> task <钱包名> status
 - `removed` 日志不会被当作触发，也不会让任务失败，收到后继续监听。
 - 断线自动重订阅，并按块高做有界补读（`chunk_blocks` / `max_backfill_blocks`）；连续 5 次重连失败后任务判 FAILED，不会无限重试。
 - 过滤或 RPC 出错一律 fail-closed，任务进入故障状态并停止接单，而不是“当作没发生”。
+- WS 上**不是本订阅通知**的帧（别的订阅、RPC 错误对象、节点通知）只记录、不终止：前 20 条写入
+  stderr（常驻服务的 `serve.log`），之后静默忽略。无法解析的帧和关闭/传输错误按协议故障处理，
+  走重连与补读，不再把整条 24 小时监听判死。
+- 非成功终态会把**将要提交的那笔调用**落盘：`call.binance_chain_id/from/to/value/gas_limit/input_data`。
+  预览被拒时可以据此复现，而不是只剩一个错误码。
 - 提交前失败可显式记录并停止；**已提交但结果未知不会自动重发，也不会重新取一条新路由再试**。
+- 后端错误文本保留原因（如“The transaction ran out of gas…”），长串疑似凭证的字符被替换为
+  `<redacted>` 并截断到 200 字符：`Binance API code 351805: <原因>`。
 - 任务默认一次性执行；完成后保留终态。状态区分 `SUCCESS / FAILED / UNKNOWN`，
   `SUCCESS` 的含义是**后端已受理**，不是链上确认。
 - 已受理的交易不会因为客户端断开而取消；优雅停止只排空已受理操作，不再接受新的触发。

@@ -139,7 +139,7 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         Command::Wallet {
             command: WalletCommand::ResolveDomain(args),
         } => wallet_ops::resolve_domain(client, args).await,
-        Command::Approvals { command } => approvals::run(client, command).await,
+        Command::Approvals { command } => approvals::run(client, &wallet_dir, command).await,
         Command::CliCheck(args) => selfcheck::cli_check(client, args).await,
         Command::SkillCheck(args) => selfcheck::skill_check(client, args).await,
         Command::Wallet { command } => client.execute(command).await,

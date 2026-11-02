@@ -2,8 +2,9 @@
 
 包含根帮助之外的 `openfour`；`vaults` 是 `wallets` 的隐藏别名，不出现在帮助里。
 
-快照版本 `baw-rs 0.3.0`；叶子命令 **45** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。
+快照版本 `baw-rs 0.3.0`；叶子命令 **46** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。
 
+- `approvals approve` → [参数](cli-approvals.md)
 - `approvals detail` → [参数](cli-approvals.md)
 - `approvals list` → [参数](cli-approvals.md)
 - `approvals revoke` → [参数](cli-approvals.md)

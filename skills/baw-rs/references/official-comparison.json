@@ -1,7 +1,7 @@
 {
   "officialVersion": "1.12.0",
   "officialCount": 102,
-  "ours": 45,
+  "ours": 46,
   "missing": [
     "defi claim",
     "defi deposit",
@@ -76,6 +76,7 @@
     "x402-payment sign"
   ],
   "extras": [
+    "approvals approve",
     "contract-call fire",
     "openfour encode-buy",
     "openfour quote-buy",

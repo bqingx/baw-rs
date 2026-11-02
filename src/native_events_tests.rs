@@ -655,3 +655,122 @@ async fn native_fixed_and_word_binding_are_generic_calls() {
     bad["topics"][1] = json!(format!("0x{:064x}", 21));
     assert!(c.build(&bad).await.is_err());
 }
+
+#[test]
+fn policy_ceiling_clamps_gas_and_evidence_keeps_large_calldata_digestable() {
+    let mut call = Call {
+        binance_chain_id: "56".into(),
+        from: "0x1111111111111111111111111111111111111111".into(),
+        to: "0x2222222222222222222222222222222222222222".into(),
+        value: "0".into(),
+        input_data: "0x12345678".into(),
+        gas_limit: Some(400_000),
+    };
+    clamp_gas_to_policy(&json!({"maxGasLimit":250_000}), &mut call);
+    assert_eq!(call.gas_limit, Some(250_000));
+    // No policy ceiling leaves the call untouched.
+    clamp_gas_to_policy(&json!({"version":1}), &mut call);
+    assert_eq!(call.gas_limit, Some(250_000));
+    // Evidence keeps small calldata verbatim.
+    let small = call_evidence(&call);
+    assert_eq!(small["input_data"], "0x12345678");
+    assert_eq!(small["gas_limit"], 250_000);
+    // A 262 KB calldata is allowed by the route builder but would blow the state budget, which
+    // replaces the WHOLE detail and would drop submission_attempted: store a digest instead.
+    call.input_data = format!("0x{}", "ab".repeat(130_000));
+    let big = call_evidence(&call);
+    assert_eq!(big["input_data"]["len"], call.input_data.len());
+    assert_eq!(big["input_data"]["sha256"].as_str().unwrap().len(), 64);
+    assert!(big["input_data"].get("prefix").is_some());
+    assert!(serde_json::to_string(&big).unwrap().len() < 4096);
+}
+
+#[test]
+fn route_cap_is_tightened_to_the_policy_gas_ceiling_at_load() {
+    // A route builder cannot see the task policy, so the effective ceiling has to be the tighter of
+    // the two at load time; otherwise a buffered preview cap is refused only at fire time.
+    let dir = tempfile::tempdir().unwrap();
+    let key = synthetic_route_key(dir.path());
+    let mut cfg = route_config(&key);
+    cfg["max_gas_limit"] = json!(1_200_000);
+    let mut base = config();
+    base["action"] = json!({"kind":"route","config":cfg.clone()});
+    base["policy"] = json!({"version":1,"chainId":"56","to":"0x2222222222222222222222222222222222222222","valueWei":"0","maxGasLimit":250000});
+    let parsed = Config::parse(base.clone()).unwrap();
+    match &parsed.action {
+        Action::Route { config } => {
+            assert_eq!(config["max_gas_limit"], 250000);
+        }
+        _ => panic!("route action expected"),
+    }
+    // Without a policy ceiling the route cap stays as configured.
+    base["policy"] = json!({"version":1,"chainId":"56","to":"0x2222222222222222222222222222222222222222","valueWei":"0"});
+    let parsed = Config::parse(base).unwrap();
+    match &parsed.action {
+        Action::Route { config } => {
+            assert_eq!(config["max_gas_limit"], 1_200_000);
+        }
+        _ => panic!("route action expected"),
+    }
+}
+
+#[test]
+fn route_tasks_get_an_automatic_allowance_prerequisite() {
+    // Measured 2026-11-02: OKX answers an unapproved swap with an empty signatureData, so the only
+    // reliable "approval missing" signal is the chain read. It is added at load and enforced at arm.
+    let dir = tempfile::tempdir().unwrap();
+    let key = synthetic_route_key(dir.path());
+    let mut cfg = config();
+    cfg["action"] = json!({"kind":"route","config":route_config(&key)});
+    let parsed = Config::parse(cfg.clone()).unwrap();
+    let checks: Vec<Value> = parsed
+        .prerequisites
+        .iter()
+        .map(|c| serde_json::to_value(c).unwrap())
+        .collect();
+    let check = checks
+        .iter()
+        .find(|c| {
+            c["input_data"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("0xdd62ed3e")
+        })
+        .expect("allowance prerequisite missing");
+    assert_eq!(check["to"], "0x3333333333333333333333333333333333333333");
+    assert_eq!(check["word_index"], 0);
+    assert_eq!(check["min"], "1000");
+    let data = check["input_data"].as_str().unwrap();
+    assert_eq!(
+        data.len(),
+        10 + 64 + 64,
+        "allowance(wallet, spender) calldata"
+    );
+    let spender_word = format!("{:0>64}", "2".repeat(40));
+    assert!(data.ends_with(&spender_word), "spender word: {data}");
+
+    // Native input token needs no allowance.
+    let mut native = cfg.clone();
+    native["action"]["config"]["from_token_address"] =
+        json!("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
+    assert!(Config::parse(native)
+        .unwrap()
+        .prerequisites
+        .iter()
+        .all(|c| !serde_json::to_value(c).unwrap()["input_data"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("0xdd62ed3e")));
+
+    // Explicit opt-out.
+    let mut skipped = cfg;
+    skipped["skip_allowance_check"] = json!(true);
+    assert!(Config::parse(skipped)
+        .unwrap()
+        .prerequisites
+        .iter()
+        .all(|c| !serde_json::to_value(c).unwrap()["input_data"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("0xdd62ed3e")));
+}

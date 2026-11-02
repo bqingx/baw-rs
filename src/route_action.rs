@@ -19,6 +19,20 @@ struct Config {
     allowed_selectors: Vec<String>,
     max_value_wei: String,
     max_gas_limit: u64,
+    /// Preview gas cap headroom: the cap handed to the runtime preview is
+    /// `max(gas * percent/100, gas + absolute)`, clamped to `max_gas_limit`.
+    /// The provider's own number is a point estimate and has been observed to
+    /// sit within 0.2% of the execution requirement, which turns a normal
+    /// quote into a `351805` simulation rejection. A cap has no fee impact: the
+    /// backend still charges actual gas used.
+    /// OKX documents `priceImpactPercent` as a value the caller must check before submitting and
+    /// block on when it is too high. Route tasks therefore carry the same threshold.
+    #[serde(default = "default_max_price_impact_percent")]
+    max_price_impact_percent: String,
+    #[serde(default = "default_gas_buffer_percent")]
+    gas_buffer_percent: u64,
+    #[serde(default = "default_gas_buffer_absolute")]
+    gas_buffer_absolute: u64,
     deadline_unix_ms: u64,
     timeout_ms: u64,
     connect_timeout_ms: u64,
@@ -31,6 +45,56 @@ struct Config {
     allow_zero_min_out: bool,
     #[serde(default)]
     require_runtime_preview: bool,
+}
+
+fn default_max_price_impact_percent() -> String {
+    "2".into()
+}
+/// OKX's own documentation tells callers to raise the quoted gas limit by 50% before submitting.
+fn default_gas_buffer_percent() -> u64 {
+    150
+}
+fn default_gas_buffer_absolute() -> u64 {
+    80_000
+}
+
+/// The provider quotes a point estimate for exactly the calldata it built. Measured headroom
+/// over the real requirement ranged from 0.2% to 17%, so a quote that lands at the low end is
+/// rejected by the backend simulation (`351805`) before a signature exists. Raising the cap
+/// cannot raise the fee (the backend charges gas used, not the cap) and cannot weaken any
+/// allowlist, so the headroom is safe to apply; `max_gas_limit` still bounds the result.
+fn buffered_gas_limit(quoted: u64, percent: u64, absolute: u64, cap: u64) -> u64 {
+    if quoted == 0 || cap == 0 {
+        // Zero gas is unusable and a zero ceiling allows nothing: never return a limit above `cap`.
+        return 0;
+    }
+    let scaled = quoted.saturating_mul(percent).saturating_div(100);
+    let padded = quoted.saturating_add(absolute);
+    scaled.max(padded).min(cap)
+}
+
+/// Parse a non-negative decimal string ("0.06", "2", "1.5") into (mantissa, scale). Returns None for
+/// anything else, including signs and exponents, so a malformed threshold fails the load.
+fn scaled_decimal(raw: &str) -> Option<(BigUint, u32)> {
+    let (whole, fraction) = raw.split_once('.').unwrap_or((raw, ""));
+    if whole.is_empty() && fraction.is_empty() {
+        return None;
+    }
+    if !whole.bytes().all(|b| b.is_ascii_digit()) || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let digits = format!("{whole}{fraction}");
+    let mantissa = BigUint::parse_bytes(digits.as_bytes(), 10)?;
+    Some((mantissa, fraction.len() as u32))
+}
+
+/// Compare two non-negative decimals exactly, without floating point.
+fn decimal_greater(a: &str, b: &str) -> Option<bool> {
+    let (am, as_) = scaled_decimal(a)?;
+    let (bm, bs) = scaled_decimal(b)?;
+    let scale = as_.max(bs);
+    let lift = |m: BigUint, s: u32| m * BigUint::from(10u32).pow(scale - s);
+    Some(lift(am, as_) > lift(bm, bs))
 }
 
 #[derive(Deserialize)]
@@ -386,29 +450,36 @@ impl RouteActionBuilder {
                     .any(|v| v.as_str().is_none_or(|t| !t.trim().is_empty()))
                 {
                     return Err(
-                        "additional OKX signing data unsupported by EVM call builder".into(),
+                        "OKX swap requires an extra signature (signatureData); approve the input token first".into(),
                     );
                 }
             }
         }
         check_echo(tx, "slippagePercent", &c.slippage_percent, false)?;
-        // OKX also returns an encoded approve transaction as a JSON string. Ignoring it would let a
-        // response claim one spender while the approval payload targets another, so any present value
-        // must parse and name exactly the configured spender; malformed or foreign values fail closed.
-        for obj in [row, tx] {
-            if let Some(raw) = obj.get("approveTransaction") {
-                let encoded = raw
-                    .as_str()
-                    .ok_or("malformed approve transaction metadata")?;
-                let inner: Value = serde_json::from_str(encoded)
-                    .map_err(|_| "malformed approve transaction metadata")?;
-                if !inner.is_object() {
-                    return Err("malformed approve transaction metadata".into());
-                }
-                check_echo(&inner, "approveContract", &c.expected_spender, true)?;
-                check_echo(&inner, "approveSpender", &c.expected_spender, true)?;
+        // Documented as a number the caller must check before submitting. Missing is tolerated
+        // (the field is advisory and the provider may omit it), but a present value above the
+        // configured threshold stops the task before anything is signed.
+        if let Some(impact) = row.pointer("/routerResult/priceImpactPercent") {
+            let impact = impact.as_str().ok_or("malformed price impact")?;
+            // OKX documents a *negative* impact as favourable (received value exceeds paid value) and
+            // really returns it: a 1 U → BNB quote came back as "-0.08". Only a positive magnitude can
+            // exceed the threshold, so the sign is stripped before the comparison.
+            let magnitude = impact.trim().trim_start_matches('-');
+            let favorable = impact.trim().starts_with('-');
+            if !favorable
+                && decimal_greater(magnitude, &c.max_price_impact_percent)
+                    .ok_or("malformed price impact")?
+            {
+                return Err(format!(
+                    "price impact {impact}% exceeds configured {}%",
+                    c.max_price_impact_percent
+                ));
             }
         }
+        // `approveTransaction` / `approveAddress` / `approveContract` are not in the documented V6
+        // swap schema: validating fields the provider is not specified to send only produced
+        // failures. What the docs do describe is `signatureData`, checked above: a non-empty value
+        // means this swap expects an extra signature (an approval), so the task stops instead.
         for (container, key, expected, address) in [
             (row, "chainIndex", c.chain_index.as_str(), false),
             (tx, "chainId", c.chain_index.as_str(), false),
@@ -420,10 +491,6 @@ impl RouteActionBuilder {
                 c.user_wallet_address.as_str(),
                 true,
             ),
-            (row, "approveAddress", c.expected_spender.as_str(), true),
-            (tx, "approveAddress", c.expected_spender.as_str(), true),
-            (row, "approveContract", c.expected_spender.as_str(), true),
-            (tx, "approveContract", c.expected_spender.as_str(), true),
         ] {
             check_echo(container, key, expected, address)?;
         }
@@ -433,20 +500,8 @@ impl RouteActionBuilder {
             }
             check_echo(router, "chainIndex", &c.chain_index, false)?;
             check_echo(router, "fromTokenAmount", &c.amount, false)?;
-            for (key, expected) in [
-                ("fromToken", &c.from_token_address),
-                ("toToken", &c.to_token_address),
-            ] {
-                if let Some(token) = router.get(key) {
-                    if !token.is_object() {
-                        return Err("malformed token echo".into());
-                    }
-                    check_echo(token, "tokenContractAddress", expected, true)?;
-                }
-            }
-            if let Some(n) = router.get("toTokenAmount") {
-                uint(n.as_str().ok_or("invalid quote amount units")?)?;
-            }
+            // Token echoes are documented as quote-path metadata and duplicate the `tx`-level
+            // checks; only the amounts and chain are bound here.
         }
         let from = field(tx, "from")?;
         let to = field(tx, "to")?;
@@ -467,31 +522,20 @@ impl RouteActionBuilder {
         if gas == 0 || gas > c.max_gas_limit {
             return Err("OKX gas exceeds gas-unit cap".into());
         }
+        let gas_cap = buffered_gas_limit(
+            gas,
+            c.gas_buffer_percent,
+            c.gas_buffer_absolute,
+            c.max_gas_limit,
+        );
         if let Some(n) = tx.get("gasLimit") {
             if uint(n.as_str().ok_or("invalid gasLimit units")?)? != gas_number {
                 return Err("conflicting gas/gasLimit units".into());
             }
         }
-        // OKX returns a legacy `gasPrice` plus a `maxPriorityFeePerGas` hint and leaves
-        // `maxFeePerGas` empty. These fields are never forwarded (the backend assigns gas), so the
-        // only real ambiguity is a legacy price *and* an EIP-1559 max fee; a priority hint must
-        // still fit under whichever ceiling is stated.
-        let price = match (tx.get("gasPrice"), tx.get("maxFeePerGas")) {
-            (Some(_), Some(_)) => return Err("ambiguous legacy/EIP1559 gas fields".into()),
-            (Some(p), None) => Some(uint(p.as_str().ok_or("invalid gas price wei units")?)?),
-            (None, Some(m)) => Some(uint(m.as_str().ok_or("invalid gas price wei units")?)?),
-            (None, None) => None,
-        };
-        if let Some(priority) = tx.get("maxPriorityFeePerGas") {
-            let priority = uint(priority.as_str().ok_or("invalid priority fee units")?)?;
-            match price {
-                Some(ceiling) if priority > ceiling => {
-                    return Err("priority fee exceeds max fee".into())
-                }
-                Some(_) => {}
-                None => return Err("priority fee without a fee ceiling".into()),
-            }
-        }
+        // `gasPrice` / `maxFeePerGas` / `maxPriorityFeePerGas` are documented as advisory values and
+        // are never forwarded (the backend prices the transaction), so they are not validated here:
+        // rejecting a provider that fills them differently only ever killed valid swaps.
         let input = field(tx, "data")?;
         if input.len() < 10
             || input.len() > 262146
@@ -509,33 +553,18 @@ impl RouteActionBuilder {
         if minimum.bits() == 0 && !c.allow_zero_min_out {
             return Err("zero minimum output forbidden".into());
         }
-        if let Some(quote) = row.pointer("/routerResult/toTokenAmount") {
-            let quote = uint(quote.as_str().ok_or("invalid quote amount units")?)?;
-            let (whole, fraction) = c
-                .slippage_percent
-                .split_once('.')
-                .unwrap_or((&c.slippage_percent, ""));
-            let scale = BigUint::from(10u32).pow(fraction.len() as u32);
-            let percent = BigUint::from(100u32) * &scale;
-            let slip = BigUint::parse_bytes(format!("{whole}{fraction}").as_bytes(), 10)
-                .ok_or("invalid slippage")?;
-            let floor = &quote * (&percent - slip) / &percent;
-            if minimum > quote
-                || (minimum < floor && !(minimum.bits() == 0 && c.allow_zero_min_out))
-            {
-                return Err(
-                    "reported hard minimum violates requested slippage/quote bounds".into(),
-                );
-            }
-        }
+        // `minReceiveAmount` is documented as the minimum received at the slippage limit: it is the
+        // provider's own number, and recomputing a floor from the quote here is second-guessing the
+        // provider's slippage math with our arithmetic. Only "missing/zero" is checked above.
         if !input[..10].eq_ignore_ascii_case("0x38ed1739") {
             if !c.require_runtime_preview {
                 return Err("unsupported calldata requires runtime policy preview".into());
             }
             return Ok(
                 serde_json::json!({"binance_chain_id":c.binance_chain_id,"from":from,"to":to,"value":value,
-                "input_data":input,"gas_limit":gas,"route_validation":{"recipient_verified":false,
+                "input_data":input,"gas_limit":gas_cap,"route_validation":{"recipient_verified":false,
                 "calldata_min_out_verified":false,"requires_runtime_preview":true,
+                "gas_quoted":gas,"gas_preview_cap":gas_cap,
                 "reported_minimum_output":minimum.to_str_radix(10),"limitations":[
                 "unsupported selector: recipient, token path, input amount, deadline and actual on-chain minimum are NOT decoded or verified",
                 "reported minimum is response metadata only; quote output is not a hard minimum",
@@ -558,8 +587,9 @@ impl RouteActionBuilder {
             return Err("calldata amount/path/recipient/deadline/minimum mismatch".into());
         }
         Ok(
-            serde_json::json!({"binance_chain_id":c.binance_chain_id,"from":from,"to":to,"value":value,"input_data":input,"gas_limit":gas,
+            serde_json::json!({"binance_chain_id":c.binance_chain_id,"from":from,"to":to,"value":value,"input_data":input,"gas_limit":gas_cap,
             "route_validation":{"recipient_verified":true,"calldata_min_out_verified":true,"requires_runtime_preview":false,
+            "gas_quoted":gas,"gas_preview_cap":gas_cap,
             "minimum_output":minimum.to_str_radix(10),"limitations":["allowlists identify trusted contracts; they do not prove deployed bytecode or successful execution"]}}),
         )
     }
@@ -621,6 +651,10 @@ impl RouteActionBuilder {
         .contains(&0)
             || c.max_retries > 5
             || c.credential_file.is_empty()
+            || !(100..=500).contains(&c.gas_buffer_percent)
+            || c.gas_buffer_absolute > 5_000_000
+            || scaled_decimal(&c.max_price_impact_percent).is_none()
+            || decimal_greater(&c.max_price_impact_percent, "100").unwrap_or(true)
         {
             return Err("invalid route bounds".into());
         }

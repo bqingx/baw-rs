@@ -23,7 +23,7 @@
 
 | | |
 |---|---|
-| **命令面** | 45 条叶子命令：`auth`、`wallet`、`market-order`、`contract-call`、`sign-message`、`approvals`、`task`（事件任务）、`wallets`（钱包生命周期与控制面）、`cli-check`、`skill-check`、`serve`，另有独立入口 `openfour`（`quote-buy` / `encode-buy`） |
+| **命令面** | 46 条叶子命令：`auth`、`wallet`、`market-order`、`contract-call`、`sign-message`、`approvals`、`task`（事件任务）、`wallets`（钱包生命周期与控制面）、`cli-check`、`skill-check`、`serve`，另有独立入口 `openfour`（`quote-buy` / `encode-buy`） |
 | **交易** | 写操作要求显式授权；普通外部签名支持「预览 → 人工确认 → 执行」。`contract-call fire` 是显式授权的自动预览→执行，没有中途人工审核 |
 | **查询** | 余额、历史、额度、gas、授权（approvals）、Agent ID、会话到期时间 |
 | **多钱包** | 一个后台进程管理多个具名钱包，各自独立登录，可并行；钱包名是全局参数 `--wallet <NAME>` |
@@ -40,6 +40,22 @@
 这不是新增 CLI 子命令；代码接口不等于已部署或实盘验收。
 基准命令与指标口径见该文，本文不提供未经实测的加速数字。
 
+### 链上授权（`approvals approve`）
+
+`approvals` 除了查询与撤销，还能直接发 ERC-20 `approve(spender, amount)`：calldata 本地拼
+（`0x095ea7b3`），走与 `contract-call fire` 同一条「预览 → 执行」核心，不需要外部脚本或聚合器接口。
+
+```sh
+baw-rs --wallet w1 approvals approve --binanceChainId 56 \
+  --tokenContract <代币> --spender <被授权方> --amount <最小单位> \
+  --from <钱包地址> --confirm --operation-id approve-$(date +%s) --json
+```
+
+- `--amount` 收最小单位；`max`（uint256 最大值，即无限授权）**必须**再加 `--unlimited` 才放行
+- `--policy <文件>` 可选：钉住代币合约、value、选择器、calldata 摘要和 gas 上限，任一项不符即拒绝
+- 返回里带 `approval.unlimited` 与 `approval.policy`，便于事后核对
+- 授权有成本且长期有效，任务要花新代币前先核对额度，别在抢单窗口里现场 approve
+
 自动触发合约调用见 [原生任务](docs/native-event-tasks.md)：常驻订阅 WS 已出块日志，或显式选择
 **待处理交易**，按发送方/目标/方法/静态参数匹配后执行任意已授权调用。
 **必须填写有效时长 `valid_for_ms`，从启用起算，无固定五分钟上限**；不再让用户填写截止日期。
@@ -49,7 +65,7 @@
 ## Agent Skill
 
 面向 AI Agent 的中文版操作技能：[`skills/baw-rs/SKILL.md`](skills/baw-rs/SKILL.md)。
-覆盖本仓库实际提供的 45 条叶子命令（已裁剪官方 baw 中的 DeFi、预测、跟踪、信号、榜单、限价与 x402 面），
+覆盖本仓库实际提供的 46 条叶子命令（已裁剪官方 baw 中的 DeFi、预测、跟踪、信号、榜单、限价与 x402 面），
 并记录 Rust 新增的多钱包、原生事件任务与离线编码路径。
 附实际 `--help` 参数快照、登录/交易/签名/对账流程和仅离线的校验工具，不携带任何登录态。
 

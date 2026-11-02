@@ -12,10 +12,11 @@ Token approvals: list, detail, revoke
 Usage: baw-rs approvals [OPTIONS] <COMMAND>
 
 Commands:
-  list    
-  detail  
-  revoke  
-  help    Print this message or the help of the given subcommand(s)
+  list     
+  detail   
+  revoke   
+  approve  `approvals approve`: an ERC-20 `approve(spender, amount)` submitted through the same preview-then-execute path as `contract-call fire`
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --wallet <NAME>
@@ -146,4 +147,71 @@ Options:
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
           Print help
+```
+
+## `approvals approve`
+
+```text
+`approvals approve`: an ERC-20 `approve(spender, amount)` submitted through the same preview-then-execute path as `contract-call fire`.
+
+Measured 2026-11-02: the OKX swap response carries no signal that an approval is missing (an unapproved token still comes back with an empty `signatureData`), so a task that spends a new token fails at simulation unless the allowance exists. Building the approval here keeps the whole path inside baw-rs instead of shelling out to another tool.
+
+Usage: baw-rs approvals approve [OPTIONS] --binanceChainId <binanceChainId> --tokenContract <address> --spender <address> --amount <amount> --from <address>
+
+Options:
+      --binanceChainId <binanceChainId>
+          Binance chain ID
+
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
+
+      --tokenContract <address>
+          Token contract address
+
+      --spender <address>
+          Spender contract address (OKX `dexContractAddress`)
+
+      --amount <amount>
+          Raw amount in the token's smallest unit, or `max` for uint256::MAX (needs --unlimited)
+
+      --unlimited
+          Permit uint256::MAX, i.e. an approval that stays valid for the whole balance forever. `--amount max` is refused without this flag so an unlimited grant has to be asked for
+
+      --json
+          
+
+      --policy <POLICY>
+          Optional policy file. Pins token contract, value, selector, calldata digest and gas cap; anything that does not match is refused before the preview is requested
+
+      --from <address>
+          Sender wallet address on the target chain
+
+      --timing
+          
+
+      --confirm
+          
+
+      --gasLimit <n>
+          Optional gas limit for the approve call
+
+      --operation-id <OPERATION_ID>
+          
+
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+          
+
+      --warm
+          Route this command through the resident warm server when it is running
+
+      --skip-prechecks
+          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode
+          
+          [env: BAW_RS_SKIP_PRECHECKS=]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```

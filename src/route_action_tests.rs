@@ -71,7 +71,11 @@ async fn build_only_fetches_fresh_swap_and_authenticates_exact_query() {
     assert!(rx.try_recv().is_err());
     let call = b.build(&json!({"event":"first"})).await.unwrap();
     assert_eq!(call["input_data"], calldata(99));
-    assert_eq!(call["gas_limit"], 200000);
+    // The provider's 200k point estimate is widened by the documented +50% before it becomes the
+    // preview cap (200k * 1.5 = 300k, which is above 200k + 80k).
+    assert_eq!(call["gas_limit"], 300000);
+    assert_eq!(call["route_validation"]["gas_quoted"], 200000);
+    assert_eq!(call["route_validation"]["gas_preview_cap"], 300000);
     assert_eq!(call["route_validation"]["recipient_verified"], true);
     let req = rx.recv().await.unwrap();
     let first = req.lines().next().unwrap();
@@ -159,14 +163,6 @@ fn response_echoes_and_gas_units_are_fail_closed() {
     let cases = [
         ("/data/0/routerResult/chainIndex", json!("1")),
         ("/data/0/routerResult/fromTokenAmount", json!("1")),
-        (
-            "/data/0/routerResult/fromToken/tokenContractAddress",
-            json!(OUTPUT),
-        ),
-        (
-            "/data/0/routerResult/toToken/tokenContractAddress",
-            json!(INPUT),
-        ),
         ("/data/0/tx/chainId", json!("1")),
         ("/data/0/tx/from", json!(ROUTER)),
         ("/data/0/tx/to", json!(WALLET)),
@@ -175,11 +171,9 @@ fn response_echoes_and_gas_units_are_fail_closed() {
         ("/data/0/tx/gas", json!("500001")),
         ("/data/0/tx/gas", json!(0)),
         ("/data/0/tx/gasLimit", json!("200001")),
-        ("/data/0/tx/gasPrice", json!("1e9")),
-        ("/data/0/tx/maxFeePerGas", json!("1")),
         ("/data/0/tx/value", json!("1")),
         ("/data/0/tx/recipient", json!(ROUTER)),
-        ("/data/0/approveAddress", json!(WALLET)),
+        ("/data/0/routerResult/priceImpactPercent", json!("5")),
         ("/data/0/tx/minReceiveAmount", json!(null)),
     ];
     for (pointer, value) in cases {
@@ -411,58 +405,72 @@ fn duration_bounds_prevent_instant_overflow_and_additional_signing_is_not_silent
 }
 
 #[test]
-fn spender_is_distinct_from_router_and_echoes_must_match_configured_approval_target() {
-    let (_f, mut c) = fixture();
-    c["expected_spender"] = json!(INPUT);
-    c["require_runtime_preview"] = json!(true);
-    c["allowed_selectors"] = json!(["0x12345678"]);
-    let b = RouteActionBuilder::new(&c).unwrap();
+fn v2_router_still_must_be_the_configured_spender() {
+    // The V2 path decodes the calldata, so `tx.to` is the spender and stays bound to the config.
+    // The undocumented `approveAddress` / `approveContract` echoes are not part of the V6 schema and
+    // no longer fail an otherwise valid swap.
+    let (_f, c) = fixture();
     let mut r = response(99);
-    r["data"][0]["tx"]["data"] = json!("0x12345678");
-    r["data"][0]["approveContract"] = json!(INPUT);
-    assert!(b.validate_response(&r).is_ok());
     r["data"][0]["approveContract"] = json!(WALLET);
-    assert!(b.validate_response(&r).is_err());
-    c["allowed_selectors"] = json!(["0x38ed1739"]);
     assert!(
         RouteActionBuilder::new(&c)
             .unwrap()
+            .validate_response(&r)
+            .is_ok(),
+        "undocumented approval echo must not fail the swap"
+    );
+    let mut wrong_spender = c;
+    wrong_spender["expected_spender"] = json!(INPUT);
+    assert!(
+        RouteActionBuilder::new(&wrong_spender)
+            .unwrap()
             .validate_response(&response(99))
             .is_err(),
-        "V2 router itself is the spender"
+        "V2 router itself must be the configured spender"
     );
 }
 
 #[test]
-fn hard_minimum_must_honor_requested_slippage_without_treating_quote_as_calldata_minimum() {
-    let (_f, c) = fixture();
+fn zero_minimum_is_refused_but_the_reported_minimum_is_not_re_derived_locally() {
+    // `minReceiveAmount` is documented as the minimum received at the slippage limit: the provider's
+    // number inside the calldata. Recomputing a floor from the quote only second-guesses its slippage
+    // arithmetic, so only "missing/zero" is refused here.
+    let (_f, mut c) = fixture();
+    c["allowed_selectors"] = json!(["0x12345678"]);
+    c["require_runtime_preview"] = json!(true);
     let b = RouteActionBuilder::new(&c).unwrap();
     let mut r = response(99);
+    r["data"][0]["tx"]["data"] = json!("0x12345678");
+    r["data"][0]["tx"]["minReceiveAmount"] = json!("0");
+    assert!(b.validate_response(&r).is_err(), "zero minimum accepted");
+    let mut r = response(99);
+    r["data"][0]["tx"]["data"] = json!("0x12345678");
     r["data"][0]["routerResult"]["toTokenAmount"] = json!("10000");
+    r["data"][0]["tx"]["minReceiveAmount"] = json!("1");
     assert!(
-        b.validate_response(&r).is_err(),
-        "accepted minimum far below requested slippage"
-    );
-    r["data"][0]["routerResult"]["toTokenAmount"] = json!("98");
-    assert!(
-        b.validate_response(&r).is_err(),
-        "accepted minimum exceeding quote"
+        b.validate_response(&r).is_ok(),
+        "a reported minimum is no longer re-derived from the quote"
     );
 }
 
 #[test]
-fn encoded_approval_metadata_cannot_hide_a_different_spender() {
+fn undocumented_approval_metadata_is_ignored_instead_of_failing_the_swap() {
+    // Neither `approveTransaction` nor its encoded form appears in the documented swap schema.
+    // Validating it only produced failures, so any value is ignored; the real signal for "this swap
+    // expects an approval" is a non-empty `signatureData`, which is still refused.
     let (_f, c) = fixture();
     let b = RouteActionBuilder::new(&c).unwrap();
-    let mut r = response(99);
-    r["data"][0]["approveTransaction"] =
-        json!(json!({"approveContract":WALLET,"approveTxCalldata":"0x"}).to_string());
-    assert!(b.validate_response(&r).is_err());
-    r["data"][0]["approveTransaction"] =
-        json!(json!({"approveContract":ROUTER,"approveTxCalldata":"0x"}).to_string());
-    assert!(b.validate_response(&r).is_ok());
-    r["data"][0]["approveTransaction"] = json!("malformed synthetic-secret");
-    assert!(b.validate_response(&r).is_err());
+    for value in [
+        json!(json!({"approveContract": WALLET, "approveTxCalldata": "0x"}).to_string()),
+        json!("malformed synthetic-secret"),
+    ] {
+        let mut r = response(99);
+        r["data"][0]["approveTransaction"] = value;
+        assert!(
+            b.validate_response(&r).is_ok(),
+            "approval metadata rejected"
+        );
+    }
 }
 
 #[test]
@@ -523,6 +531,27 @@ fn strict_config_accepts_exact_integer_rejects_unknown_or_unsafe_fields() {
 }
 
 #[test]
+fn gas_buffer_widens_the_cap_without_exceeding_the_configured_ceiling() {
+    // The provider's point estimate is what gets buffered; a 130% / +80k headroom keeps a
+    // quote that sits within 0.2% of the requirement from failing the backend simulation.
+    assert_eq!(buffered_gas_limit(300_474, 130, 80_000, 1_200_000), 390_616);
+    assert_eq!(
+        buffered_gas_limit(1_013_123, 130, 80_000, 1_200_000),
+        1_200_000
+    );
+    assert_eq!(buffered_gas_limit(250_000, 100, 0, 1_200_000), 250_000);
+    // A cap below the quote never happens (the builder rejects gas > cap first), but the clamp must
+    // still bind so a future caller cannot exceed the ceiling.
+    assert_eq!(buffered_gas_limit(400_000, 130, 80_000, 300_000), 300_000);
+    assert_eq!(buffered_gas_limit(0, 130, 80_000, 1_200_000), 0);
+    assert_eq!(buffered_gas_limit(400_000, 130, 80_000, 0), 0);
+    assert_eq!(
+        buffered_gas_limit(u64::MAX, 500, u64::MAX, u64::MAX),
+        u64::MAX
+    );
+}
+
+#[test]
 fn credential_file_is_regular_owner_only_and_errors_do_not_echo_secrets() {
     let (f, c) = fixture();
     std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -537,4 +566,52 @@ fn credential_file_is_regular_owner_only_and_errors_do_not_echo_secrets() {
     let mut c = c;
     c["credential_file"] = json!(link);
     assert!(RouteActionBuilder::new(&c).is_err());
+}
+
+#[test]
+fn price_impact_threshold_is_compared_exactly_and_missing_values_are_tolerated() {
+    let (f, mut c) = fixture();
+    c["max_price_impact_percent"] = json!("1.5");
+    let b = RouteActionBuilder::new(&c).unwrap();
+    // Within threshold (1.49 < 1.5) passes; the field is advisory and may be absent.
+    let mut ok = response(99);
+    ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("1.49");
+    assert!(b.validate_response(&ok).is_ok());
+    ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("1.5");
+    assert!(b.validate_response(&ok).is_ok(), "equal is not above");
+    // Above threshold is refused before anything is signed.
+    // OKX returns a negative impact when the trade is favourable (measured: 1 U → BNB = "-0.08").
+    ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("-0.08");
+    assert!(
+        b.validate_response(&ok).is_ok(),
+        "favourable impact refused"
+    );
+    ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("-99");
+    assert!(
+        b.validate_response(&ok).is_ok(),
+        "large negative impact refused"
+    );
+    ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("1.51");
+    let err = b.validate_response(&ok).unwrap_err();
+    assert!(err.contains("price impact"), "{err}");
+    ok.pointer_mut("/data/0/routerResult")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .remove("priceImpactPercent");
+    assert!(b.validate_response(&ok).is_ok());
+    // Exact decimal comparison, no floating point.
+    assert_eq!(decimal_greater("0.06", "2"), Some(false));
+    assert_eq!(decimal_greater("2.0", "2"), Some(false));
+    assert_eq!(decimal_greater("2.0001", "2"), Some(true));
+    assert_eq!(decimal_greater("-1", "2"), None);
+    assert_eq!(decimal_greater("1e3", "2"), None);
+    // A malformed threshold is rejected at load.
+    let mut bad = c.clone();
+    bad["max_price_impact_percent"] = json!("abc");
+    assert!(RouteActionBuilder::new(&bad).is_err());
+    let mut too_big = c;
+    too_big["max_price_impact_percent"] = json!("101");
+    assert!(RouteActionBuilder::new(&too_big).is_err());
+    drop(f);
 }
