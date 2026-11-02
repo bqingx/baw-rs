@@ -413,8 +413,10 @@ impl Config {
                 .ok()
                 .and_then(|p| p.max_gas_limit)
             {
+                // A route that leaves the cap unset uses the built-in ceiling, so the policy has to
+                // be written in explicitly; otherwise a wide default would silently outrank it.
                 let route_cap = config.get("max_gas_limit").and_then(Value::as_u64);
-                if route_cap.is_some_and(|cap| cap > pol) {
+                if route_cap.map_or(true, |cap| cap == 0 || cap > pol) {
                     config["max_gas_limit"] = json!(pol);
                 }
             }

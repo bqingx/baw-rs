@@ -244,7 +244,7 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 
 ## 路由 gas 与 WS 帧的既定策略
 
-- `route` 动作把报价 `tx.gas` 当**预览上限**用，并按 `gas_buffer_percent`（默认 130）+ `gas_buffer_absolute`（默认 80000）加余量、再用 `max_gas_limit` 夹住；`route_validation.gas_quoted` / `gas_preview_cap` 两个字段会写进结果，方便对账。上限不是费用，后端按实际消耗收费。
+- `route` 动作把报价 `tx.gas` 当**预览上限**用：默认按 `max(报价×3, 报价+500000)`（`gas_buffer_percent=300`、`gas_buffer_absolute=500000`）加余量，再用 `max_gas_limit` 夹住。`max_gas_limit` 可省略，省略即用内置上限 **5,000,000**；`route_validation.gas_quoted` / `gas_preview_cap` 会写进结果，方便对账。**上限不是费用**，链上只按 `gasUsed` 收费，所以放宽上限不花钱，只会减少"报价跳高就整单拒"的失败。
 - WS 上非本订阅的帧只记录（前 20 条进 `serve.log`）并忽略，不再整任务判死；无法解析的帧和关闭/传输错误按协议故障重连。查找“任务为什么死了”先看 registry 目录下的 `serve.log`（`$BAW_RS_REGISTRY/serve.log`，默认 `$HOME/wallets/registry/serve.log`）。
 - 非成功终态会落盘 `detail.call`（chain/from/to/value/gas_limit/input_data），加上 `Binance API code NNNNN: <原因>` 的原文（仅 3518xx 家族保留原因），所以失败可复现，不用靠猜。
 - 失败后**不要**指望自动重试：`retry_policy` 是 `never`，要重来必须换新任务 ID 重新 load + arm。
@@ -255,14 +255,16 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 - `route` 动作装载时自动加一条授权检查（`allowance(user, expected_spender) ≥ amount`），`arm` 不通过就失败并报出实际额度；`skip_allowance_check: true` 可关。OKX 在授权为 0 时同样返回空 `signatureData`，所以"缺授权"只能靠链上读，不能靠响应字段判断。
 - 任务 `policy.maxGasLimit` 是硬上限：装载时会把 route 动作的 `max_gas_limit` 收到不超过它，运行时再夹一次。配置里两个值冲突时以 policy 为准，不要指望触发时的 gas 缓冲能越过它。
 - WS 协议故障（坏帧/非文本帧/外来帧洪泛 >50）有独立预算：累计 5 次判 FAILED，每次重连前指数退避；不再出现无上限热重连。
-- 路由校验只做 V6 文档定义的项（chain/from/to 白名单/选择器/金额回显/value/gas/minReceive 非零/滑点回显/signatureData 非空即停），外加 `max_price_impact_percent`（默认 2%）价格冲击阈值；`gasPrice`/`maxFeePerGas`、`approve*` 回声、用滑点重算最小收到量都已删除——文档没定义这些，校验它们只会误杀。
-- gas 缓冲默认 **150%**（OKX 文档要求对 `gas` 加 50%），另有 `gas_buffer_absolute` 兜底。
+- 路由校验只做 V6 文档定义的项（chain/from/to 白名单/金额回显/value/gas 上限/minReceive 非零/滑点回显/signatureData 非空即停），**选择器白名单已移除**（只查 calldata 形状），外加 `max_price_impact_percent`（默认 2%）价格冲击阈值；`gasPrice`/`maxFeePerGas`、`approve*` 回声、用滑点重算最小收到量都已删除——文档没定义这些，校验它们只会误杀。
+- gas 余量默认 **×3 / +500,000**，上限 5,000,000；实测同一笔 1 U→BNB 的报价在 310k–1,013k 之间跳，卡太紧会把能成的单子拒掉。
 - 后端错误文本只对 `351805/351806/351807/351818/351821` 保留原因；`351801/351802/351803/351804` 与其它码只留裸码，避免把会话材料写进记录。
 
 ## 路由配置快照会过期，一次性任务没有第二次机会
 
-- OKX 的 `tx.to`、选择器和 gas 估计会随行情与内部版本变化：同一条 1 USDT→BNB 路由，几分钟内选择器从 `0xf2c42696` 换成 `0x9871efa4`、gas 从 292k 涨到 1,013k。`allowed_selectors` 只盯当下的值，下一次就会因“selector 不在白名单”整单失败；`max_gas_limit` 卡太紧同理（`gas > cap` 时直接拒绝整单）。
-- 装载前必做：现取一次 `/swap` 记下 `to`/selector/`gas`，`allowed_selectors` 至少放进当前两个值，`max_gas_limit` 按实测 gas 留 1.2–1.5 倍余量（实测 1,013,123 → 设 1,200,000）。
+- 三个字段的稳定性不同，别混为一谈（2026-11-02 实测 5 个交易对）：
+  - **稳定**：`tx.to`（这次 5 个对全是 `0x5994814f…2dec`）、`expected_spender`（OKX `/approve-transaction` 返回的 `dexContractAddress`，全平台按链固定，可现取）
+  - **不稳定**：选择器（同一条 U→BNB 数小时内从 `0xf2c42696` 换成 `0x9871efa4` 又换回来）、gas 估算（310k→1,013k→836k）、中间 hop 与池子地址（每单都可能变）
+- 因此：只钉死 router 白名单，**不要**给选择器白名单、也不要把中间 hop 写进白名单。装载前现取一次 `/swap` 确认 `to` 与 gas 量级即可。
 - `retry_policy` 是 `never`：预览被后端拒一次（错误原文形如 `Binance API code 351805`，属模拟阶段拒绝）整个一次性任务就落 FAILED 并释放钱包，不会有第二次尝试。长时间监听前先单独 `contract-call preview` 跑通，再 `arm`。
 - 命中失败后先看 `detail.submission_attempted`：`false` 表示一笔交易都没发、余额不会动，可以直接换新任务 ID 重来；只有 `true` 才需要按未知结果去链上对账。
 

@@ -125,13 +125,14 @@ baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输
 
 ### `route`：事件后实时取路由
 
-路由构造器把报价 gas 当**预览上限**使用，并按 `gas_buffer_percent`（默认 **150**，OKX 文档明确
-要求"increase this value by 50%"）与 `gas_buffer_absolute`（默认 80000）加余量，最后被 `max_gas_limit`
-与任务 `policy.maxGasLimit` 中较小者夹住：上限不是费用，后端按实际消耗收费。实测同一笔 1 USDT→BNB
-的报价 gas 在 230,400–1,013,123 之间跳，与真实需求余量低到 0.2%。
+路由构造器把报价 gas 当**预览上限**使用：默认按 `max(报价×3, 报价+500000)`（`gas_buffer_percent=300`、
+`gas_buffer_absolute=500000`）加余量，再被 `max_gas_limit` 与任务 `policy.maxGasLimit` 中较小者夹住。
+`max_gas_limit` 可省略，省略即用内置上限 **5,000,000**。上限不是费用——链上只按 `gasUsed` 收费，
+放宽上限不花钱，只减少"报价跳高就整单拒"的失败。实测同一笔 1 U→BNB 的报价 gas 在 310,620–1,013,123
+之间跳，真实需求与报价的余量低到 0.2%。
 
 校验以 OKX V6 文档（https://web3.okx.com/onchainos/dev-docs/trade/dex-swap）为准，只保留文档定义
-且能挡住真实风险的项：`code`、单条 `data`、链 ID、`tx.from`、`tx.to` 白名单、选择器白名单、
+且能挡住真实风险的项：`code`、单条 `data`、链 ID、`tx.from`、`tx.to` 白名单、
 calldata 形状、`fromTokenAmount` 回显、`tx.value` 上限、`minReceiveAmount` 非零、`gas` 上限、
 `slippagePercent` 回显、`signatureData` 非空即停。`gasPrice`/`maxFeePerGas`/`maxPriorityFeePerGas`
 不再交叉校验（文档为参考值且不转发）；`minReceiveAmount` 不再用滑点重算下界（文档定义即为滑点极限

@@ -16,8 +16,17 @@ struct Config {
     user_wallet_address: String,
     expected_spender: String,
     allowed_router_addresses: Vec<String>,
+    /// Retired. A selector allowlist cannot survive provider route changes — measured 2026-11-02, the
+    /// same 1 U → BNB quote flipped between `0xf2c42696` and `0x9871efa4` within hours — so the field
+    /// is still accepted (older task files carry it) and deliberately ignored.
+    #[serde(default)]
+    #[allow(dead_code)]
     allowed_selectors: Vec<String>,
     max_value_wei: String,
+    /// Absolute gas ceiling for this task. Omitted/0 means "use the built-in per-transaction
+    /// ceiling": the cap only bounds the gas *limit* we hand to the backend, never the fee, so a
+    /// wide ceiling costs nothing when unused and the chain still charges `gasUsed`.
+    #[serde(default)]
     max_gas_limit: u64,
     /// Preview gas cap headroom: the cap handed to the runtime preview is
     /// `max(gas * percent/100, gas + absolute)`, clamped to `max_gas_limit`.
@@ -52,10 +61,23 @@ fn default_max_price_impact_percent() -> String {
 }
 /// OKX's own documentation tells callers to raise the quoted gas limit by 50% before submitting.
 fn default_gas_buffer_percent() -> u64 {
-    150
+    300
 }
 fn default_gas_buffer_absolute() -> u64 {
-    80_000
+    500_000
+}
+/// Hard per-transaction ceiling for the gas *limit*. Measured 2026-11-02: the same 1 U → BNB quote
+/// ranged from 310,620 to 1,013,123 gas within hours, so a tight configured cap silently turned
+/// viable tasks into "OKX gas exceeds gas-unit cap". The ceiling bounds what we are willing to put
+/// in a transaction; it never sets the fee, because the chain charges `gasUsed`.
+const GAS_CEILING: u64 = 5_000_000;
+/// The ceiling actually applied: the configured value when set, else the built-in maximum.
+fn gas_ceiling(c: &Config) -> u64 {
+    if c.max_gas_limit == 0 {
+        GAS_CEILING
+    } else {
+        c.max_gas_limit
+    }
 }
 
 /// The provider quotes a point estimate for exactly the calldata it built. Measured headroom
@@ -519,15 +541,13 @@ impl RouteActionBuilder {
             .to_str_radix(10)
             .parse::<u64>()
             .map_err(|_| "gas unit overflow")?;
-        if gas == 0 || gas > c.max_gas_limit {
-            return Err("OKX gas exceeds gas-unit cap".into());
+        let ceiling = gas_ceiling(&c);
+        if gas == 0 || gas > ceiling {
+            return Err(format!(
+                "OKX gas exceeds gas-unit cap (quoted {gas}, cap {ceiling})"
+            ));
         }
-        let gas_cap = buffered_gas_limit(
-            gas,
-            c.gas_buffer_percent,
-            c.gas_buffer_absolute,
-            c.max_gas_limit,
-        );
+        let gas_cap = buffered_gas_limit(gas, c.gas_buffer_percent, c.gas_buffer_absolute, ceiling);
         if let Some(n) = tx.get("gasLimit") {
             if uint(n.as_str().ok_or("invalid gasLimit units")?)? != gas_number {
                 return Err("conflicting gas/gasLimit units".into());
@@ -536,18 +556,20 @@ impl RouteActionBuilder {
         // `gasPrice` / `maxFeePerGas` / `maxPriorityFeePerGas` are documented as advisory values and
         // are never forwarded (the backend prices the transaction), so they are not validated here:
         // rejecting a provider that fills them differently only ever killed valid swaps.
+        // Only the shape of the calldata is checked here. A selector allowlist was removed:
+        // measured 2026-11-02, the same 1 U → BNB quote flipped between 0xf2c42696 and 0x9871efa4
+        // within hours, so pinning selectors only ever turned a viable one-shot task into
+        // "invalid or forbidden calldata selector". The calldata is opaque either way; the real
+        // guards are the pinned router, value cap, gas ceiling, non-zero minimum and the backend's
+        // own simulation.
         let input = field(tx, "data")?;
         if input.len() < 10
             || input.len() > 262146
             || !input.starts_with("0x")
             || input.len() % 2 != 0
             || !input[2..].bytes().all(|b| b.is_ascii_hexdigit())
-            || !c
-                .allowed_selectors
-                .iter()
-                .any(|s| s.eq_ignore_ascii_case(&input[..10]))
         {
-            return Err("invalid or forbidden calldata selector".into());
+            return Err("malformed calldata".into());
         }
         let minimum = uint(field(tx, "minReceiveAmount")?)?;
         if minimum.bits() == 0 && !c.allow_zero_min_out {
@@ -636,11 +658,10 @@ impl RouteActionBuilder {
         {
             return Err("explicit router allowlist required".into());
         }
-        if c.allowed_selectors.is_empty() || c.allowed_selectors.iter().any(|s| !hex_shape(s, 4)) {
-            return Err("explicit selector allowlist required".into());
+        if c.max_gas_limit > GAS_CEILING {
+            return Err("gas ceiling above the per-transaction limit".into());
         }
         if [
-            c.max_gas_limit,
             c.deadline_unix_ms,
             c.timeout_ms,
             c.connect_timeout_ms,
@@ -651,7 +672,7 @@ impl RouteActionBuilder {
         .contains(&0)
             || c.max_retries > 5
             || c.credential_file.is_empty()
-            || !(100..=500).contains(&c.gas_buffer_percent)
+            || !(100..=1000).contains(&c.gas_buffer_percent)
             || c.gas_buffer_absolute > 5_000_000
             || scaled_decimal(&c.max_price_impact_percent).is_none()
             || decimal_greater(&c.max_price_impact_percent, "100").unwrap_or(true)

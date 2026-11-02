@@ -71,11 +71,11 @@ async fn build_only_fetches_fresh_swap_and_authenticates_exact_query() {
     assert!(rx.try_recv().is_err());
     let call = b.build(&json!({"event":"first"})).await.unwrap();
     assert_eq!(call["input_data"], calldata(99));
-    // The provider's 200k point estimate is widened by the documented +50% before it becomes the
-    // preview cap (200k * 1.5 = 300k, which is above 200k + 80k).
-    assert_eq!(call["gas_limit"], 300000);
+    // The provider's 200k point estimate is widened before it becomes the preview cap: the default
+    // headroom is max(200k * 3, 200k + 500k) = 700k, under the configured 2,000,000 ceiling.
+    assert_eq!(call["gas_limit"], 700000);
     assert_eq!(call["route_validation"]["gas_quoted"], 200000);
-    assert_eq!(call["route_validation"]["gas_preview_cap"], 300000);
+    assert_eq!(call["route_validation"]["gas_preview_cap"], 700000);
     assert_eq!(call["route_validation"]["recipient_verified"], true);
     let req = rx.recv().await.unwrap();
     let first = req.lines().next().unwrap();
@@ -168,7 +168,7 @@ fn response_echoes_and_gas_units_are_fail_closed() {
         ("/data/0/tx/to", json!(WALLET)),
         ("/data/0/tx/gas", json!("200000.1")),
         ("/data/0/tx/gas", json!("05000")),
-        ("/data/0/tx/gas", json!("500001")),
+        ("/data/0/tx/gas", json!("2000001")),
         ("/data/0/tx/gas", json!(0)),
         ("/data/0/tx/gasLimit", json!("200001")),
         ("/data/0/tx/value", json!("1")),
@@ -191,7 +191,6 @@ fn response_echoes_and_gas_units_are_fail_closed() {
 #[test]
 fn opaque_allowlisted_calldata_requires_preview_and_never_claims_verified_recipient_or_minimum() {
     let (_f, mut c) = fixture();
-    c["allowed_selectors"] = json!(["0x12345678"]);
     let mut r = response(99);
     r["data"][0]["tx"]["data"] = json!("0x123456780000");
     r["data"][0]["tx"]["recipient"] = json!(WALLET);
@@ -436,7 +435,6 @@ fn zero_minimum_is_refused_but_the_reported_minimum_is_not_re_derived_locally() 
     // number inside the calldata. Recomputing a floor from the quote only second-guesses its slippage
     // arithmetic, so only "missing/zero" is refused here.
     let (_f, mut c) = fixture();
-    c["allowed_selectors"] = json!(["0x12345678"]);
     c["require_runtime_preview"] = json!(true);
     let b = RouteActionBuilder::new(&c).unwrap();
     let mut r = response(99);
@@ -503,7 +501,7 @@ fn fixture() -> (tempfile::NamedTempFile, Value) {
     let c = json!({"chain_index":"56","binance_chain_id":"56","from_token_address":INPUT,
       "to_token_address":OUTPUT,"amount":"10000000000000000001","slippage_percent":"0.5",
       "user_wallet_address":WALLET,"expected_spender":ROUTER,"allowed_router_addresses":[ROUTER],
-      "allowed_selectors":["0x38ed1739"],"max_value_wei":"0","max_gas_limit":500000,
+      "max_value_wei":"0","max_gas_limit":2000000,
       "deadline_unix_ms":u64::MAX,"timeout_ms":300,"connect_timeout_ms":100,"max_wait_ms":1500,
       "min_request_interval_ms":1,"max_retries":2,"retry_backoff_ms":5,"credential_file":f.path()});
     (f, c)
@@ -521,7 +519,6 @@ fn strict_config_accepts_exact_integer_rejects_unknown_or_unsafe_fields() {
         ("chain_index", json!("501")),
         ("expected_spender", json!("not-an-address")),
         ("allowed_router_addresses", json!([])),
-        ("allowed_selectors", json!(["0x123"])),
         ("max_wait_ms", json!(0)),
     ] {
         let mut bad = c.clone();
