@@ -650,6 +650,7 @@ pub(super) async fn auto_approve_if_needed(
             .ok_or_else(|| format!("auto_approve needs route field {k}"))
     };
     let token = field("from_token_address").map_err(|e| fail(e, false, Value::Null))?;
+    let token = token.trim().to_owned();
     let wallet = field("user_wallet_address").map_err(|e| fail(e, false, Value::Null))?;
     let spender = field("expected_spender").map_err(|e| fail(e, false, Value::Null))?;
     let amount = field("amount").map_err(|e| fail(e, false, Value::Null))?;
@@ -740,14 +741,20 @@ pub(super) async fn auto_approve_if_needed(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
+    // OperationGuard caps the id at 64 bytes, so the task name gets whatever the fixed prefix and
+    // the suffix leave over: 64 - len("autoauth-") - 1 - 9 = 44.
+    let suffix = format!("{:09}", nanos % 1_000_000_000);
+    let name_budget = 64usize.saturating_sub("autoauth-".len() + 1 + suffix.len());
+    let base = short_id(&config.task_id);
+    let base: String = base.chars().take(name_budget).collect();
     let mut begin = None;
     let mut op_id = String::new();
     for attempt in 0..3u32 {
-        op_id = format!(
-            "autoauth-{}-{}",
-            short_id(&config.task_id),
-            nanos.wrapping_add(attempt.wrapping_mul(7919))
+        let tail = format!(
+            "{:09}",
+            (nanos.wrapping_add(attempt.wrapping_mul(7919))) % 1_000_000_000
         );
+        op_id = format!("autoauth-{base}-{tail}");
         match crate::execution::OperationGuard::begin(
             &agent.entry.dir,
             &op_id,
@@ -951,14 +958,17 @@ pub(super) fn approve_policy_json(
 
 /// The native-coin sentinel: spending it needs no allowance.
 pub(super) fn spends_native(token: &str) -> bool {
-    // An empty/blank token is a config error, not "native": silently skipping the approval would
-    // turn a typo into a task that arms and then fails at the event.
+    // Only an explicit sentinel counts. A blank, truncated ("0x", "0x0") or padded token is a config
+    // error: silently treating it as native would skip the approval and fail at the event instead.
     let trimmed = token.trim();
-    if trimmed.is_empty() {
-        return false;
+    if trimmed.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE") {
+        return true;
     }
-    trimmed.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
-        || trimmed.trim_start_matches("0x").chars().all(|c| c == '0')
+    let body = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or("");
+    body.len() == 40 && body.bytes().all(|b| b == b'0')
 }
 
 /// `current < amount`, compared as exact integers. Split out so it is testable without a chain.

@@ -315,6 +315,12 @@ fn auto_approve_decides_on_exact_integers_and_skips_native_input() {
     assert!(!spends_native("   "));
     assert!(spends_native("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"));
     assert!(spends_native("0x0000000000000000000000000000000000000000"));
+    // Truncated or padded junk is a config error, not the native sentinel.
+    assert!(!spends_native("0x"));
+    assert!(!spends_native("0x0"));
+    assert!(spends_native(
+        "  0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE  "
+    ));
     assert!(!spends_native("0xcE24439F2D9C6a2289F741120FE202248B666666"));
 }
 
@@ -336,9 +342,13 @@ fn auto_approve_only_signs_calldata_it_built_itself() {
         "2000000000000000000"
     ));
     assert!(!approve_intent_matches("0x095ea7b3", spender, token_amount));
-    // Operation ids are restricted to [A-Za-z0-9_-] and 64 bytes.
+    // Operation ids are restricted to [A-Za-z0-9_-] and 64 bytes; the composed id must fit even for
+    // the longest task name the CLI accepts.
     let long = "a".repeat(80);
     assert!(short_id(&long).len() <= 48);
+    let name_budget = 64usize.saturating_sub("autoauth-".len() + 1 + 9);
+    let composed = format!("autoauth-{}-{:09}", &short_id(&long)[..name_budget], 1u32);
+    assert!(composed.len() <= 64, "{} bytes", composed.len());
     assert_eq!(short_id("task/../etc"), "tasketc");
     assert_eq!(short_id("///"), "task");
 }
