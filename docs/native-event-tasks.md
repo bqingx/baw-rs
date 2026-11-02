@@ -148,8 +148,11 @@ baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输
 - **只在 arm 时补，不在触发时补**：授权是一整笔交易（数秒、gas、等确认），塞进一次性触发路径等于在计时窗口里
   多插一笔可能失败的操作。
 - **顺序是先验证再花钱**：绑定/会话/`eth_chainId` 通过之后才发授权；链不对、绑定变了就在花钱之前失败。
-- **和普通写操作同等保护**：补授权走同一套 `OperationGuard`（钱包目录独占写锁 + 意向日志），并发 CLI 写不会同时签
-  同一个钱包；策略里的风险/授权变更门（`allowRisks`、`allowAuthorityChanges`）照样生效。
+- **和普通写操作同等保护**：补授权走同一套 `OperationGuard`（钱包目录独占写锁 + 意向日志，ID 为
+  `autoauth-<task>-<后缀>`，后缀避免重跑撞上永久日志），并发 CLI 写不会同时签同一个钱包。
+- **策略是按这笔 approve 现推的**：任务的 `policy` 钉的是 swap 的 router，直接套用会拒掉对代币合约的 approve。
+  所以补授权用一份派生策略——同链、同 `allowRisks`、`to` = 输入代币、`valueWei` = 0、`selector` = `0x095ea7b3`，
+  `allowAuthorityChanges` 置 true（这正是打开 `auto_approve` 所授权的那个变更）。真正把 swap 策略放宽仍然不允许。
 - **失败分两类**：确定没被受理的（预览被拒等）记 `submission_attempted:false`；提交超时或已广播但额度未落地记
   `submission_attempted:true` 并带 `txHash`/`orderId`，提示先对账再重新 arm——不会把可能在链上存在的交易说成"没发"。
 - **revert 会被识别**：轮询回执，`status 0x0` 直接报 revert，而不是干等额度。

@@ -674,8 +674,23 @@ pub(super) async fn auto_approve_if_needed(
             Value::Null,
         ));
     }
-    let policy = crate::policy::Policy::parse(&config.policy.to_string())
-        .map_err(|e| fail(format!("auto_approve policy: {e}"), false, Value::Null))?;
+    // The task policy pins the *swap* target, so it cannot be reused verbatim for the approve.
+    // Derive one that describes exactly this call instead: same chain and risk allowances, pinned to
+    // the token with selector + zero value, and `allowAuthorityChanges` set because the approval is
+    // the authority change the operator asked for by enabling `auto_approve`.
+    let approve_policy = crate::policy::Policy::parse(
+        &approve_policy_json(
+            &config.chain_id,
+            &token,
+            config
+                .policy
+                .get("allowRisks")
+                .cloned()
+                .unwrap_or(json!([])),
+        )
+        .to_string(),
+    )
+    .map_err(|e| fail(format!("auto_approve policy: {e}"), false, Value::Null))?;
     let instance = match &agent.inline_identity {
         Some(s) => s.to_string(),
         None => crate::session::resolve_instance(String::new(), Some(&agent.entry.instance_file))
@@ -690,10 +705,17 @@ pub(super) async fn auto_approve_if_needed(
         })
         .map_err(|e| fail(e, false, Value::Null))?;
     // Same durable intent journal and exclusive wallet write lock as every other mutation: a
-    // concurrent CLI write must not sign from this wallet while an approval is in flight.
+    // concurrent CLI write must not sign from this wallet while an approval is in flight. The
+    // journal file is created O_EXCL and kept forever, so the id carries a unique suffix: a task
+    // re-run (or a wiped state file) must not collide with a previous attempt and wedge permanently.
+    let op_id = format!(
+        "autoauth-{}-{}",
+        short_id(&config.task_id),
+        clock().unwrap_or(0) % 1_000_000
+    );
     let mut guard = crate::execution::OperationGuard::begin(
         &agent.entry.dir,
-        &format!("autoauth-{}", short_id(&config.task_id)),
+        &op_id,
         "native.auto-approve",
         &json!({"chain":config.chain_id,"to":token,"spender":spender,"amount":amount,"task":config.task_id}),
         &creds.client_id,
@@ -709,7 +731,16 @@ pub(super) async fn auto_approve_if_needed(
         policy: None,
     };
     let mut timing = crate::signing::FireTimings::default();
-    let mut allow = || Ok(());
+    // The guard closure runs immediately before the execute POST — the same hook the resident
+    // executor uses — so `sent` is the only honest source for "the request left this machine".
+    let sent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut mark = {
+        let sent = sent.clone();
+        move || {
+            sent.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    };
     let submitted = tokio::time::timeout(
         Duration::from_secs(120),
         crate::signing::memory_fire_guarded(
@@ -718,11 +749,12 @@ pub(super) async fn auto_approve_if_needed(
             &fire,
             false,
             &mut timing,
-            &mut allow,
-            Some(&policy),
+            &mut mark,
+            Some(&approve_policy),
         ),
     )
     .await;
+    let was_sent = sent.load(std::sync::atomic::Ordering::SeqCst);
     let result = match submitted {
         Err(_) => {
             let e = "UNKNOWN; auto_approve submit timed out; the approve may still land, reconcile before arming again";
@@ -730,8 +762,14 @@ pub(super) async fn auto_approve_if_needed(
             return Err(fail(e.into(), true, json!({"stage":"submit-timeout"})));
         }
         Ok(Err(e)) => {
+            // A post-send transport/back-end error still means the request may have been accepted;
+            // the closure flag is the only thing that can tell the two cases apart.
             let _ = guard.finish(&Err(e.clone()));
-            return Err(fail(e, false, json!({"stage":"submit"})));
+            return Err(fail(
+                e,
+                was_sent,
+                json!({"stage":"submit","submitted":was_sent}),
+            ));
         }
         Ok(Ok(v)) => v,
     };
@@ -745,23 +783,19 @@ pub(super) async fn auto_approve_if_needed(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let evidence = json!({"txHash":tx,"orderId":order,"allowanceBefore":current});
-    // The journal looks for `txHash`/`orderId` at the top level, so hand it the flattened result
-    // instead of the nested `execution` object, otherwise `recovery` stays empty.
-    guard
-        .finish(&Ok(
-            json!({"txHash":tx,"orderId":order,"status":"BROADCASTED"}),
-        ))
-        .map_err(|e| fail(e, false, evidence.clone()))?;
-    // Wait for the receipt rather than trusting the broadcast, and treat a revert as a revert.
+    let evidence =
+        json!({"txHash":tx,"orderId":order,"allowanceBefore":current,"operationId":op_id});
+    // Wait for the receipt rather than trusting the broadcast, and treat a revert as a revert. The
+    // journal is finished with the *final* outcome, so recovery never shows a reverted tx as sent.
     let mut seen = current.clone();
     let mut confirmed = false;
-    for _ in 0..45 {
+    for _ in 0..90 {
         tokio::time::sleep(Duration::from_millis(700)).await;
         if !tx.is_empty() {
             if let Ok(receipt) = rpc(config, "eth_getTransactionReceipt", json!([tx])).await {
                 if let Some(status) = receipt.get("status").and_then(Value::as_str) {
                     if status == "0x0" {
+                        let _ = guard.finish(&Err(format!("reverted: {tx}")));
                         return Err(fail(
                             format!("auto_approve tx {tx} reverted on chain"),
                             true,
@@ -792,6 +826,7 @@ pub(super) async fn auto_approve_if_needed(
         }
     }
     if !confirmed {
+        let _ = guard.finish(&Err(format!("unconfirmed: {tx}")));
         return Err(fail(
             format!(
                 "UNKNOWN; auto_approve tx {tx} submitted but the allowance is still {seen} (< {amount}); reconcile before arming again"
@@ -800,16 +835,44 @@ pub(super) async fn auto_approve_if_needed(
             evidence,
         ));
     }
+    // The journal looks for `txHash`/`orderId` at the top level, so hand it the flattened result
+    // instead of the nested `execution` object, otherwise `recovery` stays empty.
+    guard
+        .finish(&Ok(
+            json!({"txHash":tx,"orderId":order,"status":"CONFIRMED"}),
+        ))
+        .map_err(|e| fail(e, true, evidence.clone()))?;
     Ok(Some(json!({
-        "needed": true, "txHash": tx, "orderId": order,
+        "needed": true, "txHash": tx, "orderId": order, "operationId": op_id,
         "allowanceBefore": current, "allowanceAfter": seen,
     })))
 }
 
+/// Policy describing exactly the approve this task is allowed to send: pinned to the token, the
+/// ERC-20 `approve` selector and zero value, with the operator's risk allowances carried over and
+/// `allowAuthorityChanges` set because that change is the point of enabling `auto_approve`.
+pub(super) fn approve_policy_json(chain: &str, token: &str, allow_risks: Value) -> Value {
+    json!({
+        "version": 1,
+        "chainId": chain,
+        "to": token,
+        "valueWei": "0",
+        "selector": "0x095ea7b3",
+        "allowRisks": allow_risks,
+        "allowAuthorityChanges": true,
+    })
+}
+
 /// The native-coin sentinel: spending it needs no allowance.
 pub(super) fn spends_native(token: &str) -> bool {
-    token.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
-        || token.trim_start_matches("0x").chars().all(|c| c == '0')
+    // An empty/blank token is a config error, not "native": silently skipping the approval would
+    // turn a typo into a task that arms and then fails at the event.
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    trimmed.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
+        || trimmed.trim_start_matches("0x").chars().all(|c| c == '0')
 }
 
 /// `current < amount`, compared as exact integers. Split out so it is testable without a chain.
@@ -1361,12 +1424,17 @@ impl Wallet {
                 let binding = match ready {
                     Ok(b) => b,
                     Err(e) => {
-                        self.native_finish(
-                            &config.task_id,
-                            "FAILED",
-                            json!({"error":e,"submission_attempted":false}),
-                        )
-                        .await?;
+                        // The approval may already be mined: report it as submitted evidence rather
+                        // than claiming nothing was sent.
+                        let mut detail = json!({"error":e,"submission_attempted":false});
+                        if let Some(a) = &auto_approve {
+                            if a.get("txHash").and_then(Value::as_str).is_some() {
+                                detail["submission_attempted"] = json!(true);
+                            }
+                            detail["auto_approve"] = a.clone();
+                        }
+                        self.native_finish(&config.task_id, "FAILED", detail)
+                            .await?;
                         return Err(e);
                     }
                 };
@@ -1388,7 +1456,17 @@ impl Wallet {
                 {
                     if r.status == "PREPARING" {
                         r.status = if expired { "FAILED" } else { "DISARMED" }.into();
-                        r.detail = json!({"error":"native task disarmed/expired during readiness","submission_attempted":false});
+                        let mut detail = json!({
+                            "error":"native task disarmed/expired during readiness",
+                            "submission_attempted":false
+                        });
+                        if let Some(a) = &auto_approve {
+                            if a.get("txHash").and_then(Value::as_str).is_some() {
+                                detail["submission_attempted"] = json!(true);
+                            }
+                            detail["auto_approve"] = a.clone();
+                        }
+                        r.detail = detail;
                     }
                     let status = r.status.clone();
                     b.history.insert(config.task_id.clone(), status);

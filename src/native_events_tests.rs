@@ -310,6 +310,9 @@ fn auto_approve_decides_on_exact_integers_and_skips_native_input() {
     assert!(!approval_needed("1001", "1000").unwrap());
     assert!(approval_needed("0", "1.5").is_err());
     assert!(approval_needed("0", "").is_err());
+    // A blank token field is a config error, never "native".
+    assert!(!spends_native(""));
+    assert!(!spends_native("   "));
     assert!(spends_native("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"));
     assert!(spends_native("0x0000000000000000000000000000000000000000"));
     assert!(!spends_native("0xcE24439F2D9C6a2289F741120FE202248B666666"));
@@ -338,6 +341,42 @@ fn auto_approve_only_signs_calldata_it_built_itself() {
     assert!(short_id(&long).len() <= 48);
     assert_eq!(short_id("task/../etc"), "tasketc");
     assert_eq!(short_id("///"), "task");
+}
+
+#[test]
+fn auto_approve_policy_pins_the_token_and_allows_only_this_authority_change() {
+    // The swap policy pins the router, so the approve needs its own intent. It must accept the
+    // approve on the token and refuse anything else (wrong target, non-zero value, other selector).
+    let token = "0xcE24439F2D9C6a2289F741120FE202248B666666";
+    let policy =
+        crate::policy::Policy::parse(&approve_policy_json("56", token, json!([])).to_string())
+            .unwrap();
+    let calldata = crate::approvals::approve_calldata(
+        "0x2c34A2Fb1d0b4f55de51E1d0bDEfaDDce6b7cDD6",
+        "1000000000000000000",
+        false,
+    )
+    .unwrap();
+    let ok = crate::policy::Intent {
+        chain_id: "56",
+        to: token,
+        value: "0",
+        input_data: Some(&calldata),
+        gas_limit: None,
+    };
+    assert!(policy.check_intent(&ok).is_ok(), "approve intent refused");
+    let other_target = crate::policy::Intent {
+        to: "0x5994814f2c4040b863a0125a45de152a8c2a4dec",
+        ..ok
+    };
+    assert!(policy.check_intent(&other_target).is_err());
+    let with_value = crate::policy::Intent { value: "1", ..ok };
+    assert!(policy.check_intent(&with_value).is_err());
+    let other_selector = crate::policy::Intent {
+        input_data: Some("0x38ed173900000000"),
+        ..ok
+    };
+    assert!(policy.check_intent(&other_selector).is_err());
 }
 
 #[tokio::test]
