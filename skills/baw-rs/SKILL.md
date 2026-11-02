@@ -270,6 +270,9 @@ baw-rs wallets add|remove|list|status|serve|stop   只管钱包本身，不要 -
 - 测试或 mock origin 场景用 `"prepare_at_load": false` 关掉装载时联网。
 - `"auto_approve": true` 时，`arm` 会读链上额度，不足就自己发一笔 `approve(spender, amount)`、等回执、重读额度，够了才进 READY；返回里带 `autoApprove {needed, txHash, allowanceBefore, allowanceAfter}`。**只在 arm 补，不在触发补**——触发路径里插一笔授权等于在计时窗口里多埋一个失败点。默认关闭。
 - 授权额度等于任务 `amount`；要长期免补就单独发 `approvals approve --amount max --unlimited`，别指望 auto_approve 给你授 max。
+- arm 顺序是「先验绑定/链 → 再花钱」；补授权持有钱包独占写锁（`OperationGuard`，op id `autoauth-<task_id>`），并受 policy 的风险/授权变更门约束。
+- 失败详情区分 `submission_attempted`：`false` = 肯定没发；`true` = 可能已上链（含 `txHash`/`orderId`），必须先对账再重新 arm。
+- 回执 `status 0x0` 会明确报 revert，不会当成"额度还没到"耗满超时。
 - `retry_policy` 是 `never`：预览被后端拒一次（错误原文形如 `Binance API code 351805`，属模拟阶段拒绝）整个一次性任务就落 FAILED 并释放钱包，不会有第二次尝试。长时间监听前先单独 `contract-call preview` 跑通，再 `arm`。
 - 命中失败后先看 `detail.submission_attempted`：`false` 表示一笔交易都没发、余额不会动，可以直接换新任务 ID 重来；只有 `true` 才需要按未知结果去链上对账。
 

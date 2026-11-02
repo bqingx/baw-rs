@@ -300,6 +300,46 @@ async fn route_action_is_resolved_only_after_the_event_and_never_before() {
     let e = c.build(&event()).await.unwrap_err();
     assert!(e.contains("deadline"), "unexpected route failure: {e}");
 }
+#[test]
+fn auto_approve_decides_on_exact_integers_and_skips_native_input() {
+    // Only a strict, exact comparison may trigger a spend: "1.5", "0x10" or a malformed value must
+    // never be silently coerced into a decision about somebody's allowance.
+    assert!(approval_needed("0", "1000").unwrap());
+    assert!(approval_needed("999", "1000").unwrap());
+    assert!(!approval_needed("1000", "1000").unwrap());
+    assert!(!approval_needed("1001", "1000").unwrap());
+    assert!(approval_needed("0", "1.5").is_err());
+    assert!(approval_needed("0", "").is_err());
+    assert!(spends_native("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"));
+    assert!(spends_native("0x0000000000000000000000000000000000000000"));
+    assert!(!spends_native("0xcE24439F2D9C6a2289F741120FE202248B666666"));
+}
+
+#[test]
+fn auto_approve_only_signs_calldata_it_built_itself() {
+    let spender = "0x2c34A2Fb1d0b4f55de51E1d0bDEfaDDce6b7cDD6";
+    let token_amount = "1000000000000000000";
+    let data = crate::approvals::approve_calldata(spender, token_amount, false).unwrap();
+    assert!(approve_intent_matches(&data, spender, token_amount));
+    // Any drift in spender or amount must be refused before a signature exists.
+    assert!(!approve_intent_matches(
+        &data,
+        "0x1111111111111111111111111111111111111111",
+        token_amount
+    ));
+    assert!(!approve_intent_matches(
+        &data,
+        spender,
+        "2000000000000000000"
+    ));
+    assert!(!approve_intent_matches("0x095ea7b3", spender, token_amount));
+    // Operation ids are restricted to [A-Za-z0-9_-] and 64 bytes.
+    let long = "a".repeat(80);
+    assert!(short_id(&long).len() <= 48);
+    assert_eq!(short_id("task/../etc"), "tasketc");
+    assert_eq!(short_id("///"), "task");
+}
+
 #[tokio::test]
 async fn route_load_without_targets_explains_the_missing_discovery_input() {
     // A `route` task may omit `expected_spender` / `allowed_router_addresses`: they are resolved

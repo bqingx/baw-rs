@@ -147,6 +147,12 @@ baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输
 
 - **只在 arm 时补，不在触发时补**：授权是一整笔交易（数秒、gas、等确认），塞进一次性触发路径等于在计时窗口里
   多插一笔可能失败的操作。
+- **顺序是先验证再花钱**：绑定/会话/`eth_chainId` 通过之后才发授权；链不对、绑定变了就在花钱之前失败。
+- **和普通写操作同等保护**：补授权走同一套 `OperationGuard`（钱包目录独占写锁 + 意向日志），并发 CLI 写不会同时签
+  同一个钱包；策略里的风险/授权变更门（`allowRisks`、`allowAuthorityChanges`）照样生效。
+- **失败分两类**：确定没被受理的（预览被拒等）记 `submission_attempted:false`；提交超时或已广播但额度未落地记
+  `submission_attempted:true` 并带 `txHash`/`orderId`，提示先对账再重新 arm——不会把可能在链上存在的交易说成"没发"。
+- **revert 会被识别**：轮询回执，`status 0x0` 直接报 revert，而不是干等额度。
 - 授权额度 = 任务的 `amount`（不写死 max）；想长期免补用 `approvals approve --amount max --unlimited` 单独发。
 - 补授权失败会在 arm 阶段落 `FAILED`（`submission_attempted:false`）并释放钱包，不会带着缺额度的状态进入监听。
 - arm 返回里带 `autoApprove`：`{needed, txHash, allowanceBefore, allowanceAfter}`，便于对账。

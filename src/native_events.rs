@@ -617,17 +617,31 @@ fn native_route_builder(
 /// `auto_approve`: top up the input-token allowance during `arm`, never during a trigger.
 ///
 /// Arming already reads the on-chain allowance; when it is short, this sends one
-/// `approve(spender, amount)` through the same preview→execute core every other write uses, waits
-/// for the receipt and re-reads the allowance before the task is allowed to become READY.
+/// `approve(spender, amount)` through the same preview→execute core every other write uses, holds
+/// the wallet's exclusive write lock for the whole operation, waits for the receipt and re-reads the
+/// allowance before the task is allowed to become READY.
 ///
 /// It runs here, and not at the event, on purpose: an approval is a full transaction (seconds, gas,
 /// confirmation), and inserting it into a one-shot trigger path would add both latency and a second
-/// way to fail while the clock is running.
-async fn auto_approve_if_needed(
+/// way to fail while the clock is running. The caller runs it only after binding/chain checks pass.
+pub(super) struct ApproveFailure {
+    pub message: String,
+    /// True when the execute POST may have been received: the transaction can exist on chain, so
+    /// the failure must never be recorded as "nothing was sent".
+    pub submitted: bool,
+    pub evidence: Value,
+}
+
+pub(super) async fn auto_approve_if_needed(
     agent: &std::sync::Arc<super::Wallet>,
     config: &Config,
     route: &Value,
-) -> Result<Option<Value>, String> {
+) -> Result<Option<Value>, ApproveFailure> {
+    let fail = |message: String, submitted: bool, evidence: Value| ApproveFailure {
+        message,
+        submitted,
+        evidence,
+    };
     let field = |k: &str| {
         route
             .get(k)
@@ -635,27 +649,56 @@ async fn auto_approve_if_needed(
             .map(str::to_owned)
             .ok_or_else(|| format!("auto_approve needs route field {k}"))
     };
-    let token = field("from_token_address")?;
-    let wallet = field("user_wallet_address")?;
-    let spender = field("expected_spender")?;
-    let amount = field("amount")?;
-    let native = token.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
-        || token.trim_start_matches("0x").chars().all(|c| c == '0');
-    if native {
+    let token = field("from_token_address").map_err(|e| fail(e, false, Value::Null))?;
+    let wallet = field("user_wallet_address").map_err(|e| fail(e, false, Value::Null))?;
+    let spender = field("expected_spender").map_err(|e| fail(e, false, Value::Null))?;
+    let amount = field("amount").map_err(|e| fail(e, false, Value::Null))?;
+    if spends_native(&token) {
         return Ok(None);
     }
-    let current = read_allowance(config, &token, &wallet, &spender).await?;
-    if crate::uint::uint256(&current)? >= crate::uint::uint256(&amount)? {
+    let current = read_allowance(config, &token, &wallet, &spender)
+        .await
+        .map_err(|e| fail(e, false, Value::Null))?;
+    if !approval_needed(&current, &amount).map_err(|e| fail(e, false, Value::Null))? {
         return Ok(Some(json!({"needed": false, "allowance": current})));
     }
-    let data = crate::approvals::approve_calldata(&spender, &amount, false)?;
-    let instance =
-        crate::session::resolve_instance(String::new(), Some(&agent.entry.instance_file))?;
-    let creds = crate::session::load(&agent.entry.dir, &instance)?;
-    let mut client = agent.build(crate::session::Credentials {
-        client_id: creds.client_id.clone(),
-        session_id: creds.session_id.clone(),
-    })?;
+    let data = crate::approvals::approve_calldata(&spender, &amount, false)
+        .map_err(|e| fail(e, false, Value::Null))?;
+    // The task policy pins the *swap* target, so it cannot be applied to the approve intent. Check
+    // the approve shape here instead, and still pass the policy down so its preview-level gates
+    // (risks, authority changes) apply: an approve is exactly an authority change.
+    if !approve_intent_matches(&data, &spender, &amount) {
+        return Err(fail(
+            "auto_approve calldata does not match token/spender/amount".into(),
+            false,
+            Value::Null,
+        ));
+    }
+    let policy = crate::policy::Policy::parse(&config.policy.to_string())
+        .map_err(|e| fail(format!("auto_approve policy: {e}"), false, Value::Null))?;
+    let instance = match &agent.inline_identity {
+        Some(s) => s.to_string(),
+        None => crate::session::resolve_instance(String::new(), Some(&agent.entry.instance_file))
+            .map_err(|e| fail(e, false, Value::Null))?,
+    };
+    let creds = crate::session::load(&agent.entry.dir, &instance)
+        .map_err(|e| fail(e, false, Value::Null))?;
+    let mut client = agent
+        .build(crate::session::Credentials {
+            client_id: creds.client_id.clone(),
+            session_id: creds.session_id.clone(),
+        })
+        .map_err(|e| fail(e, false, Value::Null))?;
+    // Same durable intent journal and exclusive wallet write lock as every other mutation: a
+    // concurrent CLI write must not sign from this wallet while an approval is in flight.
+    let mut guard = crate::execution::OperationGuard::begin(
+        &agent.entry.dir,
+        &format!("autoauth-{}", short_id(&config.task_id)),
+        "native.auto-approve",
+        &json!({"chain":config.chain_id,"to":token,"spender":spender,"amount":amount,"task":config.task_id}),
+        &creds.client_id,
+    )
+    .map_err(|e| fail(e, false, Value::Null))?;
     let fire = crate::signing::ContractFire {
         binance_chain_id: config.chain_id.clone(),
         from: wallet.clone(),
@@ -667,7 +710,7 @@ async fn auto_approve_if_needed(
     };
     let mut timing = crate::signing::FireTimings::default();
     let mut allow = || Ok(());
-    let result = tokio::time::timeout(
+    let submitted = tokio::time::timeout(
         Duration::from_secs(120),
         crate::signing::memory_fire_guarded(
             &mut client,
@@ -676,35 +719,125 @@ async fn auto_approve_if_needed(
             false,
             &mut timing,
             &mut allow,
-            None,
+            Some(&policy),
         ),
     )
-    .await
-    .map_err(|_| "auto_approve: approve submit timed out; verify the chain before retrying")??;
+    .await;
+    let result = match submitted {
+        Err(_) => {
+            let e = "UNKNOWN; auto_approve submit timed out; the approve may still land, reconcile before arming again";
+            let _ = guard.finish(&Err(e.to_string()));
+            return Err(fail(e.into(), true, json!({"stage":"submit-timeout"})));
+        }
+        Ok(Err(e)) => {
+            let _ = guard.finish(&Err(e.clone()));
+            return Err(fail(e, false, json!({"stage":"submit"})));
+        }
+        Ok(Ok(v)) => v,
+    };
     let tx = result
         .pointer("/execution/txHash")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    // Poll the chain rather than trusting the broadcast: the task must not go READY on a revert.
-    let mut cleared = false;
+    let order = result
+        .pointer("/execution/orderId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let evidence = json!({"txHash":tx,"orderId":order,"allowanceBefore":current});
+    // The journal looks for `txHash`/`orderId` at the top level, so hand it the flattened result
+    // instead of the nested `execution` object, otherwise `recovery` stays empty.
+    guard
+        .finish(&Ok(
+            json!({"txHash":tx,"orderId":order,"status":"BROADCASTED"}),
+        ))
+        .map_err(|e| fail(e, false, evidence.clone()))?;
+    // Wait for the receipt rather than trusting the broadcast, and treat a revert as a revert.
     let mut seen = current.clone();
-    for _ in 0..30 {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        seen = read_allowance(config, &token, &wallet, &spender).await?;
-        if crate::uint::uint256(&seen)? >= crate::uint::uint256(&amount)? {
-            cleared = true;
-            break;
+    let mut confirmed = false;
+    for _ in 0..45 {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        if !tx.is_empty() {
+            if let Ok(receipt) = rpc(config, "eth_getTransactionReceipt", json!([tx])).await {
+                if let Some(status) = receipt.get("status").and_then(Value::as_str) {
+                    if status == "0x0" {
+                        return Err(fail(
+                            format!("auto_approve tx {tx} reverted on chain"),
+                            true,
+                            evidence,
+                        ));
+                    }
+                    if status == "0x1" {
+                        seen = read_allowance(config, &token, &wallet, &spender)
+                            .await
+                            .map_err(|e| fail(e, true, evidence.clone()))?;
+                        if !approval_needed(&seen, &amount)
+                            .map_err(|e| fail(e, true, evidence.clone()))?
+                        {
+                            confirmed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            seen = read_allowance(config, &token, &wallet, &spender)
+                .await
+                .map_err(|e| fail(e, true, evidence.clone()))?;
+            if !approval_needed(&seen, &amount).map_err(|e| fail(e, true, evidence.clone()))? {
+                confirmed = true;
+                break;
+            }
         }
     }
-    if !cleared {
-        return Err(format!(
-            "auto_approve sent {tx} but the allowance is still {seen} (< {amount})"
+    if !confirmed {
+        return Err(fail(
+            format!(
+                "UNKNOWN; auto_approve tx {tx} submitted but the allowance is still {seen} (< {amount}); reconcile before arming again"
+            ),
+            true,
+            evidence,
         ));
     }
     Ok(Some(json!({
-        "needed": true, "txHash": tx, "allowanceBefore": current, "allowanceAfter": seen,
+        "needed": true, "txHash": tx, "orderId": order,
+        "allowanceBefore": current, "allowanceAfter": seen,
     })))
+}
+
+/// The native-coin sentinel: spending it needs no allowance.
+pub(super) fn spends_native(token: &str) -> bool {
+    token.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
+        || token.trim_start_matches("0x").chars().all(|c| c == '0')
+}
+
+/// `current < amount`, compared as exact integers. Split out so it is testable without a chain.
+pub(super) fn approval_needed(current: &str, amount: &str) -> Result<bool, String> {
+    Ok(crate::uint::uint256(current)? < crate::uint::uint256(amount)?)
+}
+
+/// `approve(spender, amount)` calldata must target exactly what the task asked for.
+pub(super) fn approve_intent_matches(data: &str, spender: &str, amount: &str) -> bool {
+    let expected = match crate::approvals::approve_calldata(spender, amount, false) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    data.eq_ignore_ascii_case(&expected)
+}
+
+/// Operation ids allow only `[A-Za-z0-9_-]` and 64 bytes; keep task ids usable as a suffix.
+pub(super) fn short_id(task: &str) -> String {
+    let cleaned: String = task
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .take(48)
+        .collect();
+    if cleaned.is_empty() {
+        "task".into()
+    } else {
+        cleaned
+    }
 }
 
 /// `allowance(owner, spender)` read straight from the task's RPC.
@@ -1140,32 +1273,14 @@ impl Wallet {
                     }
                     c
                 };
-                let auto_approve = match &config.action {
-                    Action::Route { config: route }
-                        if route.get("auto_approve").and_then(Value::as_bool) == Some(true) =>
-                    {
-                        match auto_approve_if_needed(self, &config, route).await {
-                            Ok(v) => v,
-                            Err(e) => {
-                                self.native_finish(
-                                    &config.task_id,
-                                    "FAILED",
-                                    json!({"error":e,"submission_attempted":false}),
-                                )
-                                .await?;
-                                return Err(e);
-                            }
-                        }
-                    }
-                    _ => None,
+                // Safety first: binding, session and chain are verified before anything is spent.
+                let from = match &config.action {
+                    Action::Fixed { call } | Action::Words { call, .. } => call.from.as_str(),
+                    Action::Route { config } => config["user_wallet_address"]
+                        .as_str()
+                        .ok_or("route sender missing")?,
                 };
-                let ready = async {
-                    let from = match &config.action {
-                        Action::Fixed { call } | Action::Words { call, .. } => call.from.as_str(),
-                        Action::Route { config } => config["user_wallet_address"]
-                            .as_str()
-                            .ok_or("route sender missing")?,
-                    };
+                let binding = match async {
                     let binding = self.native_readiness(&config.chain_id, from).await?;
                     let chain = rpc(&config, "eth_chainId", json!([])).await?;
                     if crate::uint::uint256(chain.as_str().ok_or("chainId missing")?)?
@@ -1173,6 +1288,47 @@ impl Wallet {
                     {
                         return Err("RPC chainId mismatch".into());
                     }
+                    Ok::<_, String>(binding)
+                }
+                .await
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        self.native_finish(
+                            &config.task_id,
+                            "FAILED",
+                            json!({"error":e,"submission_attempted":false}),
+                        )
+                        .await?;
+                        return Err(e);
+                    }
+                };
+                // Only now may gas be spent: a wrong chain or a stale binding has been ruled out.
+                let auto_approve = match &config.action {
+                    Action::Route { config: route }
+                        if route.get("auto_approve").and_then(Value::as_bool) == Some(true) =>
+                    {
+                        match auto_approve_if_needed(self, &config, route).await {
+                            Ok(v) => v,
+                            Err(f) => {
+                                self.native_finish(
+                                    &config.task_id,
+                                    "FAILED",
+                                    json!({
+                                        "error": f.message,
+                                        "submission_attempted": f.submitted,
+                                        "auto_approve": f.evidence,
+                                        "retry": "never; reconcile the approve against the chain before arming again"
+                                    }),
+                                )
+                                .await?;
+                                return Err(f.message);
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+                let ready = async {
                     for check in &config.prerequisites {
                         let result = rpc(
                             &config,
@@ -1195,9 +1351,13 @@ impl Wallet {
                             ));
                         }
                     }
-                    Ok::<_, String>(binding)
+                    Ok::<_, String>(())
                 }
                 .await;
+                let ready = match ready {
+                    Ok(()) => Ok(binding),
+                    Err(e) => Err(e),
+                };
                 let binding = match ready {
                     Ok(b) => b,
                     Err(e) => {
@@ -1257,6 +1417,37 @@ impl Wallet {
                 Ok(status)
             }
             Control::Load { config } => {
+                // Reject the cheap cases first: a load that is going to be refused anyway must not
+                // spend three signed OKX calls on discovery and the dry run.
+                if let Some(id) = config.get("task_id").and_then(Value::as_str) {
+                    let mut b = self.native.lock().await;
+                    b.restore(&self.entry.dir)?;
+                    if b.history.contains_key(id) {
+                        return Err("native task id already used; cannot reload/replay".into());
+                    }
+                    if b.current.as_ref().is_some_and(|r| {
+                        matches!(
+                            r.status.as_str(),
+                            "LOADED"
+                                | "READY"
+                                | "CONNECTING"
+                                | "PREPARING"
+                                | "ACCEPTED"
+                                | "EXECUTING"
+                        )
+                    }) {
+                        return Err("native task already loaded; disarm first".into());
+                    }
+                    if b.history.len() >= 256 {
+                        return Err("native task history full; reconcile before maintenance".into());
+                    }
+                    if b.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+                        return Err(
+                            "previous native worker draining; wait before loading a new task"
+                                .into(),
+                        );
+                    }
+                }
                 let mut config = config.clone();
                 let prepared = prepare_route(&mut config).await?;
                 let config = Config::parse(config)?;
