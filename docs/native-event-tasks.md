@@ -140,6 +140,18 @@ baw-rs --wallet <名> approvals approve --binanceChainId 56 --tokenContract <输
 
 不想在装载时联网（例如用 mock origin 跑测试），在 route 配置里写 `"prepare_at_load": false`。
 
+### `auto_approve`：启用时自动补授权
+
+`route` 配置写 `"auto_approve": true` 后，`arm` 流程会：读一次链上 `allowance(user, spender)`；不足就发一笔
+`approve(spender, amount)`（走和其它写操作同一条预览→执行核心），等回执、重新读额度，够了才进入 READY。
+
+- **只在 arm 时补，不在触发时补**：授权是一整笔交易（数秒、gas、等确认），塞进一次性触发路径等于在计时窗口里
+  多插一笔可能失败的操作。
+- 授权额度 = 任务的 `amount`（不写死 max）；想长期免补用 `approvals approve --amount max --unlimited` 单独发。
+- 补授权失败会在 arm 阶段落 `FAILED`（`submission_attempted:false`）并释放钱包，不会带着缺额度的状态进入监听。
+- arm 返回里带 `autoApprove`：`{needed, txHash, allowanceBefore, allowanceAfter}`，便于对账。
+- 默认关闭：它会花 gas 并写入永久链上状态，必须显式打开。
+
 ### `route`：事件后实时取路由
 
 路由构造器把报价 gas 当**预览上限**使用：默认按 `max(报价×3, 报价+500000)`（`gas_buffer_percent=300`、

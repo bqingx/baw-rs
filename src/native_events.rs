@@ -614,6 +614,124 @@ fn native_route_builder(
 /// 2. A full construction against a live quote, whose call is discarded. A task that cannot build
 ///    now cannot build at trigger time either — and a one-shot task has no second chance, so this
 ///    has to fail in `load`, where the operator is still looking.
+/// `auto_approve`: top up the input-token allowance during `arm`, never during a trigger.
+///
+/// Arming already reads the on-chain allowance; when it is short, this sends one
+/// `approve(spender, amount)` through the same preview→execute core every other write uses, waits
+/// for the receipt and re-reads the allowance before the task is allowed to become READY.
+///
+/// It runs here, and not at the event, on purpose: an approval is a full transaction (seconds, gas,
+/// confirmation), and inserting it into a one-shot trigger path would add both latency and a second
+/// way to fail while the clock is running.
+async fn auto_approve_if_needed(
+    agent: &std::sync::Arc<super::Wallet>,
+    config: &Config,
+    route: &Value,
+) -> Result<Option<Value>, String> {
+    let field = |k: &str| {
+        route
+            .get(k)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("auto_approve needs route field {k}"))
+    };
+    let token = field("from_token_address")?;
+    let wallet = field("user_wallet_address")?;
+    let spender = field("expected_spender")?;
+    let amount = field("amount")?;
+    let native = token.eq_ignore_ascii_case("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")
+        || token.trim_start_matches("0x").chars().all(|c| c == '0');
+    if native {
+        return Ok(None);
+    }
+    let current = read_allowance(config, &token, &wallet, &spender).await?;
+    if crate::uint::uint256(&current)? >= crate::uint::uint256(&amount)? {
+        return Ok(Some(json!({"needed": false, "allowance": current})));
+    }
+    let data = crate::approvals::approve_calldata(&spender, &amount, false)?;
+    let instance =
+        crate::session::resolve_instance(String::new(), Some(&agent.entry.instance_file))?;
+    let creds = crate::session::load(&agent.entry.dir, &instance)?;
+    let mut client = agent.build(crate::session::Credentials {
+        client_id: creds.client_id.clone(),
+        session_id: creds.session_id.clone(),
+    })?;
+    let fire = crate::signing::ContractFire {
+        binance_chain_id: config.chain_id.clone(),
+        from: wallet.clone(),
+        to: token.clone(),
+        value: Some("0".into()),
+        input_data: Some(data),
+        gas_limit: None,
+        policy: None,
+    };
+    let mut timing = crate::signing::FireTimings::default();
+    let mut allow = || Ok(());
+    let result = tokio::time::timeout(
+        Duration::from_secs(120),
+        crate::signing::memory_fire_guarded(
+            &mut client,
+            &agent.entry.dir,
+            &fire,
+            false,
+            &mut timing,
+            &mut allow,
+            None,
+        ),
+    )
+    .await
+    .map_err(|_| "auto_approve: approve submit timed out; verify the chain before retrying")??;
+    let tx = result
+        .pointer("/execution/txHash")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    // Poll the chain rather than trusting the broadcast: the task must not go READY on a revert.
+    let mut cleared = false;
+    let mut seen = current.clone();
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        seen = read_allowance(config, &token, &wallet, &spender).await?;
+        if crate::uint::uint256(&seen)? >= crate::uint::uint256(&amount)? {
+            cleared = true;
+            break;
+        }
+    }
+    if !cleared {
+        return Err(format!(
+            "auto_approve sent {tx} but the allowance is still {seen} (< {amount})"
+        ));
+    }
+    Ok(Some(json!({
+        "needed": true, "txHash": tx, "allowanceBefore": current, "allowanceAfter": seen,
+    })))
+}
+
+/// `allowance(owner, spender)` read straight from the task's RPC.
+async fn read_allowance(
+    config: &Config,
+    token: &str,
+    owner: &str,
+    spender: &str,
+) -> Result<String, String> {
+    let pad = |a: &str| {
+        let body = a.trim_start_matches("0x");
+        if body.len() != 40 {
+            return Err("allowance address shape invalid".to_string());
+        }
+        Ok(format!("{body:0>64}"))
+    };
+    let data = format!("0xdd62ed3e{}{}", pad(owner)?, pad(spender)?);
+    let result = rpc(
+        config,
+        "eth_call",
+        json!([{"to":token,"data":data},"latest"]),
+    )
+    .await?;
+    let word = result.as_str().ok_or("allowance result missing")?;
+    Ok(crate::uint::uint256(word)?.to_str_radix(10))
+}
+
 pub(super) async fn prepare_route(config: &mut Value) -> Result<Option<Value>, String> {
     let route = match config.get_mut("action") {
         Some(a) if a.get("kind").and_then(Value::as_str) == Some("route") => a.get_mut("config"),
@@ -1022,6 +1140,25 @@ impl Wallet {
                     }
                     c
                 };
+                let auto_approve = match &config.action {
+                    Action::Route { config: route }
+                        if route.get("auto_approve").and_then(Value::as_bool) == Some(true) =>
+                    {
+                        match auto_approve_if_needed(self, &config, route).await {
+                            Ok(v) => v,
+                            Err(e) => {
+                                self.native_finish(
+                                    &config.task_id,
+                                    "FAILED",
+                                    json!({"error":e,"submission_attempted":false}),
+                                )
+                                .await?;
+                                return Err(e);
+                            }
+                        }
+                    }
+                    _ => None,
+                };
                 let ready = async {
                     let from = match &config.action {
                         Action::Fixed { call } | Action::Words { call, .. } => call.from.as_str(),
@@ -1113,7 +1250,11 @@ impl Wallet {
                 b.worker = Some(tokio::spawn(async move {
                     w.native_run(config, binding, rx).await;
                 }));
-                Ok(b.status())
+                let mut status = b.status();
+                if let Some(a) = auto_approve {
+                    status["autoApprove"] = a;
+                }
+                Ok(status)
             }
             Control::Load { config } => {
                 let mut config = config.clone();

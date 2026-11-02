@@ -177,7 +177,11 @@ pub fn mutation_payload(command: &ApprovalsCommand) -> Result<Value, String> {
 }
 
 /// `approve(address,uint256)` calldata: `0x095ea7b3` + two ABI words.
-fn approve_calldata(spender: &str, amount: &str, unlimited: bool) -> Result<String, String> {
+pub(crate) fn approve_calldata(
+    spender: &str,
+    amount: &str,
+    unlimited: bool,
+) -> Result<String, String> {
     let spender_word = abi_address_word(spender)?;
     let amount_word = if amount.eq_ignore_ascii_case("max") {
         if !unlimited {

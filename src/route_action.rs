@@ -34,9 +34,15 @@ struct Config {
     /// sit within 0.2% of the execution requirement, which turns a normal
     /// quote into a `351805` simulation rejection. A cap has no fee impact: the
     /// backend still charges actual gas used.
+    /// Approve the input token at `arm` when the allowance is short, instead of failing the arm.
+    /// Off by default: it spends gas and writes permanent on-chain state, so it has to be asked for.
+    #[serde(default)]
+    #[allow(dead_code)]
+    auto_approve: bool,
     /// Load-time discovery + dry run. On by default; a caller that drives `task load` against a
     /// mock origin (tests) turns it off explicitly rather than relying on a cfg flag.
     #[serde(default = "default_true")]
+    #[allow(dead_code)]
     prepare_at_load: bool,
     /// OKX documents `priceImpactPercent` as a value the caller must check before submitting and
     /// block on when it is too high. Route tasks therefore carry the same threshold.
