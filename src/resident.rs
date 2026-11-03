@@ -528,7 +528,8 @@ async fn serve_listener(
     registry: Option<std::path::PathBuf>,
 ) -> Result<Value, String> {
     let daemon = Arc::new(Daemon {
-        wallets,
+        // Cloned, not moved: shutdown still walks the wallet set directly.
+        wallets: wallets.clone(),
         registry,
         members: Arc::new(native_shared::new_members()),
     });
