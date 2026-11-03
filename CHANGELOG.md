@@ -7,6 +7,18 @@ the current source.
 
 ## Unreleased
 
+- **A task can occupy several wallets.** `"wallets": ["w1", "w2", ...]` makes one `task load/arm/
+  status/disarm` cover a group: the daemon binds each member's own sender (fixed/words:
+  `call.from`; route: `user_wallet_address`), leaves every other field untouched so the authorized
+  scope is unchanged, and fails the whole group closed if any member cannot be prepared or armed.
+  A wallet not listed is never touched, and the controlling wallet must be a member. Members share
+  one listener through the feed registry, so N wallets still cost one WS connection and one poll.
+
+- **One listener per identical source.** Wallets running the same task shape now share a single WS
+  subscription, one poll loop and one dedup window instead of one each; a subscriber that lags past
+  the channel depth is reported as a gap rather than silently treated as a trigger, and the
+  listener stops with the last subscriber.
+
 - **`block_time` trigger source for native tasks.** Fires on the first block whose own
   `timestamp` reaches `timestamp_gte`, using the chain clock only — no local timer and no
   dependency on another wallet's event. `newHeads` over WS is the fast path and an
