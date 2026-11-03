@@ -1029,7 +1029,9 @@ async fn identical_sources_share_one_feed_and_release_it_when_empty() {
 async fn feeds_do_not_merge_across_endpoints_or_chain() {
     let feeds = native_events::Feeds::new();
     let base = Config::parse(block_time_config(10)).unwrap();
-    let _a = feeds.subscribe(&base).unwrap();
+    // Keep every guard alive: dropping one removes its feed, which would make the count below
+    // measure the test's own scope instead of the registry.
+    let mut held = vec![feeds.subscribe(&base).unwrap()];
     for (key, value) in [
         ("rpc_url", json!("http://127.0.0.1:2")),
         ("ws_url", json!("ws://127.0.0.1:2")),
@@ -1037,13 +1039,14 @@ async fn feeds_do_not_merge_across_endpoints_or_chain() {
         let mut v = block_time_config(10);
         v[key] = value;
         let c = Config::parse(v).unwrap();
-        let _s = feeds.subscribe(&c).unwrap();
+        held.push(feeds.subscribe(&c).unwrap());
     }
     // A different chain is a different feed, and the call has to agree with it to parse at all.
     let mut chain = block_time_config(10);
     chain["chain_id"] = json!("1");
     chain["action"]["call"]["binance_chain_id"] = json!("1");
     chain["policy"]["chainId"] = json!("1");
-    let _s = feeds.subscribe(&Config::parse(chain).unwrap()).unwrap();
+    held.push(feeds.subscribe(&Config::parse(chain).unwrap()).unwrap());
     assert_eq!(feeds.len(), 4);
+    drop(held);
 }
