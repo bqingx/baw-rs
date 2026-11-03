@@ -29,6 +29,8 @@ mod tests;
 pub use executor::Call;
 #[path = "native_events.rs"]
 pub(crate) mod native_events;
+#[path = "native_shared.rs"]
+mod native_shared;
 #[cfg(test)]
 #[path = "native_events_tests.rs"]
 mod native_events_tests;
@@ -437,13 +439,62 @@ async fn serve_inner(
     serve_listener(listener, Arc::new(RwLock::new(wallets)), registry).await
 }
 
+/// Route a `task` control command: a shared task fans out to its members, everything else goes to
+/// the wallet named on the command line. The controlling wallet must be a member, so a mistyped
+/// `--wallet` cannot silently control a group it is not part of.
+async fn shared_or_wallet(
+    wallets: &RwLock<BTreeMap<String, Arc<Wallet>>>,
+    registry: Option<&std::path::PathBuf>,
+    members: &native_shared::Members,
+    name: &str,
+    command: native_events::Control,
+) -> Result<Value, String> {
+    use native_events::Control;
+    match command {
+        Control::Load { config } => {
+            let shared = config
+                .get("wallets")
+                .and_then(Value::as_array)
+                .is_some_and(|list| !list.is_empty());
+            if shared {
+                return native_shared::load(wallets, registry, name, config, members).await;
+            }
+            let wallet = wallet_for(wallets, name, registry).await?;
+            wallet.native_control(Control::Load { config }).await
+        }
+        Control::Arm { task_id, confirm } => {
+            if native_shared::is_member(members, &task_id, name) {
+                return native_shared::arm(wallets, registry, &task_id, confirm, members).await;
+            }
+            let wallet = wallet_for(wallets, name, registry).await?;
+            wallet.native_control(Control::Arm { task_id, confirm }).await
+        }
+        Control::Status {} => {
+            match native_shared::task_of(members, name) {
+                Some(task_id) => native_shared::status(wallets, registry, &task_id, members).await,
+                None => {
+                    let wallet = wallet_for(wallets, name, registry).await?;
+                    wallet.native_control(Control::Status {}).await
+                }
+            }
+        }
+        Control::Disarm { task_id } => {
+            if native_shared::is_member(members, &task_id, name) {
+                return native_shared::disarm(wallets, registry, &task_id, members).await;
+            }
+            let wallet = wallet_for(wallets, name, registry).await?;
+            wallet.native_control(Control::Disarm { task_id }).await
+        }
+    }
+}
+
 /// Resolve a wallet for one request, re-reading the registry when the name is not loaded yet.
 ///
 /// A wallet added with `wallets add` while the daemon runs is picked up on first use instead of
 /// requiring `wallets stop` → `add` → `serve`, which would interrupt every other wallet. Only
 /// additions are hot: a removed wallet keeps running until restart, because dropping it could
 /// orphan in-flight events or tasks. Validation is the same `Entry::check` used at startup.
-async fn wallet_for(
+pub(super) async fn wallet_for(
     wallets: &RwLock<BTreeMap<String, Arc<Wallet>>>,
     name: &str,
     registry: Option<&std::path::PathBuf>,
@@ -469,6 +520,7 @@ async fn serve_listener(
     wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
     registry: Option<std::path::PathBuf>,
 ) -> Result<Value, String> {
+    let members = Arc::new(native_shared::new_members());
     let stop = Arc::new(Notify::new());
     let (shutdown, _) = tokio::sync::watch::channel(false);
     let permits = Arc::new(Semaphore::new(64));
@@ -482,8 +534,8 @@ async fn serve_listener(
                 let (stream,_)=accepted.map_err(|_|"IPC accept failed")?;
                 if *shutdown.borrow() || peer(&stream).is_err(){continue;}
                 let Ok(permit)=permits.clone().try_acquire_owned() else{continue;};
-                let wallets=wallets.clone(); let stop=stop.clone(); let persistent_permits=persistent_permits.clone(); let registry=registry.clone();
-                tasks.spawn(handle(stream,wallets,registry,stop,permit,persistent_permits,shutdown.clone()));
+                let wallets=wallets.clone(); let stop=stop.clone(); let persistent_permits=persistent_permits.clone(); let registry=registry.clone(); let members=members.clone();
+                tasks.spawn(handle(stream,wallets,registry,members,stop,permit,persistent_permits,shutdown.clone()));
             }
         }
     }
@@ -504,6 +556,7 @@ async fn handle(
     stream: UnixStream,
     wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
     registry: Option<std::path::PathBuf>,
+    members: Arc<native_shared::Members>,
     stop: Arc<Notify>,
     permit: tokio::sync::OwnedSemaphorePermit,
     persistent_permits: Arc<Semaphore>,
@@ -567,10 +620,7 @@ async fn handle(
         let mut stopping = false;
         let result = match request {
             Ok(Request::Native { name, command, .. }) => {
-                match wallet_for(&wallets, &name, registry.as_ref()).await {
-                    Ok(wallet) => wallet.native_control(command).await,
-                    Err(error) => Err(error),
-                }
+                shared_or_wallet(&wallets, registry.as_ref(), &members, &name, command).await
             }
             Ok(Request::Ping { .. }) => Ok(json!({"status":"ready"})),
             Ok(Request::Trigger {

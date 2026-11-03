@@ -270,6 +270,40 @@ impl Wallet {
         }
         Ok(binding)
     }
+    /// The wallet's own address on `chain`, used to bind a shared task to each member. One
+    /// backend read per member at load time; never cached across sessions.
+    pub(super) async fn native_chain_address(&self, chain: &str) -> Result<String, String> {
+        let mut book = self
+            .tasks
+            .try_lock()
+            .map_err(|_| "BUSY; wallet task control busy")?;
+        if book.reserved() {
+            return Err("BUSY; typed task already reserved".into());
+        }
+        let binding = self.binding()?;
+        let mut state = self
+            .state
+            .try_lock()
+            .map_err(|_| "BUSY; wallet command already in flight")?;
+        self.typed_load(&mut state, &binding).await?;
+        let data = state
+            .client
+            .as_mut()
+            .ok_or("client missing")?
+            .execute(&crate::cli::WalletCommand::Address)
+            .await?;
+        let address = data
+            .get("addresses")
+            .and_then(Value::as_array)
+            .and_then(|rows| {
+                rows.iter().find(|row| {
+                    row.get("binanceChainId").and_then(Value::as_str) == Some(chain)
+                })
+            })
+            .and_then(|row| row.get("address").and_then(Value::as_str))
+            .ok_or_else(|| format!("wallet has no address on chain {chain}"))?;
+        Ok(address.to_owned())
+    }
     pub(super) async fn native_fire(
         &self,
         id: String,

@@ -37,6 +37,10 @@ pub(super) struct Config {
     pub chain_id: String,
     pub rpc_url: String,
     pub ws_url: String,
+    /// Wallet names this task occupies. Empty for a wallet-scoped task; a nonempty list is routed
+    /// by the daemon, which binds each member's own sender and shares one listener.
+    #[serde(default)]
+    pub wallets: Vec<String>,
     #[serde(default)]
     pub source: TriggerSource,
     #[serde(default)]
@@ -294,6 +298,21 @@ impl Config {
         }
         if c.chain_id.is_empty() || !c.chain_id.bytes().all(|x| x.is_ascii_digit()) {
             return Err("native task requires decimal EVM chain".into());
+        }
+        if c.wallets.len() > 16
+            || c.wallets.iter().any(|name| {
+                name.is_empty()
+                    || name.len() > 64
+                    || !name
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            })
+            || c.wallets
+                .iter()
+                .enumerate()
+                .any(|(i, name)| c.wallets[..i].contains(name))
+        {
+            return Err("native wallets must be 1..16 unique names (letters/digits/-/_)".into());
         }
         endpoint(&c.rpc_url, false)?;
         endpoint(&c.ws_url, true)?;
@@ -1672,6 +1691,16 @@ impl Wallet {
                     }
                 }
                 let mut config = config.clone();
+                if config
+                    .get("wallets")
+                    .and_then(Value::as_array)
+                    .is_some_and(|list| !list.is_empty())
+                {
+                    return Err(
+                        "shared task (wallets list) must be loaded through the resident daemon, which binds each member's sender"
+                            .into(),
+                    );
+                }
                 let prepared = prepare_route(&mut config).await?;
                 let config = Config::parse(config)?;
                 let mut b = self.native.lock().await;
