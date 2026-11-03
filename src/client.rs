@@ -231,7 +231,9 @@ impl Client {
         match command {
             WalletCommand::SpeedUp(_)
             | WalletCommand::Cancel(_)
-            | WalletCommand::ResolveDomain(_) => {
+            | WalletCommand::ResolveDomain(_)
+            // Journal reads are local-only: never touch the backend from here.
+            | WalletCommand::Operation(_) => {
                 Err("wallet operation is routed by dispatch, not by client".into())
             }
             WalletCommand::Status => {

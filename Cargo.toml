@@ -23,7 +23,7 @@ fs2 = "0.4"
 bigdecimal = "0.4"
 num-bigint = "0.4"
 chrono = "0.4"
-k256 = { version = "0.13", features = ["ecdh"] }
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 

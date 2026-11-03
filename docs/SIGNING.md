@@ -104,3 +104,17 @@ code itself is undocumented.
 throughput switch: with the backend refusing the second write there is nothing to gain, and
 the failed request has already written its journal entry and consumed its preview. Leave it
 unset unless you are diagnosing the backend again.
+
+## Reconciling an uncertain write
+
+When a write ends `UNCERTAIN` (transport failure, daemon timeout, process killed between intent
+and response), do not retry under a new operation id. Query the durable journal instead:
+
+```sh
+baw-rs --wallet alice wallet operation --operation-id <ID> --json
+baw-rs --wallet alice wallet operation --list --json
+```
+
+The verdict is one of `UNCERTAIN`, `RESPONSE_RECEIVED`, `FAILED_OR_UNKNOWN` or `UNRECOGNISED`, and
+`retrySafe` is always `false`: the journal records that a request *may* have left the machine, never
+that it did not. Reconcile with `wallet tx-history` / `tx-lock` / the explorer before deciding.

@@ -80,6 +80,7 @@ metadata:
 | 转账 | `wallet send` | [查询与发送](references/workflows.md#查询与发送)、[参数](references/cli-wallet.md) |
 | swap/市价报价/订单状态 | `market-order quote/swap/list` | [交易流程](references/workflows.md#市价与限价)、[参数](references/cli-market-order.md) |
 | ERC-20 授权管理 | `approvals list/detail/revoke/approve` | [授权等操作](references/workflows.md#授权defi预测与-x402)、[参数](references/cli-approvals.md) |
+| 写入后对账（本地意图日志） | `wallet operation --operation-id/--list` | [参数](references/cli-wallet.md#wallet-operation)、[对账](references/workflows.md#写入后对账) |
 | 合约预览/执行/自动执行 | `contract-call preview/execute/fire`（`fire --policy` 即原 `run` 的严格模式） | [外部签名](references/signing.md)、[参数](references/cli-contract-call.md) |
 | EIP-712 预览/签名/结果/历史 | `sign-message preview/execute/result/history` | [外部签名](references/signing.md)、[参数](references/cli-sign-message.md) |
 | 钱包生命周期（新增/删除/列表/后台） | `wallets add/remove/list/status/serve/stop` | [钱包模式](references/wallet-modes.md) |

@@ -106,7 +106,7 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
             &cli.command,
             Command::Auth { .. }
                 | Command::Wallet {
-                    command: WalletCommand::Status
+                    command: WalletCommand::Status | WalletCommand::Operation(_)
                 }
         )
     {
@@ -139,6 +139,9 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         Command::Wallet {
             command: WalletCommand::ResolveDomain(args),
         } => wallet_ops::resolve_domain(client, args).await,
+        Command::Wallet {
+            command: WalletCommand::Operation(args),
+        } => crate::operations::run(&wallet_dir, args),
         Command::Approvals { command } => approvals::run(client, &wallet_dir, command).await,
         Command::CliCheck(args) => selfcheck::cli_check(client, args).await,
         Command::SkillCheck(args) => selfcheck::skill_check(client, args).await,

@@ -517,8 +517,10 @@ fn iso_time(value: &Value) -> Value {
         .filter(|n| *n != 0)
         .and_then(chrono::DateTime::from_timestamp_millis)
         .map(|t| {
+            // Always UTC: the same response must render identically on every host, and a
+            // local-offset string silently changes meaning when the box moves.
             Value::String(
-                t.with_timezone(&chrono::Local)
+                t.with_timezone(&chrono::Utc)
                     .to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
             )
         })

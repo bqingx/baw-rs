@@ -19,7 +19,7 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
-    sync::{Mutex, Notify, Semaphore},
+    sync::{Mutex, Notify, RwLock, Semaphore},
 };
 #[path = "executor.rs"]
 mod executor;
@@ -354,8 +354,12 @@ impl Drop for SocketGuard {
         let _ = std::fs::remove_file(&self.0);
     }
 }
-pub(crate) async fn serve(path: &Path, entries: BTreeMap<String, Entry>) -> Result<Value, String> {
-    serve_inner(path, entries, None).await
+pub(crate) async fn serve(
+    path: &Path,
+    entries: BTreeMap<String, Entry>,
+    registry: Option<std::path::PathBuf>,
+) -> Result<Value, String> {
+    serve_inner(path, entries, None, registry).await
 }
 pub(crate) async fn serve_legacy(cli: &Cli) -> Result<Value, String> {
     use std::os::unix::fs::MetadataExt;
@@ -375,6 +379,7 @@ pub(crate) async fn serve_legacy(cli: &Cli) -> Result<Value, String> {
         &crate::warm::socket_path(&dir),
         BTreeMap::from([("single".into(), entry)]),
         Some(cli.instance_id.clone()),
+        None,
     )
     .await
 }
@@ -382,6 +387,7 @@ async fn serve_inner(
     path: &Path,
     entries: BTreeMap<String, Entry>,
     inline: Option<String>,
+    registry: Option<std::path::PathBuf>,
 ) -> Result<Value, String> {
     crate::wallets::private_dir(path.parent().ok_or("invalid socket path")?)?;
     // Serialize bind/stale cleanup, including empty registries.
@@ -417,11 +423,40 @@ async fn serve_inner(
     let _cleanup = SocketGuard(path.to_owned());
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .map_err(|_| "cannot restrict IPC socket")?;
-    serve_listener(listener, Arc::new(wallets)).await
+    serve_listener(listener, Arc::new(RwLock::new(wallets)), registry).await
+}
+
+/// Resolve a wallet for one request, re-reading the registry when the name is not loaded yet.
+///
+/// A wallet added with `wallets add` while the daemon runs is picked up on first use instead of
+/// requiring `wallets stop` → `add` → `serve`, which would interrupt every other wallet. Only
+/// additions are hot: a removed wallet keeps running until restart, because dropping it could
+/// orphan in-flight events or tasks. Validation is the same `Entry::check` used at startup.
+async fn wallet_for(
+    wallets: &RwLock<BTreeMap<String, Arc<Wallet>>>,
+    name: &str,
+    registry: Option<&std::path::PathBuf>,
+) -> Result<Arc<Wallet>, String> {
+    if let Some(wallet) = wallets.read().await.get(name) {
+        return Ok(wallet.clone());
+    }
+    let registry = registry.ok_or("unknown wallet name; no fallback")?;
+    let entries = crate::wallets::reload_entries(registry)?;
+    let mut loaded = wallets.write().await;
+    if let Some(entry) = entries.get(name) {
+        if let std::collections::btree_map::Entry::Vacant(slot) = loaded.entry(name.to_owned()) {
+            slot.insert(Arc::new(Wallet::new(entry.clone())?));
+        }
+    }
+    loaded
+        .get(name)
+        .cloned()
+        .ok_or_else(|| "unknown wallet name; no fallback".to_owned())
 }
 async fn serve_listener(
     listener: UnixListener,
-    wallets: Arc<BTreeMap<String, Arc<Wallet>>>,
+    wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
+    registry: Option<std::path::PathBuf>,
 ) -> Result<Value, String> {
     let stop = Arc::new(Notify::new());
     let (shutdown, _) = tokio::sync::watch::channel(false);
@@ -436,26 +471,28 @@ async fn serve_listener(
                 let (stream,_)=accepted.map_err(|_|"IPC accept failed")?;
                 if *shutdown.borrow() || peer(&stream).is_err(){continue;}
                 let Ok(permit)=permits.clone().try_acquire_owned() else{continue;};
-                let wallets=wallets.clone(); let stop=stop.clone(); let persistent_permits=persistent_permits.clone();
-                tasks.spawn(handle(stream,wallets,stop,permit,persistent_permits,shutdown.clone()));
+                let wallets=wallets.clone(); let stop=stop.clone(); let persistent_permits=persistent_permits.clone(); let registry=registry.clone();
+                tasks.spawn(handle(stream,wallets,registry,stop,permit,persistent_permits,shutdown.clone()));
             }
         }
     }
     // Do not cancel submitted mutations on a graceful stop. Idle reads are bounded.
     drop(listener);
     shutdown.send_replace(true);
-    for wallet in wallets.values() {
+    let all = wallets.read().await.values().cloned().collect::<Vec<_>>();
+    for wallet in &all {
         wallet.native_stop().await;
     }
     while tasks.join_next().await.is_some() {}
-    for wallet in wallets.values() {
+    for wallet in &all {
         wallet.native_drain().await;
     }
     Ok(json!({"status":"stopped"}))
 }
 async fn handle(
     stream: UnixStream,
-    wallets: Arc<BTreeMap<String, Arc<Wallet>>>,
+    wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
+    registry: Option<std::path::PathBuf>,
     stop: Arc<Notify>,
     permit: tokio::sync::OwnedSemaphorePermit,
     persistent_permits: Arc<Semaphore>,
@@ -518,19 +555,21 @@ async fn handle(
         }
         let mut stopping = false;
         let result = match request {
-            Ok(Request::Native { name, command, .. }) => match wallets.get(&name) {
-                Some(wallet) => wallet.native_control(command).await,
-                None => Err("unknown wallet name; no fallback".into()),
-            },
+            Ok(Request::Native { name, command, .. }) => {
+                match wallet_for(&wallets, &name, registry.as_ref()).await {
+                    Ok(wallet) => wallet.native_control(command).await,
+                    Err(error) => Err(error),
+                }
+            }
             Ok(Request::Ping { .. }) => Ok(json!({"status":"ready"})),
             Ok(Request::Trigger {
                 name,
                 operation_id,
                 confirm,
                 ..
-            }) => match wallets.get(&name) {
-                Some(wallet) => wallet.trigger_task(&operation_id, confirm, received).await,
-                None => Err("unknown wallet name; no fallback".into()),
+            }) => match wallet_for(&wallets, &name, registry.as_ref()).await {
+                Ok(wallet) => wallet.trigger_task(&operation_id, confirm, received).await,
+                Err(error) => Err(error),
             },
             Ok(Request::Prepare {
                 name,
@@ -539,26 +578,28 @@ async fn handle(
                 call,
                 policy,
                 ..
-            }) => match wallets.get(&name) {
-                Some(wallet) => {
+            }) => match wallet_for(&wallets, &name, registry.as_ref()).await {
+                Ok(wallet) => {
                     wallet
                         .prepare_task(operation_id, deadline_ms, call, policy)
                         .await
                 }
-                None => Err("unknown wallet name; no fallback".into()),
+                Err(error) => Err(error),
             },
             Ok(Request::Disarm {
                 name, operation_id, ..
-            }) => match wallets.get(&name) {
-                Some(wallet) => wallet.disarm_task(&operation_id).await,
-                None => Err("unknown wallet name; no fallback".into()),
+            }) => match wallet_for(&wallets, &name, registry.as_ref()).await {
+                Ok(wallet) => wallet.disarm_task(&operation_id).await,
+                Err(error) => Err(error),
             },
             Err(e) => Err(e),
-            Ok(Request::Status) => Ok(
-                json!({"status":"running","wallets":wallets.keys().collect::<Vec<_>>(),"pid":std::process::id()}),
-            ),
+            Ok(Request::Status) => Ok({
+                let names = wallets.read().await.keys().cloned().collect::<Vec<_>>();
+                json!({"status":"running","wallets":names,"registry":registry,"hotReload":registry.is_some(),"pid":std::process::id()})
+            }),
             Ok(Request::Stop) => {
-                for wallet in wallets.values() {
+                let all = wallets.read().await.values().cloned().collect::<Vec<_>>();
+                for wallet in &all {
                     wallet.native_stop().await;
                 }
                 shutdown.send_replace(true);
@@ -566,10 +607,12 @@ async fn handle(
                 stopping = true;
                 Ok(json!({"status":"stopping"}))
             }
-            Ok(Request::Run { name, argv }) => match wallets.get(&name) {
-                None => Err("unknown wallet name; no fallback".into()),
-                Some(wallet) => wallet.execute(argv).await,
-            },
+            Ok(Request::Run { name, argv }) => {
+                match wallet_for(&wallets, &name, registry.as_ref()).await {
+                    Ok(wallet) => wallet.execute(argv).await,
+                    Err(error) => Err(error),
+                }
+            }
         };
         let mut response = envelope(result);
         if persistent {

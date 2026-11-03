@@ -7,6 +7,32 @@ the current source.
 
 ## Unreleased
 
+- **`wallet operation`: reconcile a mutation without guessing.** Reads the durable
+  `.baw-rs-operations/<id>.json` intent record and returns a machine verdict
+  (`UNCERTAIN` / `RESPONSE_RECEIVED` / `FAILED_OR_UNKNOWN` / `UNRECOGNISED`), the recovered
+  `txHash`/`orderId` when present, a `nextStep`, and `retrySafe` — which stays `false` for every
+  recorded state, because the journal cannot prove a request was never sent. Read-only, offline,
+  and usable while signed out or while the daemon is stopped. `--list` enumerates ids.
+  Leaf commands 46 → 47.
+
+- **Timestamps are always UTC.** `wallet tx-history` rendered times with the host's local offset,
+  so the same response stringified differently per machine and one test failed outside UTC. Times
+  now use `+00:00` everywhere; the suite passes in any `TZ`.
+
+- **Hot-add wallets on a running daemon.** A name registered after `wallets serve` started is
+  loaded on first use instead of requiring `stop` → `add` → `serve`, which interrupted every other
+  wallet. Additions only: removed wallets keep serving until restart, so no in-flight event, task or
+  write is dropped. Same `Entry::check()` validation as startup, shared registry lock on reload, and
+  `wallets status` reports `hotReload`.
+
+- **Dependency and lint pass.** `k256` no longer enables the unused `ecdh` feature (only key
+  generation and SEC1 encoding are used); clippy is clean on `--all-targets`. Every declared
+  dependency is used — the earlier "unused dependency" concern does not hold for this tree.
+
+- **Release workflow.** `.github/workflows/release.yml` builds from the tagged commit, runs the
+  suite under `TZ=UTC` first, refuses a tag that disagrees with `Cargo.toml`, and publishes the
+  binary with `SHA256SUMS`. The repository still ships no maintainer-built binary.
+
 - **Flattened wallet model (breaking).** The wallet name is now a global flag:
   `baw-rs --wallet alice wallet balance` instead of `baw-rs vaults --registry R run alice -- wallet balance`.
   Wallet lifecycle is owned by the binary (`wallets add|remove|list|status|serve|stop`), which never
@@ -15,12 +41,12 @@ the current source.
   `--registry`. A wallet-scoped command without `--wallet` and without the legacy `--wallet-dir` pair
   now fails with an error naming the flag. `vaults`, `vaults run NAME --`, `vaults register`,
   `vaults task NAME`, `--wallet-dir`/`--instance-id-file`, `serve` and `--warm` remain supported as
-  documented compatibility paths. Leaf commands stay at 45.
+  documented compatibility paths. Leaf commands stay at 46 (44 root + `openfour`).
 
 - **Trimmed command surface (breaking).** Removed the `prediction`, `defi`, `x402-payment`,
   `tracker`, `signal`, `leaderboard`, `limit-order`, `fast` and `batch` families together with
-  their source modules, tests and reference docs. Leaf commands drop from 116 to 45 (root CLI
-  33, plus `vaults` and `openfour`). Kept: `auth`, `wallet`, `market-order`, `contract-call`,
+  their source modules, tests and reference docs. Leaf commands drop from 116 to 46 (44 root CLI
+  leaves, plus `vaults` and `openfour`). Kept: `auth`, `wallet`, `market-order`, `contract-call`,
   `sign-message`, `approvals`, `openfour`, `vaults` (incl. `task`), `cli-check`, `skill-check`,
   and the single-wallet `serve` / `--warm` machinery. `uint256` parsing moved from `fast.rs` to
   `src/uint.rs`; `openfour encode-buy` keeps its offline encoder.

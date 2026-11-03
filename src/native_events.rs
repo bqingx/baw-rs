@@ -416,7 +416,7 @@ impl Config {
                 // A route that leaves the cap unset uses the built-in ceiling, so the policy has to
                 // be written in explicitly; otherwise a wide default would silently outrank it.
                 let route_cap = config.get("max_gas_limit").and_then(Value::as_u64);
-                if route_cap.map_or(true, |cap| cap == 0 || cap > pol) {
+                if route_cap.is_none_or(|cap| cap == 0 || cap > pol) {
                     config["max_gas_limit"] = json!(pol);
                 }
             }
@@ -614,8 +614,8 @@ fn native_route_builder(
 /// 2. A full construction against a live quote, whose call is discarded. A task that cannot build
 ///    now cannot build at trigger time either — and a one-shot task has no second chance, so this
 ///    has to fail in `load`, where the operator is still looking.
-/// `auto_approve`: top up the input-token allowance during `arm`, never during a trigger.
 ///
+/// `auto_approve`: top up the input-token allowance during `arm`, never during a trigger.
 /// Arming already reads the on-chain allowance; when it is short, this sends one
 /// `approve(spender, amount)` through the same preview→execute core every other write uses, holds
 /// the wallet's exclusive write lock for the whole operation, waits for the receipt and re-reads the

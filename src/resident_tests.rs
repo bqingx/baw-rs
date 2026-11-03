@@ -136,7 +136,7 @@ async fn start(
     std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let path = root.join("test.sock");
     let listener = UnixListener::bind(&path).unwrap();
-    let task = tokio::spawn(serve_listener(listener, Arc::new(wallets)));
+    let task = tokio::spawn(serve_listener(listener, Arc::new(RwLock::new(wallets)), None));
     (path, task)
 }
 fn request(
@@ -540,7 +540,8 @@ async fn ipc_frames_are_bounded_and_idle_connections_time_out() {
     let (mut client, server) = UnixStream::pair().unwrap();
     let task = tokio::spawn(handle(
         server,
-        Arc::new(BTreeMap::new()),
+        Arc::new(RwLock::new(BTreeMap::new())),
+        None,
         Arc::new(Notify::new()),
         Arc::new(Semaphore::new(1)).acquire_owned().await.unwrap(),
         Arc::new(Semaphore::new(16)),
@@ -564,7 +565,7 @@ async fn daemon_never_replaces_regular_file_at_socket_path() {
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let path = root.path().join("daemon.sock");
     std::fs::write(&path, b"synthetic-sentinel").unwrap();
-    assert!(serve(&path, BTreeMap::new())
+    assert!(serve(&path, BTreeMap::new(), None)
         .await
         .unwrap_err()
         .contains("non-socket"));
@@ -584,4 +585,81 @@ async fn duplicate_resident_lease_and_replaced_directory_rejected() {
         .await
         .unwrap_err()
         .contains("identity changed"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wallet_added_after_start_is_usable_without_restarting_the_daemon() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let registry = root.path().join("registry");
+    std::fs::create_dir(&registry).unwrap();
+    std::fs::set_permissions(&registry, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Empty registry at start: the daemon knows no names yet.
+    std::fs::write(registry.join("registry.json"), b"{}").unwrap();
+    std::fs::set_permissions(
+        registry.join("registry.json"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let socket = root.path().join("hot.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let server = tokio::spawn(serve_listener(
+        listener,
+        Arc::new(RwLock::new(BTreeMap::new())),
+        Some(registry.clone()),
+    ));
+
+    // Unknown name before registration: no fallback, no silent success.
+    let unknown = send(&socket, Request::Run { name: "late".into(), argv: argv(&["wallet", "status"]) })
+        .await
+        .unwrap_err();
+    assert!(unknown.contains("unknown wallet name"), "{unknown}");
+
+    // Register the wallet exactly as `wallets add` would, while the daemon is running.
+    let dir = root.path().join("late");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    save(&dir, "instance-late", A, "cookie-late");
+    let key = root.path().join("late.key");
+    std::fs::write(&key, "instance-late").unwrap();
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let meta = std::fs::metadata(&dir).unwrap();
+    let entry = json!({
+        "dir": dir,
+        "instance_file": key,
+        "device": meta.dev(),
+        "inode": meta.ino(),
+    });
+    let registry_file = registry.join("registry.json");
+    std::fs::remove_file(&registry_file).unwrap();
+    std::fs::write(
+        &registry_file,
+        serde_json::to_vec(&json!({"late": entry})).unwrap(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&registry_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    // `wallet operation --list` is journal-only: it proves the name resolved and the wallet
+    // answered without any backend request.
+    let resolved = send(
+        &socket,
+        Request::Run {
+            name: "late".into(),
+            argv: argv(&["wallet", "operation", "--list"]),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(resolved["count"], 0);
+    let status = send(&socket, Request::Status).await.unwrap();
+    assert_eq!(status["hotReload"], true);
+    assert!(status["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|n| n == "late"));
+
+    send(&socket, Request::Stop).await.unwrap();
+    server.await.unwrap().unwrap();
 }

@@ -202,6 +202,8 @@ pub enum WalletCommand {
     Cancel(crate::wallet_ops::CancelTxArgs),
     /// Resolve a domain name (.eth/.bnb/.ai Agent ID) to an address.
     ResolveDomain(crate::wallet_ops::ResolveDomainArgs),
+    /// Read-only view of the local intent journal: was this operation id submitted?
+    Operation(crate::operations::OperationArgs),
 }
 
 #[cfg(test)]

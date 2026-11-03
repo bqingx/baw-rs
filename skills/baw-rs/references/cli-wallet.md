@@ -504,3 +504,42 @@ Options:
   -h, --help
           Print help
 ```
+
+## `wallet operation`
+
+```text
+Read-only view of the local intent journal: was this operation id submitted?
+
+Usage: baw-rs wallet operation [OPTIONS]
+
+Options:
+      --operation-id <ID>
+          Operation id to explain (the same id passed to a guarded write)
+      --list
+          List every operation id recorded for this wallet, newest last
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
+      --json
+      --timing
+      --confirm
+      --operation-id <OPERATION_ID>
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+      --warm
+          Route this command through the resident warm server when it is running
+      --skip-prechecks
+  -h, --help
+          Print help
+```
+
+本地读取 `.baw-rs-operations/` 下的意图记录，**不联网、不解密、不写文件**。用于回答“这笔到底提交没有”：
+
+| `verdict` | 含义 | `retrySafe` |
+|---|---|---|
+| `UNCERTAIN` | 记录仍是 `SUBMITTING`：进程在请求与响应之间结束，或响应未到 | 恒为 `false` |
+| `RESPONSE_RECEIVED` | 已拿到后端响应，附 `recovery`（`txHash`/`orderId`/`status`，若存在） | 恒为 `false` |
+| `FAILED_OR_UNKNOWN` | 后端拒绝或传输失败 | 恒为 `false` |
+| `UNRECOGNISED` | 记录格式非本版本理解，需人工查看 | 恒为 `false` |
+
+`nextStep` 给出下一步该做什么（例如用 `wallet tx-history` 对账、不要用新 operation-id 重发）。目录/文件必须属主、0700/0600、非符号链接，否则拒绝读取；缺失的 id 返回错误而不是空结果。`--operation-id` 与 `--list` 互斥。

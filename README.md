@@ -23,7 +23,7 @@
 
 | | |
 |---|---|
-| **命令面** | 46 条叶子命令：`auth`、`wallet`、`market-order`、`contract-call`、`sign-message`、`approvals`、`task`（事件任务）、`wallets`（钱包生命周期与控制面）、`cli-check`、`skill-check`、`serve`，另有独立入口 `openfour`（`quote-buy` / `encode-buy`） |
+| **命令面** | 47 条叶子命令：`auth`、`wallet`、`market-order`、`contract-call`、`sign-message`、`approvals`、`task`（事件任务）、`wallets`（钱包生命周期与控制面）、`cli-check`、`skill-check`、`serve`，另有独立入口 `openfour`（`quote-buy` / `encode-buy`） |
 | **交易** | 写操作要求显式授权；普通外部签名支持「预览 → 人工确认 → 执行」。`contract-call fire` 是显式授权的自动预览→执行，没有中途人工审核 |
 | **查询** | 余额、历史、额度、gas、授权（approvals）、Agent ID、会话到期时间 |
 | **多钱包** | 一个后台进程管理多个具名钱包，各自独立登录，可并行；钱包名是全局参数 `--wallet <NAME>` |
@@ -65,7 +65,7 @@ baw-rs --wallet w1 approvals approve --binanceChainId 56 \
 ## Agent Skill
 
 面向 AI Agent 的中文版操作技能：[`skills/baw-rs/SKILL.md`](skills/baw-rs/SKILL.md)。
-覆盖本仓库实际提供的 46 条叶子命令（已裁剪官方 baw 中的 DeFi、预测、跟踪、信号、榜单、限价与 x402 面），
+覆盖本仓库实际提供的 47 条叶子命令（已裁剪官方 baw 中的 DeFi、预测、跟踪、信号、榜单、限价与 x402 面），
 并记录 Rust 新增的多钱包、原生事件任务与离线编码路径。
 附实际 `--help` 参数快照、登录/交易/签名/对账流程和仅离线的校验工具，不携带任何登录态。
 

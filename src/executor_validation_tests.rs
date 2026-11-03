@@ -216,7 +216,8 @@ async fn existing_journal_prevents_resubmission_after_resident_restart() {
     let listener = UnixListener::bind(&path).unwrap();
     let server = tokio::spawn(serve_listener(
         listener,
-        Arc::new(BTreeMap::from([("alice".into(), Arc::new(new))])),
+        Arc::new(RwLock::new(BTreeMap::from([("alice".into(), Arc::new(new))]))),
+        None,
     ));
     let p = path.clone();
     let job = tokio::spawn(async move { exchange(&p, prepare("restart")).await });

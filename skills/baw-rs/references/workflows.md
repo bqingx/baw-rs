@@ -52,3 +52,19 @@
 
 需要链上事件驱动的自动动作时，用 `--wallet NAME task`（见 [native-event-tasks.md](native-event-tasks.md)）：
 事件命中后执行的是已授权的固定合约调用，不是“看榜单自动交易”。
+
+## 写入后对账
+
+写入返回错误、进程被杀、IPC 超时或 `retrySafe:false` 时，先查本机意图日志，**不要凭印象重发**：
+
+```sh
+baw-rs --wallet alice wallet operation --operation-id "$OP" --json
+baw-rs --wallet alice wallet operation --list --json
+```
+
+- `verdict: UNCERTAIN`：记录停在 `SUBMITTING`，提交状态未知。用 `wallet tx-history`、`tx-lock` 或浏览器按 `recovery.txHash` 对账；确认没有链上效果前，不得用新 operation-id 重发同一意图。
+- `verdict: RESPONSE_RECEIVED`：拿过响应，`recovery` 里可能带 `txHash`/`orderId`/`status`；核对实际成交与余额，`BROADCASTED` 不等于成功。
+- `verdict: FAILED_OR_UNKNOWN`：后端拒绝或传输失败；仍要确认没有链上效果后才谈重试。
+- `retrySafe` 恒为 `false`：日志只能证明“可能已提交”，不能证明“没提交”。
+
+该命令只读本地文件，不需要联网；未登录也能查，适合钱包会话过期或服务停止后的事故排查。

@@ -209,6 +209,14 @@ fn lock_registry(path: &Path, exclusive: bool) -> Result<File, String> {
     Ok(lock)
 }
 
+/// Re-read the registry for a running daemon so a wallet added with `wallets add` is usable
+/// without restarting the service. Takes the shared registry lock, so it cannot observe a
+/// half-written registry and cannot interleave with `add`/`remove`.
+pub(crate) fn reload_entries(path: &Path) -> Result<Registry, String> {
+    let _lock = lock_registry(path, false)?;
+    load(path)
+}
+
 fn load(path: &Path) -> Result<Registry, String> {
     match std::fs::symlink_metadata(path.join("registry.json")) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
@@ -675,7 +683,7 @@ pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
             registry_dir(&registry, false)?;
             let _lock = lock_registry(&registry, false)?;
             let entries = load(&registry)?;
-            crate::resident::serve(&socket_path(&registry), entries).await
+            crate::resident::serve(&socket_path(&registry), entries, Some(registry.clone())).await
         }
         Action::Status => {
             crate::resident::send(&socket_path(&registry), crate::resident::Request::Status)

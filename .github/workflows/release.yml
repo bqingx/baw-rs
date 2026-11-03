@@ -1,0 +1,61 @@
+name: release
+
+# Builds the binary from the tagged commit, runs the test suite first, and publishes the
+# artifact together with its SHA-256. The project ships no prebuilt binaries from a maintainer
+# machine: only a reproducible build from this workflow's commit is published, and the hash is
+# what a user compares against before running it with real funds.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -eu
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          test "v$version" = "${GITHUB_REF_NAME}" || {
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version v$version" >&2
+            exit 1
+          }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test (UTC, so the suite is timezone-independent)
+        run: TZ=UTC cargo test --release --locked --lib
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Record artifact hash
+        run: |
+          set -eu
+          mkdir -p dist
+          cp target/release/baw-rs "dist/baw-rs-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
+          cd dist
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baw-rs-${{ github.ref_name }}
+          path: dist/*
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" dist/* --clobber

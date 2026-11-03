@@ -6,6 +6,7 @@ pub mod client;
 pub mod dispatch;
 pub mod execution;
 pub mod openfour;
+pub mod operations;
 pub mod policy;
 pub mod portfolio;
 mod resident;

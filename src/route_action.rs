@@ -554,7 +554,7 @@ impl RouteActionBuilder {
             .to_str_radix(10)
             .parse::<u64>()
             .map_err(|_| "gas unit overflow")?;
-        let ceiling = gas_ceiling(&c);
+        let ceiling = gas_ceiling(c);
         if gas == 0 || gas > ceiling {
             return Err(format!(
                 "OKX gas exceeds gas-unit cap (quoted {gas}, cap {ceiling})"

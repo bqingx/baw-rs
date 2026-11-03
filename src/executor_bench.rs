@@ -26,7 +26,8 @@ async fn persistent_executor_loopback_benchmark() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let server = tokio::spawn(serve_listener(
         listener,
-        Arc::new(BTreeMap::from([("alice".into(), a)])),
+        Arc::new(RwLock::new(BTreeMap::from([("alice".into(), a)]))),
+        None,
     ));
     let backend = tokio::spawn(async move {
         let mut previews = 0u64;
