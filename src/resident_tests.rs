@@ -542,6 +542,7 @@ async fn ipc_frames_are_bounded_and_idle_connections_time_out() {
         server,
         Arc::new(RwLock::new(BTreeMap::new())),
         None,
+        Arc::new(super::native_shared::new_members()),
         Arc::new(Notify::new()),
         Arc::new(Semaphore::new(1)).acquire_owned().await.unwrap(),
         Arc::new(Semaphore::new(16)),

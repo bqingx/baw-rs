@@ -11,7 +11,7 @@
 //! cannot be prepared fails the whole load — a half-armed group would otherwise look armed to the
 //! operator while silently sending from fewer wallets.
 use super::*;
-use crate::native_events::Control;
+use super::native_events::Control;
 use std::collections::BTreeMap;
 
 /// task_id -> member wallet names, in declaration order.
