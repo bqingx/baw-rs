@@ -1,4 +1,9 @@
 //! Native one-shot EVM log/pending tasks. No shell, eval or implicit mutation retries.
+#[path = "native_block_time.rs"]
+mod block_time;
+/// Same matcher the runtime uses, exposed so tests exercise the shipped path, not a copy.
+#[cfg(test)]
+pub(in crate::resident) use block_time::id as native_block_time_id;
 #[path = "native_pending.rs"]
 mod pending;
 use super::*;
@@ -67,6 +72,15 @@ pub(super) enum TriggerSource {
         to: String,
         selector: String,
         args: Vec<PendingArg>,
+    },
+    /// Fire on the first block whose own `timestamp` is at or past `timestamp_gte`.
+    ///
+    /// The chain clock is the only authority — deliberately not a local timer, because a local
+    /// clock can be early (transaction reverts) or late (someone else already claimed). Watching
+    /// heads cannot win the *first* qualifying block, since that block is already sealed when its
+    /// header arrives; it removes the dependency on another wallet's event and on wall-clock drift.
+    BlockTime {
+        timestamp_gte: u64,
     },
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -250,6 +264,16 @@ impl Config {
         if v.get("deadline_ms").is_some() {
             return Err("native task requires relative valid_for_ms; absolute deadline_ms is unsupported (including mixed configs)".into());
         }
+        let log_only_fields = [
+            "filter",
+            "start_block",
+            "confirmation_depth",
+            "max_backfill_blocks",
+            "chunk_blocks",
+        ];
+        let explicit_log_fields = log_only_fields
+            .iter()
+            .any(|key| v.get(*key).is_some());
         let explicit_log_bounds = [
             "start_block",
             "confirmation_depth",
@@ -291,6 +315,19 @@ impl Config {
                     || f.topics.iter().flatten().any(|s| !hex(s, 32))
                 {
                     return Err("explicit address and nonempty pinned topics required".into());
+                }
+            }
+            TriggerSource::BlockTime { timestamp_gte } => {
+                if *timestamp_gte == 0 {
+                    return Err("block_time requires a positive timestamp_gte".into());
+                }
+                // Presence, not value: an explicit `confirmation_depth: 0` still reads as
+                // "confirmations are part of this task" and would be a silent no-op here.
+                if explicit_log_fields {
+                    return Err(
+                        "block_time source does not support log filter/backfill/confirmations"
+                            .into(),
+                    );
                 }
             }
             TriggerSource::Pending {
@@ -364,15 +401,26 @@ impl Config {
                         }) {
                             return Err("division by zero".into());
                         }
+                        // Each trigger carries a different payload: a pending transaction has
+                        // input but no logs, a log has topics/data, and a block header has neither
+                        // input nor logs — only its own hash, which `read` can pin to.
                         let pending = matches!(c.source, TriggerSource::Pending { .. });
-                        if (pending
-                            && matches!(
+                        let block_time = matches!(c.source, TriggerSource::BlockTime { .. });
+                        let incompatible = if pending {
+                            matches!(
                                 a.source,
                                 Source::Topic { .. } | Source::Data { .. } | Source::Read { .. }
-                            ))
-                            || (!pending && matches!(a.source, Source::Input { .. }))
-                        {
-                            return Err("action source incompatible with trigger: pending words allow only input/constant; logs do not define input".into());
+                            )
+                        } else if block_time {
+                            matches!(
+                                a.source,
+                                Source::Input { .. } | Source::Topic { .. } | Source::Data { .. }
+                            )
+                        } else {
+                            matches!(a.source, Source::Input { .. })
+                        };
+                        if incompatible {
+                            return Err("action source incompatible with trigger: pending allows input/constant, logs allow topic/data/read/constant, block_time allows constant/read".into());
                         }
                         match &a.source {
                             Source::Topic { index } if *index > 3 => {
@@ -1735,6 +1783,9 @@ impl RecentIds {
     }
 }
 pub(super) fn event_id(c: &Config, e: &Value) -> Result<String, String> {
+    if let TriggerSource::BlockTime { timestamp_gte } = c.source {
+        return block_time::id(c, e, timestamp_gte);
+    }
     if matches!(c.source, TriggerSource::Pending { .. }) {
         return pending::id(c, e)?
             .ok_or("pending transaction does not match authorized trigger".into());
@@ -1901,6 +1952,10 @@ async fn source(
     let result=async {
         if matches!(c.source, TriggerSource::Pending { .. }) {
             return pending::run(&wallet, &c, &tx, &health, &mut cancel).await;
+        }
+        if matches!(c.source, TriggerSource::BlockTime { .. }) {
+            block_time::run(&c, &tx, &health, &mut cancel).await;
+            return Ok(());
         }
         let filter = c.filter.as_ref().ok_or("log filter required")?;
         let mut cursor=c.start_block;let mut seen=RecentIds::default();let mut reconnects=0u32;

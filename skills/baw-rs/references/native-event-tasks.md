@@ -25,7 +25,7 @@ load只装载；arm启用后由既有多钱包后台监听、匹配、构造并�
 
 更改输入结构前先取旧版状态结构制作私有合成夹具，区分“拒绝用户旧配置”和“读取历史磁盘状态”两条路径。对旧SUCCESS、等待中、ACCEPTED、EXECUTING分别验证Status/Disarm/装载新唯一ID及再次恢复；不能让不可解析的旧current永久挡住所有控制入口。迁移应原子保存已用ID、operation_id、原deadline、history和原始证据，旧任务不可获得新时长或重新arm。写入失败不得宣称迁移完成、丢掉未知结果或清防重历史。不要修改真实钱包状态来演示；只有完整测试和独立复审通过后才报告迁移已可用。
 
-## 两种触发来源
+## 三种触发来源
 
 `source`省略默认`{"kind":"logs"}`。日志模式仍要求显式filter/start_block/confirmation_depth/max_backfill_blocks/chunk_blocks。topics仅固定值/null；不是任意data比较或价格复合脚本。start_block含该块，过早会触发历史事件。ERC20 Transfer由代币合约发出，钱包只是from/to筛选值，转出/收到必须明确。confirmation_depth=0也是已出块日志，不是mempool。removed:true忽略；断线按原有界补块，超界失败。
 
@@ -39,6 +39,21 @@ pending示例（占位地址，不能直接交易）：
 pending省略日志filter和block/confirmation/backfill字段，显式null/0仅表示无日志语义。hashes订阅`newPendingTransactions`再HTTP查询真实详情；full订阅`["newPendingTransactions",true]`需供应商扩展支持，不自动切模式。检查WS/HTTP链ID，hash详情必须同hash，null或已出块跳过，字段畸形失败。只看到节点自己的mempool，HTTP/WS节点池不同可能查不到。
 
 有界队列、滑动近期去重（日志与 pending 共用同一机制），不为每 hash 无限并发取详情；队列溢出失败，不静默丢。去重满窗口只淘汰最早记录，**不得因为累计条数把长任务判失败**——否则长有效期被隐形寿命抵消。pending 只按配置的参数位比完整32字节，选择器命中但带动态尾部/缺槽位只算不匹配，不让单条候选畸形终止整个任务。pending断线有不可补齐的缺口，明确失败，无重连/日志回退/重放。目标交易取消、替换或失败不撤回自己已提交的抢单。预览可能因当前链上未开放失败，不能绕过或承诺首块/排序。
+
+### `block_time`：按链上区块时间触发
+
+```json
+{"kind":"block_time","timestamp_gte":1793698200}
+```
+
+用于“链上时间到点才允许”的动作，例如合约里 `require(block.timestamp >= startTime)` 的免费领取。**不用本机时钟**：本机早一秒会回滚，晚一秒可能被别人领走，只有区块自身的 `timestamp` 算数。
+
+- 只接受 `timestamp_gte`（必须为正整数，Unix 秒）；出现 `filter`/`start_block`/`confirmation_depth`/`max_backfill_blocks`/`chunk_blocks` 任一字段即拒绝——确认深度与“尽快提交”直接冲突，静默忽略会造成误解。
+- 两个读取路径：WS 订阅 `newHeads`（快路径），以及每 400ms 一次 `eth_getBlockByNumber("latest")`（补查）。两条路径统一走同一匹配与去重；WS 不支持或连接失败时**继续用 HTTP 轮询**，不因此判任务失败。
+- 触发条件是链上 `timestamp >= timestamp_gte`；同一个块重复出现（WS+HTTP、重连重放）由块哈希去重，执行权仍由 operation 状态机保证只有一次。
+- words 只允许 `constant` 和事件块 `read`（读该触发块的状态）；`input`/`topic`/`data` 需要 pending 或日志载荷，配置期即拒绝。
+- arm 时已过阈值：立即用当前链头评估一次，命中即正常走预览→执行。
+- 必须说清：看到达标区块时那个块已经封了，本能力提交的是**下一个块**。它去掉的是“等别人先领”和本机时钟漂移，**不保证抢到第一份**，也不保证进第一个达标块。要进首块只能在阈值前提前提交，代价是可能落到未达标块而回滚白付 Gas。
 
 ## 动作
 

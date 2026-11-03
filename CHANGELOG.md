@@ -7,6 +7,15 @@ the current source.
 
 ## Unreleased
 
+- **`block_time` trigger source for native tasks.** Fires on the first block whose own
+  `timestamp` reaches `timestamp_gte`, using the chain clock only — no local timer and no
+  dependency on another wallet's event. `newHeads` over WS is the fast path and an
+  `eth_getBlockByNumber("latest")` poll every 400 ms is the catch-up path; a provider without
+  subscriptions still arms and fires, and both paths share one matcher and one block-hash dedup.
+  Log-only fields and non-constant/non-read word sources are rejected at parse time. This removes
+  clock drift and waiting for someone else's event; it does not win the qualifying block, because
+  that block is already sealed when its header arrives.
+
 - **`wallet operation`: reconcile a mutation without guessing.** Reads the durable
   `.baw-rs-operations/<id>.json` intent record and returns a machine verdict
   (`UNCERTAIN` / `RESPONSE_RECEIVED` / `FAILED_OR_UNKNOWN` / `UNRECOGNISED`), the recovered

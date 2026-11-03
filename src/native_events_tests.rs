@@ -902,3 +902,97 @@ fn route_tasks_get_an_automatic_allowance_prerequisite() {
             .unwrap_or("")
             .starts_with("0xdd62ed3e")));
 }
+
+/// `block_time` reuses the log/pending runtime, so the only new logic is the matcher and the
+/// config shape. These cover both without a network.
+pub(super) fn block_time_config(threshold: u64) -> Value {
+    let mut v = config();
+    for key in [
+        "filter",
+        "start_block",
+        "confirmation_depth",
+        "max_backfill_blocks",
+        "chunk_blocks",
+    ] {
+        v.as_object_mut().unwrap().remove(key);
+    }
+    v["source"] = json!({"kind":"block_time","timestamp_gte":threshold});
+    v
+}
+
+fn header(hash_byte: u8, number: u64, timestamp: u64) -> Value {
+    json!({
+        "hash": format!("0x{}", format!("{hash_byte:02x}").repeat(32)),
+        "parentHash": format!("0x{}", "ee".repeat(32)),
+        "number": format!("0x{number:x}"),
+        "timestamp": format!("0x{timestamp:x}"),
+    })
+}
+
+#[test]
+fn block_time_fires_only_at_or_past_the_chain_threshold() {
+    let c = Config::parse(block_time_config(1_793_698_200)).unwrap();
+    for (timestamp, accepted) in [
+        (1_793_698_199u64, false),
+        (1_793_698_200, true),
+        (1_793_698_201, true),
+    ] {
+        let got = native_block_time_id(&c, &header(1, 100, timestamp), 1_793_698_200);
+        assert_eq!(got.is_ok(), accepted, "timestamp {timestamp}");
+    }
+    // The id is derived from the block, so a re-delivery of the same block is the same id and
+    // dedup keeps it to one queue entry; a different block is a different id.
+    let a = native_block_time_id(&c, &header(2, 101, 1_793_698_200), 1_793_698_200).unwrap();
+    let b = native_block_time_id(&c, &header(2, 101, 1_793_698_200), 1_793_698_200).unwrap();
+    let other = native_block_time_id(&c, &header(3, 102, 1_793_698_200), 1_793_698_200).unwrap();
+    assert_eq!(a, b);
+    assert_ne!(a, other);
+    assert!(a.starts_with("blk-") && a.len() <= 64);
+}
+
+#[test]
+fn block_time_rejects_malformed_or_reorged_headers() {
+    let c = Config::parse(block_time_config(1)).unwrap();
+    let mut no_hash = header(1, 1, 2);
+    no_hash["hash"] = json!("0x1234");
+    assert!(native_block_time_id(&c, &no_hash, 1).is_err());
+    let mut no_time = header(1, 1, 2);
+    no_time.as_object_mut().unwrap().remove("timestamp");
+    assert!(native_block_time_id(&c, &no_time, 1).is_err());
+    let mut removed = header(1, 1, 2);
+    removed["removed"] = json!(true);
+    assert!(native_block_time_id(&c, &removed, 1).is_err());
+    let mut bad_number = header(1, 1, 2);
+    bad_number["number"] = json!("not-hex");
+    assert!(native_block_time_id(&c, &bad_number, 1).is_err());
+}
+
+#[test]
+fn block_time_config_refuses_log_only_fields_and_zero_threshold() {
+    assert!(Config::parse(block_time_config(1)).is_ok());
+    assert!(Config::parse(block_time_config(0)).is_err());
+    // Log-only bounds must be refused, not silently ignored: they would look like they apply.
+    for (key, value) in [
+        ("start_block", json!(1)),
+        ("confirmation_depth", json!(0)),
+        ("max_backfill_blocks", json!(10)),
+        ("chunk_blocks", json!(10)),
+    ] {
+        let mut v = block_time_config(1);
+        v[key] = value;
+        assert!(Config::parse(v).is_err(), "{key} accepted for block_time");
+    }
+    let mut with_filter = block_time_config(1);
+    with_filter["filter"] = config()["filter"].clone();
+    assert!(Config::parse(with_filter).is_err());
+    // `input` binding needs a pending transaction, not a header.
+    let mut input_word = block_time_config(1);
+    input_word["action"] = json!({"kind":"words","call":{"binance_chain_id":"56","from":"0x1111111111111111111111111111111111111111","to":"0x2222222222222222222222222222222222222222","value":"0","input_data":"0x12345678","gas_limit":100000},
+        "args":[{"source":{"kind":"input","index":0},"abi_type":"uint256","max":format!("0x{:064x}",100)}]});
+    assert!(Config::parse(input_word).is_err());
+    // A constant word stays legal: the whole point is a fixed call.
+    let mut constant_word = block_time_config(1);
+    constant_word["action"] = json!({"kind":"words","call":{"binance_chain_id":"56","from":"0x1111111111111111111111111111111111111111","to":"0x2222222222222222222222222222222222222222","value":"0","input_data":"0x12345678","gas_limit":100000},
+        "args":[{"source":{"kind":"constant","word":format!("0x{:064x}",7)},"abi_type":"uint256","max":format!("0x{:064x}",100)}]});
+    assert!(Config::parse(constant_word).is_ok());
+}
