@@ -515,12 +515,23 @@ pub(super) async fn wallet_for(
         .cloned()
         .ok_or_else(|| "unknown wallet name; no fallback".to_owned())
 }
+/// Everything a connection needs, so the handler signature stays readable.
+pub(super) struct Daemon {
+    pub(super) wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
+    pub(super) registry: Option<std::path::PathBuf>,
+    pub(super) members: Arc<native_shared::Members>,
+}
+
 async fn serve_listener(
     listener: UnixListener,
     wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
     registry: Option<std::path::PathBuf>,
 ) -> Result<Value, String> {
-    let members = Arc::new(native_shared::new_members());
+    let daemon = Arc::new(Daemon {
+        wallets,
+        registry,
+        members: Arc::new(native_shared::new_members()),
+    });
     let stop = Arc::new(Notify::new());
     let (shutdown, _) = tokio::sync::watch::channel(false);
     let permits = Arc::new(Semaphore::new(64));
@@ -534,8 +545,8 @@ async fn serve_listener(
                 let (stream,_)=accepted.map_err(|_|"IPC accept failed")?;
                 if *shutdown.borrow() || peer(&stream).is_err(){continue;}
                 let Ok(permit)=permits.clone().try_acquire_owned() else{continue;};
-                let wallets=wallets.clone(); let stop=stop.clone(); let persistent_permits=persistent_permits.clone(); let registry=registry.clone(); let members=members.clone();
-                tasks.spawn(handle(stream,wallets,registry,members,stop,permit,persistent_permits,shutdown.clone()));
+                let daemon=daemon.clone(); let stop=stop.clone(); let persistent_permits=persistent_permits.clone();
+                tasks.spawn(handle(stream,daemon,stop,permit,persistent_permits,shutdown.clone()));
             }
         }
     }
@@ -554,14 +565,16 @@ async fn serve_listener(
 }
 async fn handle(
     stream: UnixStream,
-    wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
-    registry: Option<std::path::PathBuf>,
-    members: Arc<native_shared::Members>,
+    daemon: Arc<Daemon>,
     stop: Arc<Notify>,
     permit: tokio::sync::OwnedSemaphorePermit,
     persistent_permits: Arc<Semaphore>,
     shutdown: tokio::sync::watch::Sender<bool>,
 ) {
+    // Cheap clones: the body refers to these by name throughout.
+    let wallets = daemon.wallets.clone();
+    let registry = daemon.registry.clone();
+    let members = daemon.members.clone();
     let mut shutdown_rx = shutdown.subscribe();
     let mut legacy_permit = Some(permit);
     let mut persistent_permit = None;
