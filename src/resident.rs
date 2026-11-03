@@ -120,6 +120,9 @@ pub(crate) struct Wallet {
     /// Set exactly when every pre-execute gate has passed and the execute POST is next.
     native_submitted: std::sync::atomic::AtomicBool,
     _lease: File,
+    /// Shared listeners, keyed by source fingerprint. Different wallets running the same task
+    /// shape use one WS connection and one poll loop.
+    feeds: std::sync::OnceLock<Arc<native_events::Feeds>>,
     consumed: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     inline_identity: Option<zeroize::Zeroizing<String>>,
     #[cfg(test)]
@@ -141,6 +144,7 @@ impl Wallet {
                 identity_stamp: None,
             }),
             _lease: lease,
+            feeds: std::sync::OnceLock::new(),
             tasks: Mutex::new(executor::Book::default()),
             native: Mutex::new(native_events::Book::default()),
             native_reserved: std::sync::atomic::AtomicBool::new(false),
@@ -152,6 +156,13 @@ impl Wallet {
             #[cfg(test)]
             origin: None,
         })
+    }
+    /// Shared listener registry. One is created per wallet when no daemon-wide registry was
+    /// installed, so a single-wallet process behaves exactly as before.
+    fn feeds(&self) -> Arc<native_events::Feeds> {
+        self.feeds
+            .get_or_init(native_events::Feeds::new)
+            .clone()
     }
     fn build(&self, c: session::Credentials) -> Result<Client, String> {
         #[cfg(test)]

@@ -47,7 +47,7 @@ fn observe(
     header: &Value,
     timestamp_gte: u64,
     origin: &'static str,
-    tx: &tokio::sync::mpsc::Sender<Event>,
+    tx: &tokio::sync::broadcast::Sender<Event>,
     seen: &mut RecentIds,
 ) -> Result<bool, String> {
     if id(c, header, timestamp_gte).is_err() {
@@ -67,7 +67,7 @@ async fn latest_header(c: &Config) -> Result<Value, String> {
 
 pub(super) async fn run(
     c: &Config,
-    tx: &tokio::sync::mpsc::Sender<Event>,
+    tx: &tokio::sync::broadcast::Sender<Event>,
     health: &tokio::sync::watch::Sender<Health>,
     cancel: &mut tokio::sync::watch::Receiver<bool>,
 ) {
@@ -257,7 +257,7 @@ pub(super) async fn run(
 async fn poll_until(
     c: &Config,
     timestamp_gte: u64,
-    tx: &tokio::sync::mpsc::Sender<Event>,
+    tx: &tokio::sync::broadcast::Sender<Event>,
     seen: &mut RecentIds,
     cancel: &mut tokio::sync::watch::Receiver<bool>,
     health: &tokio::sync::watch::Sender<Health>,

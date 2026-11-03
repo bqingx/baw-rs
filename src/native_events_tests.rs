@@ -664,7 +664,7 @@ async fn log_dedup_window_bounds_memory_without_ending_a_long_task() {
     // A multi-hour task on a busy contract can observe far more distinct logs than any fixed
     // dedup window. Reaching the window is a memory bound, never a task-ending condition.
     let c = Config::parse(config()).unwrap();
-    let (tx, mut rx) = tokio::sync::mpsc::channel(8192);
+    let (tx, mut rx) = tokio::sync::broadcast::channel(8192);
     let mut seen = RecentIds::default();
     for n in 0..5000u64 {
         let mut e = event();
@@ -995,4 +995,55 @@ fn block_time_config_refuses_log_only_fields_and_zero_threshold() {
     constant_word["action"] = json!({"kind":"words","call":{"binance_chain_id":"56","from":"0x1111111111111111111111111111111111111111","to":"0x2222222222222222222222222222222222222222","value":"0","input_data":"0x12345678","gas_limit":100000},
         "args":[{"source":{"kind":"constant","word":format!("0x{:064x}",7)},"abi_type":"uint256","max":format!("0x{:064x}",100)}]});
     assert!(Config::parse(constant_word).is_ok());
+}
+
+/// One listener per identical source: wallets asking for the same task shape share a feed, and the
+/// feed disappears when the last subscriber does. This is what keeps six wallets from opening six
+/// sockets and issuing six polls per tick.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn identical_sources_share_one_feed_and_release_it_when_empty() {
+    let feeds = native_events::Feeds::new();
+    let a = Config::parse(block_time_config(1_793_698_200)).unwrap();
+    let b = Config::parse(block_time_config(1_793_698_200)).unwrap();
+    let s1 = feeds.subscribe(&a).unwrap();
+    assert_eq!(feeds.len(), 1);
+    let s2 = feeds.subscribe(&b).unwrap();
+    assert_eq!(feeds.len(), 1, "identical source opened a second listener");
+
+    // Any source difference must not be merged: the tasks were authorized to watch different things.
+    let mut other = block_time_config(1_793_698_200);
+    other["source"]["timestamp_gte"] = json!(1_793_698_201u64);
+    let c = Config::parse(other).unwrap();
+    let s3 = feeds.subscribe(&c).unwrap();
+    assert_eq!(feeds.len(), 2);
+
+    drop(s3);
+    assert_eq!(feeds.len(), 1, "unrelated feed removal should not affect the shared one");
+    drop(s1);
+    assert_eq!(feeds.len(), 1, "feed removed while a subscriber remained");
+    drop(s2);
+    assert_eq!(feeds.len(), 0, "feed kept after the last subscriber left");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn feeds_do_not_merge_across_endpoints_or_chain() {
+    let feeds = native_events::Feeds::new();
+    let base = Config::parse(block_time_config(10)).unwrap();
+    let _a = feeds.subscribe(&base).unwrap();
+    for (key, value) in [
+        ("rpc_url", json!("http://127.0.0.1:2")),
+        ("ws_url", json!("ws://127.0.0.1:2")),
+    ] {
+        let mut v = block_time_config(10);
+        v[key] = value;
+        let c = Config::parse(v).unwrap();
+        let _s = feeds.subscribe(&c).unwrap();
+    }
+    // A different chain is a different feed, and the call has to agree with it to parse at all.
+    let mut chain = block_time_config(10);
+    chain["chain_id"] = json!("1");
+    chain["action"]["call"]["binance_chain_id"] = json!("1");
+    chain["policy"]["chainId"] = json!("1");
+    let _s = feeds.subscribe(&Config::parse(chain).unwrap()).unwrap();
+    assert_eq!(feeds.len(), 4);
 }

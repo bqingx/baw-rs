@@ -1,6 +1,9 @@
 //! Native one-shot EVM log/pending tasks. No shell, eval or implicit mutation retries.
 #[path = "native_block_time.rs"]
 mod block_time;
+#[path = "native_feeds.rs"]
+mod feeds;
+pub(in crate::resident) use feeds::Feeds;
 /// Same matcher the runtime uses, exposed so tests exercise the shipped path, not a copy.
 #[cfg(test)]
 pub(in crate::resident) use block_time::id as native_block_time_id;
@@ -1749,6 +1752,7 @@ enum Health {
     Ready,
     Fault(String),
 }
+#[derive(Clone)]
 pub(super) struct Event {
     value: Value,
     received: Instant,
@@ -1858,7 +1862,7 @@ pub(super) fn enqueue(
     c: &Config,
     value: Value,
     origin: &'static str,
-    tx: &tokio::sync::mpsc::Sender<Event>,
+    tx: &tokio::sync::broadcast::Sender<Event>,
     seen: &mut RecentIds,
 ) -> Result<(), String> {
     let received = Instant::now();
@@ -1868,17 +1872,19 @@ pub(super) fn enqueue(
     if !seen.observe(id) {
         return Ok(());
     }
-    tx.try_send(Event {
+    // No receivers means every subscriber left; the feed is torn down with them.
+    tx.send(Event {
         value,
         received,
         origin,
     })
-    .map_err(|_| "event queue overflow/closed; not READY".into())
+    .map(|_| ())
+    .map_err(|_| "event feed has no subscribers; not READY".into())
 }
 async fn backfill(
     c: &Config,
     cursor: &mut u64,
-    tx: &tokio::sync::mpsc::Sender<Event>,
+    tx: &tokio::sync::broadcast::Sender<Event>,
     seen: &mut RecentIds,
 ) -> Result<(), String> {
     let filter = c.filter.as_ref().ok_or("log filter required")?;
@@ -1943,15 +1949,15 @@ fn note_ws_frame(c: &Config, kind: &str, text: &str, seen: &mut usize) {
 }
 
 async fn source(
-    wallet: Arc<Wallet>,
     c: Config,
-    tx: tokio::sync::mpsc::Sender<Event>,
+    tx: tokio::sync::broadcast::Sender<Event>,
     health: tokio::sync::watch::Sender<Health>,
     mut cancel: tokio::sync::watch::Receiver<bool>,
+    invalid: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let result=async {
         if matches!(c.source, TriggerSource::Pending { .. }) {
-            return pending::run(&wallet, &c, &tx, &health, &mut cancel).await;
+            return pending::run(&c, &tx, &invalid, &health, &mut cancel).await;
         }
         if matches!(c.source, TriggerSource::BlockTime { .. }) {
             block_time::run(&c, &tx, &health, &mut cancel).await;
@@ -1967,7 +1973,7 @@ async fn source(
         let mut faults=0u32;
         loop {
             if *cancel.borrow(){return Ok(());}
-            wallet.native_invalid.store(true,std::sync::atomic::Ordering::SeqCst);
+            invalid.store(true,std::sync::atomic::Ordering::SeqCst);
             odd_frames=0;
             health.send_replace(Health::Connecting);
             let connected=tokio::time::timeout(Duration::from_secs(10),tokio_tungstenite::connect_async_with_config(&c.ws_url,Some(tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default().max_message_size(Some(65536)).max_frame_size(Some(65536))),false)).await;
@@ -1982,7 +1988,7 @@ async fn source(
             let sub=ack["result"].as_str().filter(|s|!s.is_empty()&&s.len()<=256).ok_or("subscription id missing")?.to_owned();
             let chain=rpc(&c,"eth_chainId",json!([])).await?;
             if crate::uint::uint256(chain.as_str().ok_or("chainId missing")?)?!=crate::uint::uint256(&c.chain_id)?{return Err("RPC chainId changed".into());}
-            wallet.native_invalid.store(false,std::sync::atomic::Ordering::SeqCst);
+            invalid.store(false,std::sync::atomic::Ordering::SeqCst);
             backfill(&c,&mut cursor,&tx,&mut seen).await?;
             health.send_replace(Health::Ready);
             reconnects=0;
@@ -2042,9 +2048,7 @@ async fn source(
         }
     }.await;
     if let Err(e) = result {
-        wallet
-            .native_invalid
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        invalid.store(true, std::sync::atomic::Ordering::SeqCst);
         health.send_replace(Health::Fault(e));
     }
 }
@@ -2055,16 +2059,23 @@ impl Wallet {
         binding: executor::Binding,
         mut cancel: tokio::sync::watch::Receiver<bool>,
     ) {
-        let (tx, mut events) = tokio::sync::mpsc::channel(c.queue_capacity);
-        let (health_tx, mut health) = tokio::sync::watch::channel(Health::Connecting);
-        let (stop_source, source_cancel) = tokio::sync::watch::channel(false);
-        let source_task = tokio::spawn(source(
-            self.clone(),
-            c.clone(),
-            tx,
-            health_tx,
-            source_cancel,
-        ));
+        // One listener per identical source, shared with every other wallet running the same task
+        // shape. The subscription stops the listener when the last wallet leaves.
+        let mut subscription = match self.feeds().subscribe(&c) {
+            Ok(s) => s,
+            Err(error) => {
+                self.native_finish(
+                    &c.task_id,
+                    "FAILED",
+                    json!({"error":error,"submission_attempted":false}),
+                )
+                .await
+                .ok();
+                return;
+            }
+        };
+        let mut events = subscription.clone_events();
+        let mut health = subscription.health();
         let deadline = c
             .monotonic_deadline
             .map(tokio::time::Instant::from_std)
@@ -2081,6 +2092,10 @@ impl Wallet {
                         match h {
                             Health::Fault(e)=>return Err(e),
                             Health::Ready|Health::Connecting=>{
+                                // The feed is the only thing that knows whether the stream is
+                                // currently trustworthy; mirror it so the pre-fire check stays
+                                // meaningful for shared listeners too.
+                                self.native_invalid.store(!matches!(h,Health::Ready),std::sync::atomic::Ordering::SeqCst);
                                 let mut b=self.native.lock().await;
                                 let r=b.current.as_mut().ok_or("native task missing")?;
                                 if r.status=="DISARMED"{return Ok(("DISARMED",json!({"submission_attempted":false})));}
@@ -2089,7 +2104,7 @@ impl Wallet {
                         }
                     },
                     event=events.recv()=> {
-                        let event=event.ok_or("native event source closed")?;
+                        let event=event.map_err(|_| "native event feed closed")?;
                         if self.native_invalid.load(std::sync::atomic::Ordering::SeqCst){return Err("event received from unsafe source".into());}
                         let id=event_id(&c,&event.value)?;
                         {
@@ -2134,9 +2149,7 @@ impl Wallet {
                 }
             }
         }.await;
-        stop_source.send_replace(true);
-        source_task.abort();
-        let _ = source_task.await;
+        drop(subscription);
         let (status, detail) =
             outcome.unwrap_or_else(|e| ("FAILED", json!({"error":e,"submission_attempted":false})));
         if let Err(e) = self.native_finish(&c.task_id, status, detail.clone()).await {

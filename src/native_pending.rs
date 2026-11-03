@@ -123,18 +123,16 @@ where
 }
 
 pub(super) async fn run(
-    wallet: &Wallet,
     c: &Config,
-    events: &tokio::sync::mpsc::Sender<Event>,
+    events: &tokio::sync::broadcast::Sender<Event>,
+    invalid: &Arc<std::sync::atomic::AtomicBool>,
     health: &tokio::sync::watch::Sender<Health>,
     cancel: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
     let TriggerSource::Pending { subscription, .. } = &c.source else {
         unreachable!()
     };
-    wallet
-        .native_invalid
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    invalid.store(true, std::sync::atomic::Ordering::SeqCst);
     let session = async {
         let (mut ws, _) = tokio::time::timeout(
             Duration::from_secs(10),
@@ -189,9 +187,7 @@ pub(super) async fn run(
         {
             return Err("pending HTTP chainId mismatch".into());
         }
-        wallet
-            .native_invalid
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        invalid.store(false, std::sync::atomic::Ordering::SeqCst);
         health.send_replace(Health::Ready);
         let (queue, mut incoming) = tokio::sync::mpsc::channel::<Event>(c.queue_capacity);
         // Poll ingress even while an HTTP fetch is outstanding. Do not hide overload behind TCP
@@ -262,8 +258,8 @@ pub(super) async fn run(
                         continue;
                     }
                     events
-                        .try_send(event)
-                        .map_err(|_| "pending event queue overflow/closed; not READY")?;
+                        .send(event)
+                        .map_err(|_| "pending event feed has no subscribers; not READY")?;
                 }
             }
             Err("pending ingress stopped".into())

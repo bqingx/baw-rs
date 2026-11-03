@@ -1,3 +1,6 @@
 target/
 .baw-rs-operations/
 *.sock
+.build-remote.log
+.build-remote.sha
+.baw-rs.remote

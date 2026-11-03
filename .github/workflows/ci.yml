@@ -1,0 +1,32 @@
+name: ci
+
+# Builds and tests off this machine, on GitHub-hosted runners. Used while a local box must not be
+# occupied by a 3-minute release build, and as the pre-merge check for pushes to main.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: TZ=UTC cargo test --release --locked --lib
+      - name: Clippy
+        run: cargo clippy --release --locked --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --release --locked
+      - name: Record hash
+        run: |
+          set -eu
+          mkdir -p dist
+          cp target/release/baw-rs dist/baw-rs-x86_64-unknown-linux-gnu
+          cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baw-rs-${{ github.sha }}
+          path: dist/*
