@@ -2,7 +2,7 @@
 use crate::client::{checksum_address, Client};
 use crate::rwa::{self, Registry};
 use bigdecimal::BigDecimal;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use reqwest::Method;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -18,6 +18,9 @@ fn session(c: &Client) -> Result<(), String> {
     }
 }
 pub async fn run(c: &mut Client, command: &MarketCommand) -> Result<Value, String> {
+    if provider(command) != Provider::Binance {
+        return Err("OKX trades require wallet-bound dispatch; no Binance fallback".into());
+    }
     match command {
         MarketCommand::Quote(a) => {
             validate_quote(a)?;
@@ -125,7 +128,7 @@ fn native_token(chain: &str, token: &str) -> bool {
         )
     }
 }
-async fn safeguards(c: &mut Client, chain: &str) -> Result<(), String> {
+pub(crate) async fn safeguards(c: &mut Client, chain: &str) -> Result<(), String> {
     let settings = c
         .request(Method::GET, &format!("{A}/settings/query"), None)
         .await?;
@@ -350,9 +353,34 @@ pub enum MarketCommand {
     Swap(SwapArgs),
     List(ListArgs),
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    #[default]
+    Binance,
+    Okx,
+}
+
+pub fn provider(command: &MarketCommand) -> Provider {
+    match command {
+        MarketCommand::Quote(a) => a.provider,
+        MarketCommand::Swap(a) => a.quote.provider,
+        MarketCommand::List(_) => Provider::Binance,
+    }
+}
+
 #[derive(Debug, Clone, Args, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuoteArgs {
+    /// Quote/execution source. Never falls back to another provider.
+    #[arg(long, value_enum, default_value = "binance")]
+    pub provider: Provider,
+    /// Private OKX profile (0600); never contains keys on the command line.
+    #[arg(long)]
+    pub okx_config: Option<std::path::PathBuf>,
+    /// Required by OKX: exact input-token decimals, no implicit RWA share conversion.
+    #[arg(long = "fromTokenDecimals")]
+    pub from_token_decimals: Option<u8>,
     #[arg(long = "binanceChainId")]
     pub binance_chain_id: String,
     #[arg(long = "fromToken")]
@@ -377,6 +405,16 @@ pub struct SwapArgs {
     /// Explicit risk acceptance; this does not represent a token audit.
     #[arg(long)]
     pub acknowledge_token_risk: bool,
+    /// OKX only: absolute output floor in the output token's smallest units.
+    #[arg(long)]
+    pub okx_min_output_units: Option<String>,
+    /// Accept that opaque aggregator calldata's on-chain minimum cannot be decoded locally.
+    /// Still requires a pinned router and strict simulated asset-delta checks.
+    #[arg(long)]
+    pub okx_allow_opaque_calldata: bool,
+    /// OKX only: approve exactly this input amount if allowance is short; wait and re-quote.
+    #[arg(long)]
+    pub auto_approve: bool,
 }
 #[derive(Debug, Clone, Args)]
 pub struct ListArgs {
@@ -672,6 +710,7 @@ fn address(c: &str, s: &str) -> Result<(), String> {
     Err("invalid chain-specific address or EIP55 checksum".into())
 }
 fn validate_quote(a: &QuoteArgs) -> Result<(), String> {
+    crate::okx_trade::validate_quote_options(a)?;
     chain(&a.binance_chain_id)?;
     address(&a.binance_chain_id, &a.from_token)?;
     address(&a.binance_chain_id, &a.to_token)?;
@@ -689,6 +728,7 @@ fn gas(s: &str) -> Result<String, String> {
 }
 fn validate_swap(a: &SwapArgs) -> Result<(), String> {
     validate_quote(&a.quote)?;
+    crate::okx_trade::validate_swap_options(a)?;
     gas(&a.gas_level)?;
     if !matches!(a.mev.as_str(), "true" | "false") {
         return Err("mev must be true or false".into());
@@ -917,6 +957,9 @@ mod tests {
             mev: "true".into(),
             gas_level: "MEDIUM".into(),
             acknowledge_token_risk: true,
+            okx_min_output_units: None,
+            okx_allow_opaque_calldata: false,
+            auto_approve: false,
         }
     }
     #[tokio::test]
@@ -1327,6 +1370,9 @@ mod tests {
     }
     fn quote_args() -> QuoteArgs {
         QuoteArgs {
+            provider: Provider::Binance,
+            okx_config: None,
+            from_token_decimals: None,
             binance_chain_id: "56".into(),
             from_token: "0x1111111111111111111111111111111111111111".into(),
             to_token: "0x2222222222222222222222222222222222222222".into(),
@@ -1365,7 +1411,10 @@ mod tests {
             quote: quote_args(),
             mev: "junk".into(),
             gas_level: "LOW".into(),
-            acknowledge_token_risk: true
+            acknowledge_token_risk: true,
+            okx_min_output_units: None,
+            okx_allow_opaque_calldata: false,
+            auto_approve: false,
         }))
         .is_err());
     }

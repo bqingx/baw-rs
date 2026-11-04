@@ -5,6 +5,7 @@ pub mod cli;
 pub mod client;
 pub mod dispatch;
 pub mod execution;
+mod okx_trade;
 pub mod openfour;
 pub mod operations;
 pub mod policy;

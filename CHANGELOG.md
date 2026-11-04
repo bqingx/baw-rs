@@ -7,6 +7,29 @@ the current source.
 
 ## Unreleased
 
+- **Live Binance preview compatibility.** Recognize integer `preAmount`/`postAmount` and
+  fungible `tokenType: Erc20` / null `tokenId` in approval and swap allowance metadata. Preserve
+  arbitrary-precision uint256 checks, consistent aliases, exact grant amounts and bounded consumption;
+  NFT, overflow, conflicting aliases and unknown schemas still fail closed. Verified with synthetic
+  regression cases and one explicitly authorized BSC 1 USDT → native BNB round of approve + swap.
+
+- **Opt-in exact approval for OKX swaps.** `--auto-approve` (off by default) checks allowance
+  through an explicitly configured, chain-checked private RPC. A short allowance is set to exactly
+  the input amount via a locally encoded approve; no unlimited or zero-reset fallback. The parent
+  command keeps one exclusive write lock and durable approval/swap checkpoints, waits for bound,
+  canonical receipts (two confirmations by default), re-reads exact allowance, then fetches a new
+  swap. Reverts, timeouts, missing hashes or state mismatches stop without a swap or write retry.
+  Normal bounded allowance consumption in the swap preview is distinguished from new grants.
+
+- **Optional OKX source for market orders.** `market-order quote/swap --provider okx` adds an
+  exact-in EVM path without changing the default Binance provider or adding fallback. Private
+  profiles pin chain/router/spender; exact input decimals, explicit slippage, absolute output
+  floor, daily-limit/transaction-lock checks, strict simulated asset deltas and preview-bound
+  single execution are required. No implicit auto-approval, proxy, redirect, automatic payment or write
+  retry. Opaque aggregator calldata is rejected unless explicitly accepted, and that acceptance
+  does not prove an on-chain minimum. See `docs/OKX-TRADE.md`; a BSC smoke test does not
+  establish general production readiness.
+
 - **A task can occupy several wallets.** `"wallets": ["w1", "w2", ...]` makes one `task load/arm/
   status/disarm` cover a group: the daemon binds each member's own sender (fixed/words:
   `call.from`; route: `user_wallet_address`), leaves every other field untouched so the authorized

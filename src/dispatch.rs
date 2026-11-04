@@ -60,6 +60,11 @@ fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
 }
 /// Must run before loading any wallet/session files.
 pub fn preflight(cli: &Cli) -> Result<(), String> {
+    if matches!(&cli.command, Command::MarketOrder { command } if trade::provider(command) == trade::Provider::Okx)
+        && cli.skip_prechecks
+    {
+        return Err("OKX market-order does not allow --skip-prechecks".into());
+    }
     let writes = matches!(
         &cli.command,
         Command::Auth { .. }
@@ -141,11 +146,20 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         } => wallet_ops::resolve_domain(client, args).await,
         Command::Wallet {
             command: WalletCommand::Operation(args),
-        } => crate::operations::run(&wallet_dir, args),
+        } => crate::operations::run(
+            &wallet_dir,
+            &crate::operations::OperationArgs {
+                id: cli.operation_id.clone(),
+                list: args.list,
+            },
+        ),
         Command::Approvals { command } => approvals::run(client, &wallet_dir, command).await,
         Command::CliCheck(args) => selfcheck::cli_check(client, args).await,
         Command::SkillCheck(args) => selfcheck::skill_check(client, args).await,
         Command::Wallet { command } => client.execute(command).await,
+        Command::MarketOrder { command } if trade::provider(command) == trade::Provider::Okx => {
+            crate::okx_trade::run(client, &wallet_dir, command, guard.as_mut()).await
+        }
         Command::MarketOrder { command } => trade::run(client, command).await,
         Command::ContractCall { command } => {
             signing::contract(

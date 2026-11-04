@@ -16,8 +16,8 @@ use std::path::Path;
 
 #[derive(Args, Debug, Clone)]
 pub struct OperationArgs {
-    /// Operation id to explain (the same id passed to a guarded write).
-    #[arg(long = "operation-id", value_name = "ID")]
+    /// Populated from the global --operation-id by dispatch.
+    #[arg(skip)]
     pub id: Option<String>,
     /// List every operation id recorded for this wallet, newest last.
     #[arg(long)]

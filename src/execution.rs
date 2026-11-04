@@ -147,8 +147,56 @@ impl OperationGuard {
             _lock: lock,
         })
     }
-    pub fn finish(&mut self, result: &Result<Value, String>) -> Result<(), String> {
+    /// Persist a multi-transaction stage while keeping this command's exclusive wallet lock.
+    /// Only allowlisted recovery identifiers are retained; never arbitrary backend data.
+    pub(crate) fn checkpoint(&mut self, stage: &str, evidence: &Value) -> Result<(), String> {
+        if self._lock.is_none() {
+            return Err("multi-stage operation requires the exclusive wallet write lock".into());
+        }
+        if !matches!(
+            stage,
+            "approval_submitting"
+                | "approval_broadcast"
+                | "approval_confirmed"
+                | "approval_reverted"
+                | "approval_uncertain"
+                | "swap_submitting"
+                | "swap_broadcast"
+        ) {
+            return Err("invalid operation stage".into());
+        }
+        if !self.metadata["progress"].is_object() {
+            self.metadata["progress"] = serde_json::json!({});
+        }
+        self.metadata["progress"]["stage"] = serde_json::json!(stage);
+        for key in ["approvalTxHash", "approvalOrderId", "swapTxHash"] {
+            if let Some(value) = evidence.get(key).and_then(Value::as_str).filter(|v| {
+                !v.is_empty() && v.len() <= 256 && v.bytes().all(|b| b.is_ascii_graphic())
+            }) {
+                self.metadata["progress"][key] = serde_json::json!(value);
+            }
+        }
+        self.metadata["updatedAtMs"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
+        self.persist()
+    }
+
+    fn persist(&mut self) -> Result<(), String> {
         use std::io::{Seek, SeekFrom, Write};
+        self.record
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| "journal update failed; reconcile before any retry")?;
+        self.record
+            .set_len(0)
+            .map_err(|_| "journal update failed; reconcile before any retry")?;
+        self.record
+            .write_all(self.metadata.to_string().as_bytes())
+            .map_err(|_| "journal update failed; reconcile before any retry")?;
+        self.record
+            .sync_all()
+            .map_err(|_| "journal sync failed; reconcile before any retry".to_string())
+    }
+
+    pub fn finish(&mut self, result: &Result<Value, String>) -> Result<(), String> {
         self.metadata["state"] = Value::String(
             if result.is_ok() {
                 "RESPONSE_RECEIVED"
@@ -171,25 +219,53 @@ impl OperationGuard {
             }
             self.metadata["recovery"] = Value::Object(recovery);
         }
-        self.record
-            .seek(SeekFrom::Start(0))
-            .map_err(|_| "response received but journal update failed; do not resubmit")?;
-        self.record
-            .set_len(0)
-            .map_err(|_| "response received but journal update failed; do not resubmit")?;
-        self.record
-            .write_all(self.metadata.to_string().as_bytes())
-            .map_err(|_| "response received but journal update failed; do not resubmit")?;
-        self.record
-            .sync_all()
-            .map_err(|_| "response received but journal sync failed; do not resubmit")?;
-        Ok(())
+        self.persist()
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn approval_checkpoint_survives_failure_and_retains_only_recovery_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut guard = OperationGuard::begin(
+            dir.path(),
+            "staged-1",
+            "market-order.swap",
+            &serde_json::json!({}),
+            "synthetic",
+        )
+        .unwrap();
+        let hash = format!("0x{}", "b".repeat(64));
+        guard
+            .checkpoint("approval_submitting", &serde_json::json!({}))
+            .unwrap();
+        guard.checkpoint("approval_broadcast", &serde_json::json!({"approvalTxHash":hash,"signature":"sensitive-signature","api_key":"sensitive-key"})).unwrap();
+        assert!(OperationGuard::begin(
+            dir.path(),
+            "parallel",
+            "swap",
+            &serde_json::json!({}),
+            "synthetic"
+        )
+        .is_err());
+        guard
+            .finish(&Err("sensitive-backend-error".into()))
+            .unwrap();
+        let text =
+            std::fs::read_to_string(dir.path().join(".baw-rs-operations/staged-1.json")).unwrap();
+        assert!(!text.contains("sensitive"));
+        let record: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(record["progress"]["approvalTxHash"], hash);
+        assert_eq!(record["progress"]["stage"], "approval_broadcast");
+        assert_eq!(record["state"], "FAILED_OR_UNKNOWN");
+        assert!(guard
+            .checkpoint("unrecognized-stage", &serde_json::json!({}))
+            .is_err());
+    }
+
     #[test]
     fn requires_both_explicit_confirmation_and_unique_named_intent() {
         assert_eq!(

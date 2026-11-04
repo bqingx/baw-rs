@@ -134,10 +134,10 @@ fn decimal_greater(a: &str, b: &str) -> Option<bool> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Credentials {
-    api_key: String,
-    secret_key: String,
-    passphrase: String,
+pub(crate) struct Credentials {
+    pub(crate) api_key: String,
+    pub(crate) secret_key: String,
+    pub(crate) passphrase: String,
 }
 impl Drop for Credentials {
     fn drop(&mut self) {
@@ -147,7 +147,7 @@ impl Drop for Credentials {
         self.passphrase.zeroize();
     }
 }
-fn load_credentials(path: &str) -> Result<Credentials, String> {
+pub(crate) fn load_credentials(path: &str) -> Result<Credentials, String> {
     use std::io::Read;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     use zeroize::Zeroizing;
@@ -194,7 +194,7 @@ pub struct RouteActionBuilder {
 }
 
 // RFC 2104 HMAC over SHA-256; long keys are hashed before block padding.
-fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+pub(crate) fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     use zeroize::Zeroizing;
     let mut block = Zeroizing::new([0u8; 64]);
@@ -459,7 +459,7 @@ impl RouteActionBuilder {
         }
         Err("OKX retry budget exhausted".into())
     }
-    fn validate_response(&self, v: &Value) -> Result<Value, String> {
+    pub(crate) fn validate_response(&self, v: &Value) -> Result<Value, String> {
         let c = &self.config;
         if v.get("code").and_then(Value::as_str) != Some("0") {
             return Err("OKX business code nonzero or malformed (message redacted)".into());

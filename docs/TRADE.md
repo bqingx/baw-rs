@@ -1,12 +1,20 @@
 # Native market orders and wallet transfers
 
-Implemented in `src/trade.rs`, based on the installed 1.12.0 bundle and the offline sanitized API specification. Development/tests use synthetic credentials and loopback TCP only. No live session was opened or wallet operation authorized.
+Implemented in `src/trade.rs`, based on the installed 1.12.0 bundle and the offline sanitized API specification. Automated development/tests use synthetic credentials and loopback TCP only. Separate, explicitly authorized live OKX smoke testing is described in [OKX-TRADE.md](OKX-TRADE.md).
+
+The default provider remains Binance. Optional `--provider okx` is dispatched through
+`src/okx_trade.rs` and the existing contract-call signing core; configuration, explicit input
+decimals/minimum output, restrictions, and limited live validation are documented in
+[OKX-TRADE.md](OKX-TRADE.md). There is no automatic provider fallback.
 
 ## Public integration contract
 
 ```rust
 pub enum MarketCommand { Quote(QuoteArgs), Swap(SwapArgs), List(ListArgs) } // clap::Subcommand
 pub struct QuoteArgs { // clap::Args, Clone, Serialize
+    pub provider: Provider,       // --provider binance|okx; default Binance
+    pub okx_config: Option<std::path::PathBuf>, // --okx-config; private profile
+    pub from_token_decimals: Option<u8>, // --fromTokenDecimals; OKX only
     pub binance_chain_id: String, // --binanceChainId
     pub from_token: String,       // --fromToken
     pub to_token: String,         // --toToken
@@ -18,6 +26,9 @@ pub struct SwapArgs { // clap::Args; QuoteArgs flattened in clap and JSON
     pub mev: String,                  // --mev; default "true"
     pub gas_level: String,            // --gasLevel; default "MEDIUM"
     pub acknowledge_token_risk: bool, // --acknowledge-token-risk
+    pub okx_min_output_units: Option<String>, // --okx-min-output-units
+    pub okx_allow_opaque_calldata: bool, // --okx-allow-opaque-calldata; default false
+    pub auto_approve: bool, // --auto-approve; OKX only, exact amount, default false
 }
 pub struct ListArgs { // clap::Args; Default uses page=1, page_size=20
     pub order_id: Option<String>,         // --orderId
