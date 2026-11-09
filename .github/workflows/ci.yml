@@ -14,12 +14,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all --check
       - name: Test
-        run: TZ=UTC cargo test --release --locked --lib
+        run: TZ=UTC cargo test --release --locked --all-targets -- --test-threads=1
       - name: Clippy
         run: cargo clippy --release --locked --all-targets -- -D warnings
       - name: Build
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin baw-rs
+      - name: Offline release smoke
+        run: python3 scripts/smoke_release.py --binary target/release/baw-rs --output /tmp/baw-release-smoke.json
+      - name: Skill checks for this artifact
+        run: |
+          python3 scripts/build_skill_reference.py --binary target/release/baw-rs
+          python3 tests/test_baw_skill.py --binary target/release/baw-rs
       - name: Record hash
         run: |
           set -eu

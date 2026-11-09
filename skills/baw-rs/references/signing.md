@@ -26,7 +26,7 @@ value 是原生币最小单位整数（wei），不能把0.1当0.1 BNB；request
 - contract-call fire（不带 --policy）：明确授权的自动 preview→execute，无中途人工复核/策略白名单；仍需 confirm + 唯一 ID。
   新构建使用内存 preview 并输出阶段计时，老构建未必支持；先检查帮助与选用二进制。
 - `requireConfirmation:false` 只是后端不需要 App二次确认，不等于用户已经授权交易。
-- 需要低本地开销、已获边界明确的策略授权时，优先走 typed resident 或 `contract-call fire`；不要为计时再额外 preview。
+- 已获边界明确的自动授权时，使用实例流水线调用 `contract-call fire`；旧 typed resident 已删除，不要恢复旧帧或为计时额外 preview。
 - --skip-prechecks 只跳过本地设置/地址查询，不关闭后端开发者模式要求，也不是绕过签名权限。
 - 操作日志与 consumed 标记在尝试后阻止重放；网络失败/过期不自动换 ID 重试。
 

@@ -16,34 +16,12 @@ struct Config {
     user_wallet_address: String,
     expected_spender: String,
     allowed_router_addresses: Vec<String>,
-    /// Retired. A selector allowlist cannot survive provider route changes — measured 2026-11-02, the
-    /// same 1 U → BNB quote flipped between `0xf2c42696` and `0x9871efa4` within hours — so the field
-    /// is still accepted (older task files carry it) and deliberately ignored.
-    #[serde(default)]
-    #[allow(dead_code)]
-    allowed_selectors: Vec<String>,
     max_value_wei: String,
     /// Absolute gas ceiling for this task. Omitted/0 means "use the built-in per-transaction
     /// ceiling": the cap only bounds the gas *limit* we hand to the backend, never the fee, so a
     /// wide ceiling costs nothing when unused and the chain still charges `gasUsed`.
     #[serde(default)]
     max_gas_limit: u64,
-    /// Preview gas cap headroom: the cap handed to the runtime preview is
-    /// `max(gas * percent/100, gas + absolute)`, clamped to `max_gas_limit`.
-    /// The provider's own number is a point estimate and has been observed to
-    /// sit within 0.2% of the execution requirement, which turns a normal
-    /// quote into a `351805` simulation rejection. A cap has no fee impact: the
-    /// backend still charges actual gas used.
-    /// Approve the input token at `arm` when the allowance is short, instead of failing the arm.
-    /// Off by default: it spends gas and writes permanent on-chain state, so it has to be asked for.
-    #[serde(default)]
-    #[allow(dead_code)]
-    auto_approve: bool,
-    /// Load-time discovery + dry run. On by default; a caller that drives `task load` against a
-    /// mock origin (tests) turns it off explicitly rather than relying on a cfg flag.
-    #[serde(default = "default_true")]
-    #[allow(dead_code)]
-    prepare_at_load: bool,
     /// OKX documents `priceImpactPercent` as a value the caller must check before submitting and
     /// block on when it is too high. Route tasks therefore carry the same threshold.
     #[serde(default = "default_max_price_impact_percent")]
@@ -62,13 +40,8 @@ struct Config {
     credential_file: String,
     #[serde(default)]
     allow_zero_min_out: bool,
-    #[serde(default)]
-    require_runtime_preview: bool,
 }
 
-fn default_true() -> bool {
-    true
-}
 fn default_max_price_impact_percent() -> String {
     "2".into()
 }
@@ -84,6 +57,8 @@ fn default_gas_buffer_absolute() -> u64 {
 /// viable tasks into "OKX gas exceeds gas-unit cap". The ceiling bounds what we are willing to put
 /// in a transaction; it never sets the fee, because the chain charges `gasUsed`.
 const GAS_CEILING: u64 = 5_000_000;
+/// Part of mutation/preparation bindings: ABI-decoding intent must never be silently reused.
+pub(crate) const CALLDATA_POLICY: &str = "pinned_okx_opaque_v3";
 /// The ceiling actually applied: the configured value when set, else the built-in maximum.
 fn gas_ceiling(c: &Config) -> u64 {
     if c.max_gas_limit == 0 {
@@ -264,51 +239,6 @@ fn check_echo(v: &Value, key: &str, expected: &str, address: bool) -> Result<(),
     }
     Ok(())
 }
-struct DecodedV2 {
-    recipient: String,
-    minimum: BigUint,
-    amount: BigUint,
-    path: Vec<String>,
-    deadline: BigUint,
-}
-fn decode_v2(input: &str) -> Result<DecodedV2, String> {
-    let args = &input[10..];
-    if args.len() < 8 * 64 || !args.len().is_multiple_of(64) {
-        return Err("truncated/noncanonical V2 calldata".into());
-    }
-    let number = |i: usize| {
-        BigUint::parse_bytes(&args.as_bytes()[i * 64..(i + 1) * 64], 16)
-            .ok_or_else(|| "invalid V2 word".to_string())
-    };
-    let address = |i: usize| -> Result<String, String> {
-        let w = &args[i * 64..(i + 1) * 64];
-        if !w[..24].bytes().all(|b| b == b'0') {
-            return Err("noncanonical ABI address".into());
-        }
-        Ok(format!("0x{}", &w[24..]))
-    };
-    if number(2)? != BigUint::from(160u32) {
-        return Err("noncanonical V2 path offset".into());
-    }
-    let count = number(5)?
-        .to_str_radix(10)
-        .parse::<usize>()
-        .map_err(|_| "V2 path count overflow")?;
-    if !(2..=64).contains(&count) || args.len() != (6 + count) * 64 {
-        return Err("invalid V2 path length/trailing bytes".into());
-    }
-    let mut path = Vec::new();
-    for i in 6..6 + count {
-        path.push(address(i)?);
-    }
-    Ok(DecodedV2 {
-        recipient: address(3)?,
-        minimum: number(1)?,
-        amount: number(0)?,
-        path,
-        deadline: number(4)?,
-    })
-}
 impl RouteActionBuilder {
     #[cfg(test)]
     fn new_with_origin(config: &Value, origin: &str) -> Result<Self, String> {
@@ -460,7 +390,13 @@ impl RouteActionBuilder {
         Err("OKX retry budget exhausted".into())
     }
     pub(crate) fn validate_response(&self, v: &Value) -> Result<Value, String> {
-        let c = &self.config;
+        Self::validate_with_config(&self.config, v)
+    }
+    /// Pure validation for a caller that already owns a checked authenticated transport.
+    pub(crate) fn validate_only(config: &Value, v: &Value) -> Result<Value, String> {
+        Self::validate_with_config(&Self::configuration(config)?, v)
+    }
+    fn validate_with_config(c: &Config, v: &Value) -> Result<Value, String> {
         if v.get("code").and_then(Value::as_str) != Some("0") {
             return Err("OKX business code nonzero or malformed (message redacted)".into());
         }
@@ -569,14 +505,11 @@ impl RouteActionBuilder {
         // `gasPrice` / `maxFeePerGas` / `maxPriorityFeePerGas` are documented as advisory values and
         // are never forwarded (the backend prices the transaction), so they are not validated here:
         // rejecting a provider that fills them differently only ever killed valid swaps.
-        // Only the shape of the calldata is checked here. A selector allowlist was removed:
-        // measured 2026-11-02, the same 1 U → BNB quote flipped between 0xf2c42696 and 0x9871efa4
-        // within hours, so pinning selectors only ever turned a viable one-shot task into
-        // "invalid or forbidden calldata selector". The calldata is opaque either way; the real
-        // guards are the pinned router, value cap, gas ceiling, non-zero minimum and the backend's
-        // own simulation.
+        // Provider calldata is always opaque: no ABI/selector/path/recipient/deadline decoding.
+        // Retain envelope checks and require the signing runtime's independent simulation policy.
+        // Even the previous V2 selectors follow this same path; there is no decoder fallback.
         let input = field(tx, "data")?;
-        if input.len() < 10
+        if input.len() < 4
             || input.len() > 262146
             || !input.starts_with("0x")
             || input.len() % 2 != 0
@@ -591,45 +524,19 @@ impl RouteActionBuilder {
         // `minReceiveAmount` is documented as the minimum received at the slippage limit: it is the
         // provider's own number, and recomputing a floor from the quote here is second-guessing the
         // provider's slippage math with our arithmetic. Only "missing/zero" is checked above.
-        if !input[..10].eq_ignore_ascii_case("0x38ed1739") {
-            if !c.require_runtime_preview {
-                return Err("unsupported calldata requires runtime policy preview".into());
-            }
-            return Ok(
-                serde_json::json!({"binance_chain_id":c.binance_chain_id,"from":from,"to":to,"value":value,
-                "input_data":input,"gas_limit":gas_cap,"route_validation":{"recipient_verified":false,
-                "calldata_min_out_verified":false,"requires_runtime_preview":true,
-                "gas_quoted":gas,"gas_preview_cap":gas_cap,
-                "reported_minimum_output":minimum.to_str_radix(10),"limitations":[
-                "unsupported selector: recipient, token path, input amount, deadline and actual on-chain minimum are NOT decoded or verified",
-                "reported minimum is response metadata only; quote output is not a hard minimum",
-                "engine MUST perform runtime policy preview binding recipient, tokens, amount, minimum and allowed spender before submission"]}}),
-            );
-        }
-        let decoded = decode_v2(input)?;
-        if !eq_addr(&decoded.recipient, &c.user_wallet_address)
-            || decoded.minimum != minimum
-            || decoded.amount != uint(&c.amount)?
-            || !eq_addr(&decoded.path[0], &c.from_token_address)
-            || !eq_addr(
-                decoded.path.last().ok_or("empty V2 path")?,
-                &c.to_token_address,
-            )
-            || decoded.deadline <= BigUint::from(unix_ms()? / 1000)
-            || uint(value)?.bits() != 0
-            || !eq_addr(to, &c.expected_spender)
-        {
-            return Err("calldata amount/path/recipient/deadline/minimum mismatch".into());
-        }
         Ok(
-            serde_json::json!({"binance_chain_id":c.binance_chain_id,"from":from,"to":to,"value":value,"input_data":input,"gas_limit":gas_cap,
-            "route_validation":{"recipient_verified":true,"calldata_min_out_verified":true,"requires_runtime_preview":false,
-            "gas_quoted":gas,"gas_preview_cap":gas_cap,
-            "minimum_output":minimum.to_str_radix(10),"limitations":["allowlists identify trusted contracts; they do not prove deployed bytecode or successful execution"]}}),
+            serde_json::json!({"binance_chain_id":c.binance_chain_id,"from":from,"to":to,"value":value,
+            "input_data":input,"gas_limit":gas_cap,"route_validation":{"recipient_verified":false,
+            "calldata_min_out_verified":false,"requires_runtime_preview":true,"minimum_output_semantics":"unknown",
+            "calldata_policy":CALLDATA_POLICY,"gas_quoted":gas,"gas_preview_cap":gas_cap,
+            "reported_minimum_output":minimum.to_str_radix(10),"limitations":[
+            "provider calldata is opaque: encoded recipient, token path, input amount, deadline and on-chain minimum are NOT locally decoded or verified",
+            "reported minimum is response metadata only; successful simulation is not a future execution guarantee",
+            "engine MUST perform runtime policy preview checking wallet debit/net credit, pinned router and bounded spender allowance before submission"]}}),
         )
     }
     /// Syntactic/local configuration only. No request or quote is made here.
-    pub fn new(config: &Value) -> Result<Self, String> {
+    fn configuration(config: &Value) -> Result<Config, String> {
         let c: Config = serde_json::from_value(config.clone())
             .map_err(|_| "invalid route config (strict fields/types)")?;
         if c.chain_index != c.binance_chain_id
@@ -704,6 +611,11 @@ impl RouteActionBuilder {
         {
             return Err("route duration bounds must not exceed one day".into());
         }
+        Ok(c)
+    }
+    /// Build the optional standalone read-only route fetcher, not used for local validation.
+    pub fn new(config: &Value) -> Result<Self, String> {
+        let c = Self::configuration(config)?;
         let credentials = load_credentials(&c.credential_file)?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())

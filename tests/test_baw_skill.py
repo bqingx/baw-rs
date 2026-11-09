@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate the baw-rs skill using help and offline build only; never touch a wallet."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -60,10 +61,12 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(leaves, manifest["leaves"])
         self.assertEqual(len(leaves), manifest["leafCount"])
         self.assertEqual(version, manifest["version"])
-        for family in ("wallets", "task", "openfour", "approvals", "sign-message"):
+        self.assertEqual(hashlib.sha256(BINARY.read_bytes()).hexdigest(), manifest["binarySha256"])
+        for family in ("wallets", "pipeline", "openfour", "approvals", "sign-message"):
             self.assertIn(family, manifest["families"])
         # `vaults` is a hidden alias of `wallets`, so it is not a family in help.
         self.assertNotIn("vaults", manifest["families"])
+        self.assertNotIn("task", manifest["families"])  # instance alias, not a second engine
         for family in ("fast", "prediction", "defi", "tracker", "signal", "leaderboard"):
             self.assertNotIn(family, manifest["families"])
         comparison = json.loads((SKILL / "references/official-comparison.json").read_text())
@@ -81,6 +84,20 @@ class SkillTests(unittest.TestCase):
             self.assertFalse(
                 any(leaf.split()[0] == family for leaf in comparison["extras"]), family
             )
+
+    def test_task_alias_is_instance_scoped(self):
+        env = {k: os.environ[k] for k in ("PATH", "TMPDIR", "LANG") if k in os.environ}
+        with tempfile.TemporaryDirectory() as home:
+            env["HOME"] = home
+            out = subprocess.run([str(BINARY), "task", "--help"], env=env,
+                                 capture_output=True, text=True, timeout=10, check=True)
+            self.assertIn("reconcile", out.stdout)
+            self.assertIn("resume", out.stdout)
+            rejected = subprocess.run([str(BINARY), "--wallet", "alice", "task", "arm", "p", "--confirm"],
+                                      env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("instance-scoped", json.loads(rejected.stdout)["error"]["message"])
+            self.assertEqual(list(Path(home).rglob("session.json")), [])
 
     def test_generator_suppresses_sensitive_environment_defaults(self):
         keys = ("BINANCE_INSTANCE_ID", "BINANCE_BAW_DIR")

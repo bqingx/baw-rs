@@ -1,60 +1,26 @@
 #!/usr/bin/env python3
-"""Enumerate the leaf commands a built binary actually exposes.
-
-Docs drift; `--help` does not. Writes verification/leaf-commands.txt and prints a
-summary, so any claim of the form "N commands" can be checked instead of asserted.
-"""
+"""Inventory actual CLI leaves, including the separate openfour parser, from help only."""
 import os
-import subprocess
+from pathlib import Path
 import sys
+from build_skill_reference import collect
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(
-    os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "baw-rs"
-)
-
-TOP_LEVEL_REJECT = {"help"}
-
-
-def leaves(binary, path):
-    """Return leaf argv paths below `path`."""
-    out = subprocess.run(
-        [binary, *path, "--help"], capture_output=True, text=True
-    )
-    text = out.stdout
-    subs = []
-    if "Commands:" in text:
-        block = text.split("Commands:", 1)[1].split("Options:", 1)[0]
-        for line in block.splitlines():
-            line = line.rstrip()
-            if not line.startswith("  ") or line.strip().startswith("-"):
-                continue
-            name = line.strip().split()[0]
-            if name and name[0].islower():
-                subs.append(name)
-    subs = [s for s in subs if s not in TOP_LEVEL_REJECT]
-    if not subs:
-        return [" ".join(path)]
-    found = []
-    for s in subs:
-        found.extend(leaves(binary, [*path, s]))
-    return found
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    if not os.path.exists(BIN):
-        print(f"missing binary: {BIN}", file=sys.stderr)
+    binary = Path(os.environ.get("CARGO_TARGET_DIR", str(ROOT / "target"))) / "release" / "baw-rs"
+    if not binary.is_absolute():
+        binary = ROOT / binary
+    if not binary.is_file():
+        print(f"missing binary: {binary}", file=sys.stderr)
         return 1
-    top = leaves(BIN, [])
-    # leaves() already excludes "help" at every level; drop the bare binary entry.
-    top = [c for c in top if c]
-    os.makedirs(os.path.join(ROOT, "verification"), exist_ok=True)
-    with open(os.path.join(ROOT, "verification", "leaf-commands.txt"), "w") as fh:
-        fh.write(f"# {BIN} --version: {subprocess.run([BIN, '--version'], capture_output=True, text=True).stdout.strip()}\n")
-        for c in top:
-            fh.write(c + "\n")
-        fh.write(f"# total: {len(top)}\n")
-    print(f"leaf-commands.txt: {len(top)} commands")
+    _, commands, version = collect(binary)
+    output = ROOT / "verification" / "leaf-commands.txt"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(f"# {binary} --version: {version}\n" + "\n".join(commands)
+                      + f"\n# total: {len(commands)}\n")
+    print(f"leaf-commands.txt: {len(commands)} canonical commands (aliases not duplicated)")
     return 0
 
 

@@ -1,7 +1,10 @@
 use super::*;
+use crate::trade::Provider;
 
 #[path = "okx_approval_tests.rs"]
 mod auto_approve;
+#[path = "okx_pool_tests.rs"]
+mod pool_tests;
 use std::{
     io::{Read, Write},
     os::unix::fs::PermissionsExt,
@@ -39,6 +42,8 @@ fn fixture() -> (tempfile::TempDir, SwapArgs, Okx) {
         to_token: OUTPUT.into(),
         from_token_qty: "1.25".into(),
         slippage: "1".into(),
+        max_from_tax_percent: "0".into(),
+        max_to_tax_percent: "0".into(),
     };
     let api = Okx::load(&q).unwrap();
     let a = SwapArgs {
@@ -47,7 +52,6 @@ fn fixture() -> (tempfile::TempDir, SwapArgs, Okx) {
         gas_level: "MEDIUM".into(),
         acknowledge_token_risk: true,
         okx_min_output_units: Some("9800".into()),
-        okx_allow_opaque_calldata: true,
         auto_approve: false,
     };
     (dir, a, api)
@@ -89,18 +93,23 @@ fn provider_options_are_explicit_and_fail_closed() {
     let (_d, mut a, _) = fixture();
     assert!(validate_quote_options(&a.quote).is_ok());
     assert!(validate_swap_options(&a).is_ok());
-    a.quote.provider = Provider::Binance;
-    assert!(validate_quote_options(&a.quote).is_err());
-    assert!(validate_swap_options(&a).is_err());
-    a.quote.provider = Provider::Okx;
     a.quote.slippage = "auto".into();
     assert!(validate_quote_options(&a.quote).is_err());
     a.quote.slippage = "1".into();
     a.mev = "true".into();
     assert!(validate_swap_options(&a).is_err());
     a.mev = "false".into();
-    a.okx_min_output_units = Some("0".into());
-    assert!(validate_swap_options(&a).is_err());
+    a.okx_min_output_units = None;
+    assert!(validate_swap_options(&a).is_ok());
+    for bad in ["0", "", "-1", "+1", "1.0", "1e3", " 1", "1 "] {
+        a.okx_min_output_units = Some(bad.into());
+        assert!(
+            validate_swap_options(&a).is_err(),
+            "accepted fixed floor {bad:?}"
+        );
+    }
+    a.okx_min_output_units = Some("1".into());
+    assert!(validate_swap_options(&a).is_ok());
     a.quote.binance_chain_id = "CT_501".into();
     assert!(validate_quote_options(&a.quote).is_err());
 }
@@ -313,15 +322,12 @@ fn okx(response: Value) -> Server {
         }
     })
 }
-#[tokio::test]
-async fn okx_cannot_fall_through_to_native_trading() {
-    let (_d, a, _) = fixture();
-    let (backend, mut client) = binance(preview(), false);
-    let error = crate::trade::run(&mut client, &MarketCommand::Swap(a))
-        .await
-        .unwrap_err();
-    assert!(error.contains("no Binance fallback"));
-    assert!(backend.seen.lock().unwrap().is_empty());
+#[test]
+fn okx_is_the_only_provider_variant() {
+    assert_eq!(
+        <Provider as clap::ValueEnum>::value_variants(),
+        &[Provider::Okx]
+    );
 }
 
 #[tokio::test]
@@ -399,6 +405,8 @@ async fn swap_uses_selected_binance_wallet_and_executes_once_after_strict_previe
     assert_eq!(out["status"], "BROADCASTED");
     assert_eq!(out["retrySafe"], false);
     assert_eq!(out["onchainMinimumDecoded"], false);
+    assert_eq!(out["onchainNetMinimumDecoded"], false);
+    assert_eq!(out["calldataPolicy"], route_action::CALLDATA_POLICY);
     let seen = backend.seen.lock().unwrap();
     assert_eq!(
         seen.iter()
@@ -416,11 +424,10 @@ async fn swap_uses_selected_binance_wallet_and_executes_once_after_strict_previe
 }
 #[tokio::test]
 async fn swap_rejects_unbound_or_low_minimum_or_bad_router_before_any_preview() {
-    for kind in ["opaque", "minimum", "router", "value", "signature", "token"] {
-        let (d, mut a, mut api) = fixture();
+    for kind in ["minimum", "router", "value", "signature", "token"] {
+        let (d, a, mut api) = fixture();
         let mut response = response();
         match kind {
-            "opaque" => a.okx_allow_opaque_calldata = false,
             "minimum" => response["data"][0]["tx"]["minReceiveAmount"] = json!("1"),
             "router" => response["data"][0]["tx"]["to"] = json!(SPENDER),
             "value" => response["data"][0]["tx"]["value"] = json!("1"),

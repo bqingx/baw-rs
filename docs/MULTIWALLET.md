@@ -45,19 +45,21 @@ baw-rs wallets remove bob
 baw-rs wallets remove bob --delete-data --confirm
 ```
 
-注册已有目录仍用兼容子命令 `register`：
+接入已有目录统一使用 `add`，必须同时显式指定已有目录和身份文件，不覆写原数据：
 
 ```sh
 # alice、bob 目录须已存在、属主本人且权限 0700。
 # 对应的 identity 文件须已存在，权限 0600、单硬链接、非符号链接。
-baw-rs wallets register alice --wallet-dir /abs/wallet-alice --instance-id-file /abs/alice.instance
+baw-rs wallets add alice --wallet-dir /abs/wallet-alice --instance-id-file /abs/alice.instance
 ```
 
-注册表目录不存在时，`add`/`register` 在已有父目录中以 0700 创建它；`registry.json`、锁文件均为 0600。注册内容为名称、规范化绝对路径、钱包目录的设备号/inode，**没有口令、cookie 或解密密钥**。最多 128 个钱包，名称区分大小写，允许 1–64 个 ASCII 字母、数字、`-`、`_`。
+注册表目录不存在时，`add` 在已有父目录中以 0700 创建它；`registry.json`、锁文件均为 0600。注册内容为名称、规范化绝对路径、钱包目录的设备号/inode，**没有口令、cookie 或解密密钥**。最多 128 个钱包，名称区分大小写，允许 1–64 个 ASCII 字母、数字、`-`、`_`。
 
 同一目录通过相对路径、`..`、符号链接别名重复注册，会按规范化后的设备号/inode 拒绝。启动和每次命令都复核目录身份，目录被替换时拒绝运行。不同注册表/旧单钱包服务也不能同时占有同一钱包的 resident 租约锁。
 
 服务启动时读入注册表。服务运行期间新增的钱包**会在第一次被引用时热加载**：收到 `--wallet <新名字>` 的请求时，daemon 取共享注册表锁重读 `registry.json`，用与启动相同的 `Entry::check()` 校验目录设备号/inode 后建立该钱包的独立客户端，其他钱包不受影响，无需 `wallets stop`。
+
+本轮修复了旧实现持有长 registry.lock 导致 CLI add 实际失败的问题：daemon 持有独立 lifecycle 共享锁；注册读写使用短事务锁。运行中只允许新增，remove/delete 需要 lifecycle 独占锁，新增时也验证目标目录未被其他后台独占。新 CLI/daemon 需配套切换，详见 [HOT-ADD.md](HOT-ADD.md)。`wallets status` 还显示不含密钥的通知 enabled/队列丢弃计数，详见 [TASK-NOTIFICATIONS.md](TASK-NOTIFICATIONS.md)。
 
 热加载只覆盖**新增**：
 

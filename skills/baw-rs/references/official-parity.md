@@ -1,55 +1,33 @@
-# 对标官方 skill：覆盖与差异
+# 官方 CLI 对照与当前边界
 
-## 对标基准
+## 基准
 
-- 官方 skill：已安装 `binance-agentic-wallet` **1.15.0**，标记作者 binance-web3-team，最低CLI版本1.12.0。
-- 官方 CLI：本机 `/usr/bin/baw` 的 **1.12.0**；只执行 --help / --version，不读钱包或调用后端。
-- 本 skill：`baw-rs` **0.1.0**；帮助来自裁剪后的 baw-rs 0.3.0 二进制，SHA256 见 commands.json。
-- 这是已安装快照对标，**不宣称是网上最新版本**；官方更新后需重新对照，不自动照抄新增功能。
-- 本文流程为重新编写的中文说明，未复制官方技能正文/脚本。命令参考从 baw-rs 自己的帮助生成。
+- 官方 `@binance/agentic-wallet` CLI 1.12.0；只读取帮助、版本和参数传递代码，不登录或发交易。
+- 本 skill 0.2.0；命令快照来自实际 baw-rs Release 产物，版本和 SHA256 见 [commands.json](commands.json)。
+- 官方命令快照有 102 条叶子；本构建 51 条。刻意缺失 72 条、Rust 额外 21 条，见 [official-comparison.json](official-comparison.json)。只比较命令面，不代表协议完全等价或实盘通过。
+- `task` 是 `pipeline` alias，`vaults` 是 `wallets` alias，不重复计数，也不对应另一套引擎。
 
-## 实际枚举
+## 当前范围
 
-递归枚举官方得到102条叶子命令；本构建得到 **45条**（含主帮助之外的 openfour 与隐藏别名 vaults），
-官方叶子命令**刻意缺失 71条**：defi、prediction、tracker、signal、leaderboard、limit-order、x402 已从源码删除，
-不是未实现而是不再提供。可重复证据见 [official-comparison.json](official-comparison.json)。
-这只验证命令面，不保证所有后端协议完全相同或全部资金路径实盘验证过。
+保留登录、查询、转账、OKX 兑换、授权、合约/消息签名、多钱包控制、实例流水线及离线编码。
+不追求官方全命令覆盖；DeFi、预测、tracker、signal、leaderboard、limit-order、x402 不属于当前实现。
+旧钱包级任务和 typed resident 执行器已移除。
 
-额外14条：serve、contract-call fire、openfour quote-buy/encode-buy、
-wallets add/remove/list/status/serve/stop、--wallet NAME 业务命令及 --wallet NAME task arm/disarm/load/status。
+## 关键差异
 
-## 工作流覆盖
+- 所有钱包作用域命令明确选择钱包；`wallets` 管生命周期，`pipeline/task` 管实例任务，不带 --wallet。
+- 业务写操作要求明确确认和唯一 operation ID；外部签名 execute 额外绑定接受的预览 SHA256。
+- 交易默认且仅 OKX，无 Binance quote/swap 回退；必须指定配置、精度、滑点及兑换输出底线。
+- 官方原生 market-order 有 mev/gasLevel；外部 contract-call 没有这些字段。不能把它们套到 OKX 构造交易路径，也不能仅凭 CLI 判断未公开服务端能力。
+- pipeline/task 的确认只覆盖固定配置；恢复不重发、不续期、不沿用变化后的钱包身份。
+- `BROADCASTED` 不是链上成功。未知提交不换 ID 盲目重发。
+- `serve`/`--warm` 目录访问兼容仍保留，不包含旧任务执行器；不能抢占现役 daemon。
 
-本 skill 覆盖：auth、wallet-view、settings、gas、send、domain-resolve、market-order、approvals、
-external-sign 与 Agent ID 专属内盘，均有对应流程/准确参数参考。
-另覆盖 Rust 新增路径（--wallet 具名多钱包、wallets 生命周期、task 原生事件任务、typed resident）。
-不是仅给一张路由表，具体步骤见 workflows/signing/resident-executor。
-
-## 不能直接照搬的规则
-
-- 普通单钱包要选定wallet-dir与instance身份；路径相同也不能把官方文件会话当成Rust会话。
-- 所有受控写操作要求confirm及一次性operation-id；auth也是写操作。ID只用ASCII，不从代币符号生成。
-- contract-call/sign-message独立execute要带accept-preview-sha256，不止官方的requestId。
-- JSON不是所有入口的可追加开关：wallets控制平面、openfour、serve不接受普通全局--json；--wallet 后的业务命令可以。
-- 普通逐笔人工预览流程保留；明确授权自动策略可选择contract-call fire或typed resident，不在触发路径重复做前置读取。
-- swap的acknowledge-token-risk不是代币审计，不代表上游security API已跑过。
-- 用户条件单不能兜底成立即刻执行（本构建没有限价单入口）；未知结果不换operation-id盲重发。
-- 单钱包常驻不等于多钱包后台；`serve`不能悄悄抢走现有daemon持有的钱包锁。
-- 同次调用统计的是本地阶段；HTTP耗时不是纯后端时间。少量试次不构成性能下限或并发概率。
-- 内盘模板规则应核实目标，不能把“内盘无代币”等旧文档断言写成现状。
-
-## 不包含的副作用
-
-编写/安装本skill不等于部署二进制，不停止daemon、不登录、不发交易、不配置自动买入。
-技能新增只增加操作说明；不修改钱包文件、官方baw、其他skill或模型配置。
-
-## 更新
-
-仓库根目录：
+## 更新参考
 
 ```sh
 python3 scripts/build_skill_reference.py --binary <VERIFIED_BINARY> --output skills/baw-rs
 python3 tests/test_baw_skill.py --binary <VERIFIED_BINARY>
 ```
 
-逐项对照新帮助与工作流，不把仅同名的版本当成功能一致。发布前检查skill包无钱包路径、密钥与会话内容。
+编写、构建或检查技能不等于授权部署、登录、重启服务或执行交易。源码和帮助验证不代替真实链/钱包验收。

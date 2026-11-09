@@ -1,10 +1,20 @@
 //! Synthetic loopback-only resident tests. No production origin is reachable here.
-#[path = "executor_bench.rs"]
-mod executor_bench;
-#[path = "executor_tests.rs"]
-mod executor_tests;
-#[path = "native_runtime_tests.rs"]
-mod native_runtime_tests;
+#[path = "pipeline_fixtures.rs"]
+mod fixtures;
+#[path = "overview_tests.rs"]
+mod overview_tests;
+#[path = "pipeline_recovery_tests.rs"]
+mod pipeline_recovery_tests;
+#[path = "resident_retired_tests.rs"]
+mod retired_tests;
+#[path = "single_wallet_fault_tests.rs"]
+mod single_wallet_fault_tests;
+#[path = "task_prepare_runtime_tests.rs"]
+mod task_prepare_runtime_tests;
+#[path = "task_runtime_tests.rs"]
+mod task_runtime_tests;
+#[path = "resident_timing_tests.rs"]
+mod timing_tests;
 use super::*;
 use std::os::unix::fs::MetadataExt;
 use tokio::sync::{mpsc, oneshot};
@@ -136,7 +146,11 @@ async fn start(
     std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let path = root.join("test.sock");
     let listener = UnixListener::bind(&path).unwrap();
-    let task = tokio::spawn(serve_listener(listener, Arc::new(RwLock::new(wallets)), None));
+    let task = tokio::spawn(serve_listener(
+        listener,
+        Arc::new(RwLock::new(wallets)),
+        None,
+    ));
     (path, task)
 }
 fn request(
@@ -543,7 +557,7 @@ async fn ipc_frames_are_bounded_and_idle_connections_time_out() {
         Arc::new(super::Daemon {
             wallets: Arc::new(RwLock::new(BTreeMap::new())),
             registry: None,
-            members: Arc::new(super::native_shared::new_members()),
+            scheduler: Arc::new(super::task_runtime::Scheduler::default()),
         }),
         Arc::new(Notify::new()),
         Arc::new(Semaphore::new(1)).acquire_owned().await.unwrap(),
@@ -614,9 +628,15 @@ async fn wallet_added_after_start_is_usable_without_restarting_the_daemon() {
     ));
 
     // Unknown name before registration: no fallback, no silent success.
-    let unknown = send(&socket, Request::Run { name: "late".into(), argv: argv(&["wallet", "status"]) })
-        .await
-        .unwrap_err();
+    let unknown = send(
+        &socket,
+        Request::Run {
+            name: "late".into(),
+            argv: argv(&["wallet", "status"]),
+        },
+    )
+    .await
+    .unwrap_err();
     assert!(unknown.contains("unknown wallet name"), "{unknown}");
 
     // Register the wallet exactly as `wallets add` would, while the daemon is running.

@@ -2,7 +2,7 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`wallets/openfour` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
 
 ## `wallets`
 
@@ -12,13 +12,14 @@ Wallet lifecycle and named resident daemon. Never requires --wallet
 Usage: baw-rs wallets [OPTIONS] <COMMAND>
 
 Commands:
-  add     Create private wallet paths (0700) and an identity file (0600), then register the name
-  remove  Unregister a name. Wallet data is kept unless --delete-data is given with --confirm
-  list    Registered names and their paths. Never reads sessions or contacts the backend
-  status  Resident daemon status: pid and the names it was started with
-  serve   Run the resident daemon in the foreground for every registered wallet
-  stop    Stop accepting work, drain admitted requests, then exit
-  help    Print this message or the help of the given subcommand(s)
+  add       Create private wallet paths (0700) and an identity file (0600), then register the name
+  remove    Unregister a name. Wallet data is kept unless --delete-data is given with --confirm
+  list      Registered names and their paths. Never reads sessions or contacts the backend
+  status    Resident daemon status: pid and the names it was started with
+  overview  On-demand sanitized wallet/task/journal snapshot; no background polling
+  serve     Run the resident daemon in the foreground for every registered wallet
+  stop      Stop accepting work, drain admitted requests, then exit
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
       --wallet <NAME>
@@ -26,15 +27,15 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks
@@ -51,7 +52,7 @@ Create private wallet paths (0700) and an identity file (0600), then register th
 Usage: baw-rs wallets add [OPTIONS] <NAME>
 
 Arguments:
-  <NAME>  
+  <NAME>
 
 Options:
       --wallet <NAME>
@@ -61,19 +62,19 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --wallet-dir <PATH>
-          Use this wallet directory instead of <root>/<name>/wallet
+          Use this wallet directory; with an explicit existing identity, adopt without overwriting
       --instance-id-file <PATH>
           Use this identity file path instead of <root>/<name>/identity.key
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks
@@ -90,7 +91,7 @@ Unregister a name. Wallet data is kept unless --delete-data is given with --conf
 Usage: baw-rs wallets remove [OPTIONS] <NAME>
 
 Arguments:
-  <NAME>  
+  <NAME>
 
 Options:
       --keep-data
@@ -102,15 +103,15 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --confirm
-          
+
       --json
-          
+
       --timing
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks
@@ -132,15 +133,15 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks
@@ -162,15 +163,47 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
+      --warm
+          Route this command through the resident warm server when it is running
+      --skip-prechecks
+          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
+  -h, --help
+          Print help
+```
+
+## `wallets overview`
+
+```text
+On-demand sanitized wallet/task/journal snapshot; no background polling
+
+Usage: baw-rs wallets overview [OPTIONS]
+
+Options:
+      --refresh
+          Explicitly read login/settings (max two GETs per eligible wallet); skips active tasks/busy wallets
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
+      --json
+
+      --timing
+
+      --confirm
+
+      --operation-id <OPERATION_ID>
+
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks
@@ -192,15 +225,15 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks
@@ -222,15 +255,15 @@ Options:
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks

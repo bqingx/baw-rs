@@ -7,7 +7,8 @@ fn cli_env(args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
     command
         .env_remove("BINANCE_BAW_DIR")
         .env_remove("BINANCE_INSTANCE_ID")
-        .env_remove("BAW_RS_REGISTRY");
+        .env_remove("BAW_RS_REGISTRY")
+        .env_remove("BAW_RS_NOTIFY_CONFIG");
     for (key, value) in envs {
         command.env(key, value);
     }
@@ -49,6 +50,7 @@ fn serve(registry: &Path) -> Daemon {
     let mut child = Daemon(
         Command::new(env!("CARGO_BIN_EXE_baw-rs"))
             .env_remove("BAW_RS_REGISTRY")
+            .env_remove("BAW_RS_NOTIFY_CONFIG")
             .args(["--registry", registry.to_str().unwrap(), "wallets", "serve"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -107,7 +109,7 @@ fn daemon_lifecycle_bounded_ipc_and_no_selector_fallback() {
         "vaults",
         "--registry",
         r.to_str().unwrap(),
-        "register",
+        "add",
         "alice",
         "--wallet-dir",
         w.to_str().unwrap(),
@@ -170,6 +172,100 @@ fn identity_of(wallet_dir: &Path) -> String {
 }
 
 #[test]
+fn online_add_hot_loads_without_allowing_removal_rebinding_or_cross_registry_use() {
+    let root = tempfile::tempdir().unwrap();
+    let registry = root.path().join("registry");
+    let wallets = root.path().join("wallets");
+    let first = add_wallet(&registry, &wallets, "first");
+    empty_session_with(&first, &identity_of(&first));
+    // Prepare a second existing synthetic session without a running owner.
+    let staging = root.path().join("staging");
+    let second = add_wallet(&staging, &wallets, "second");
+    empty_session_with(&second, &identity_of(&second));
+    let key = second.parent().unwrap().join("identity.key");
+    let snapshots: Vec<_> = [
+        &first.join("session.json"),
+        &second.join("session.json"),
+        &key,
+    ]
+    .into_iter()
+    .map(|p| (p.clone(), std::fs::read(p).unwrap()))
+    .collect();
+    let _daemon = serve(&registry);
+    let reg = registry.to_str().unwrap();
+    let status = || body(&cli(&["--registry", reg, "wallets", "status"]))["data"].clone();
+    let pid = status()["pid"].clone();
+    assert_eq!(status()["notifications"]["enabled"], false);
+    let adopt = |reg: &Path, name: &str, dir: &Path, identity: &Path| {
+        cli(&[
+            "--registry",
+            reg.to_str().unwrap(),
+            "wallets",
+            "add",
+            name,
+            "--wallet-dir",
+            dir.to_str().unwrap(),
+            "--instance-id-file",
+            identity.to_str().unwrap(),
+        ])
+    };
+    let out = adopt(&registry, "second", &second, &key);
+    assert!(out.status.success(), "{}", message(&out));
+    let registered = std::fs::read(registry.join("registry.json")).unwrap();
+    // Even an added-but-not-loaded wallet cannot be removed while this daemon owns
+    // the registry. The lifecycle barrier, not just a loaded wallet's lease, matters.
+    for name in ["first", "second"] {
+        for flags in [
+            vec![],
+            vec!["--keep-data"],
+            vec!["--delete-data", "--confirm"],
+        ] {
+            let mut args = vec!["--registry", reg, "wallets", "remove", name];
+            args.extend(flags);
+            let out = cli(&args);
+            assert!(!out.status.success());
+            assert!(message(&out).contains("stop daemon"), "{}", message(&out));
+        }
+    }
+    for name in ["second", "first"] {
+        let out = cli(&["--registry", reg, "--wallet", name, "wallet", "status"]);
+        assert!(out.status.success(), "{}", message(&out));
+        assert_eq!(body(&out)["data"]["status"], "UNCONNECTED");
+    }
+    assert_eq!(status()["pid"], pid);
+    assert_eq!(status()["wallets"], json!(["first", "second"]));
+    let overview = cli(&["--registry", reg, "wallets", "overview"]);
+    assert!(overview.status.success(), "{}", message(&overview));
+    let overview = body(&overview);
+    assert_eq!(overview["data"]["wallets"].as_array().unwrap().len(), 2);
+    assert!(overview["data"]["wallets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["remote"]["readStatus"] == "not_requested"));
+    assert_eq!(overview["data"]["backgroundPolling"], false);
+    // No duplicate alias, name rebinding, or adoption of an actively owned directory.
+    assert!(!adopt(&registry, "alias", &second, &key).status.success());
+    assert!(!adopt(&registry, "first", &second, &key).status.success());
+    let other = root.path().join("other");
+    let out = adopt(&other, "stolen", &second, &key);
+    assert!(!out.status.success());
+    assert!(message(&out).contains("owned by a running resident daemon"));
+    assert!(!other.join("registry.json").exists());
+    // Another daemon cannot replace the live socket or become a second owner.
+    let out = cli(&["--registry", reg, "wallets", "serve"]);
+    assert!(!out.status.success());
+    assert_eq!(status()["pid"], pid);
+    assert_eq!(
+        std::fs::read(registry.join("registry.json")).unwrap(),
+        registered
+    );
+    for (path, bytes) in snapshots {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn legacy_single_wallet_cold_and_warm_signed_out_compatibility() {
     let root = tempfile::tempdir().unwrap();
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -183,6 +279,7 @@ fn legacy_single_wallet_cold_and_warm_signed_out_compatibility() {
     assert_eq!(body(&out)["data"]["status"], "UNCONNECTED");
     let mut child = Daemon(
         Command::new(env!("CARGO_BIN_EXE_baw-rs"))
+            .env_remove("BAW_RS_NOTIFY_CONFIG")
             .args(args)
             .arg("serve")
             .stdout(std::process::Stdio::null())
@@ -228,7 +325,39 @@ fn malformed_registry_never_becomes_an_empty_registry() {
 }
 
 #[test]
-fn registry_register_list_duplicate_and_unknown_fail_closed() {
+fn add_adopts_explicit_existing_wallet_without_rewriting_identity_or_session() {
+    let root = tempfile::tempdir().unwrap();
+    let registry = root.path().join("registry");
+    let wallet = root.path().join("wallet");
+    let key = root.path().join("identity");
+    std::fs::create_dir(&wallet).unwrap();
+    std::fs::set_permissions(&wallet, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::write(&key, "synthetic-preserve-identity\n").unwrap();
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let session = wallet.join("session.json");
+    std::fs::write(&session, b"synthetic-existing-state-no-decryption-needed").unwrap();
+    std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let before_key = std::fs::read(&key).unwrap();
+    let before_session = std::fs::read(&session).unwrap();
+    let result = cli(&[
+        "--registry",
+        registry.to_str().unwrap(),
+        "wallets",
+        "add",
+        "alice",
+        "--wallet-dir",
+        wallet.to_str().unwrap(),
+        "--instance-id-file",
+        key.to_str().unwrap(),
+    ]);
+    assert!(result.status.success(), "{}", message(&result));
+    assert_eq!(body(&result)["data"]["signedIn"], true);
+    assert_eq!(std::fs::read(&key).unwrap(), before_key);
+    assert_eq!(std::fs::read(&session).unwrap(), before_session);
+}
+
+#[test]
+fn registry_add_existing_list_duplicate_and_unknown_fail_closed() {
     let root = tempfile::tempdir().unwrap();
     let registry = root.path().join("registry");
     let wallet = root.path().join("wallet");
@@ -244,7 +373,7 @@ fn registry_register_list_duplicate_and_unknown_fail_closed() {
         "wallets",
         "--registry",
         r,
-        "register",
+        "add",
         "alice",
         "--wallet-dir",
         w,
@@ -265,7 +394,7 @@ fn registry_register_list_duplicate_and_unknown_fail_closed() {
         "wallets",
         "--registry",
         r,
-        "register",
+        "add",
         "bob",
         "--wallet-dir",
         alias.to_str().unwrap(),
@@ -274,18 +403,11 @@ fn registry_register_list_duplicate_and_unknown_fail_closed() {
     ])
     .status
     .success());
-    assert!(!cli(&[
-        "vaults",
-        "--registry",
-        r,
-        "run",
-        "missing",
-        "--",
-        "wallet",
-        "status"
-    ])
-    .status
-    .success());
+    assert!(
+        !cli(&["--registry", r, "--wallet", "missing", "wallet", "status"])
+            .status
+            .success()
+    );
     assert!(!wallet.join("session.json").exists());
 }
 
@@ -388,9 +510,9 @@ fn named_auth_signin_works_before_a_session_exists() {
     assert!(out.status.success(), "{}", message(&out));
 }
 
-/// `task` is wallet-scoped at the top level and travels as native control, not as argv.
+/// `task` aliases the instance pipeline; old wallet-scoped task calls are rejected.
 #[test]
-fn named_task_routes_native_control() {
+fn task_alias_routes_instance_control_and_rejects_wallet_selection() {
     use std::{
         io::{BufRead, BufReader, Write},
         os::unix::net::UnixListener,
@@ -415,6 +537,22 @@ fn named_task_routes_native_control() {
     let out = cli(&[
         "--registry",
         registry.to_str().unwrap(),
+        "task",
+        "arm",
+        "sell-1",
+        "--confirm",
+    ]);
+    let request: Value = serde_json::from_str(&recorded.join().unwrap()).unwrap();
+    assert_eq!(request["op"], "pipeline");
+    assert!(request.get("name").is_none());
+    assert_eq!(
+        request["command"],
+        json!({"op":"arm","id":"sell-1","confirm":true})
+    );
+    assert!(out.status.success(), "{}", message(&out));
+    let rejected = cli(&[
+        "--registry",
+        registry.to_str().unwrap(),
         "--wallet",
         "alice",
         "task",
@@ -422,14 +560,8 @@ fn named_task_routes_native_control() {
         "sell-1",
         "--confirm",
     ]);
-    let request: Value = serde_json::from_str(&recorded.join().unwrap()).unwrap();
-    assert_eq!(request["op"], "native");
-    assert_eq!(request["name"], "alice");
-    assert_eq!(
-        request["command"],
-        json!({"action":"arm","task_id":"sell-1","confirm":true})
-    );
-    assert!(out.status.success(), "{}", message(&out));
+    assert!(!rejected.status.success());
+    assert!(message(&rejected).contains("instance-scoped"));
 }
 
 /// No wallet and no legacy pair is an error that names the missing option.
@@ -439,7 +571,6 @@ fn missing_wallet_flag_names_the_option() {
         vec!["wallet", "status"],
         vec!["wallet", "address"],
         vec!["auth", "signin", "--confirm", "--operation-id", "x"],
-        vec!["task", "status"],
         vec!["approvals", "list"],
     ] {
         let out = cli(&args);
@@ -598,12 +729,12 @@ fn wallets_add_remove_lifecycle() {
     assert!(!cli(&["--registry", reg, "wallets", "remove", "alice"])
         .status
         .success());
-    // Re-register the kept data, then delete it explicitly.
+    // Explicitly adopt kept data via add, then delete it explicitly.
     let out = cli(&[
         "--registry",
         reg,
         "wallets",
-        "register",
+        "add",
         "alice",
         "--wallet-dir",
         dir.to_str().unwrap(),

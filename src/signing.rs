@@ -220,16 +220,8 @@ fn timestamp(v: &Value) -> Option<u64> {
     let n = v.as_u64().or_else(|| v.as_str()?.parse().ok())?;
     Some(if n >= 1_000_000_000_000 { n / 1000 } else { n })
 }
-/// When set, the two pre-flight reads are skipped and the caller's `--from` is trusted.
-/// Off unless `--skip-prechecks` or `BAW_RS_SKIP_PRECHECKS=1` asks for it.
-static SKIP_PRECHECKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 static SKIP_PRECHECKS_DEFAULT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-
-pub fn set_skip_prechecks(on: bool) {
-    SKIP_PRECHECKS.store(on, std::sync::atomic::Ordering::Relaxed);
-}
 
 /// A resident server started with `--skip-prechecks` (or the env var) applies it to every
 /// request it serves; a request may still turn it on itself, never off.
@@ -237,17 +229,11 @@ pub fn set_skip_prechecks_default(on: bool) {
     SKIP_PRECHECKS_DEFAULT.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub fn apply_skip_prechecks(requested: bool) {
-    let default = SKIP_PRECHECKS_DEFAULT.load(std::sync::atomic::Ordering::Relaxed);
-    set_skip_prechecks(default || requested);
-}
-
 tokio::task_local! {
     static REQUEST_SKIP_PRECHECKS: bool;
 }
 
-/// Pin the ordinary CLI's policy for the entire asynchronous dispatch. Legacy global
-/// setters remain compatible with direct callers, but cannot override another request.
+/// Pin the ordinary CLI's policy for the entire asynchronous dispatch.
 pub(crate) async fn request_precheck_policy<F: std::future::Future>(
     requested: bool,
     future: F,
@@ -259,7 +245,7 @@ pub(crate) async fn request_precheck_policy<F: std::future::Future>(
 pub fn skip_prechecks() -> bool {
     REQUEST_SKIP_PRECHECKS
         .try_with(|skip| *skip)
-        .unwrap_or_else(|_| SKIP_PRECHECKS.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or_else(|_| SKIP_PRECHECKS_DEFAULT.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 async fn check_wallet(
@@ -276,6 +262,10 @@ pub(crate) async fn check_wallet_policy(
     skip: bool,
 ) -> Result<(String, u64), String> {
     nonempty(chain)?;
+    if let Some(policy) = crate::execution::prepared_wallet() {
+        crate::execution::check_prepared_task()?;
+        return policy.check(client, chain, expected);
+    }
     if skip {
         // No settings read (the backend enforces developer mode anyway) and no address
         // read (the caller asserts the sender). Format is still validated locally, and the

@@ -76,7 +76,7 @@ async fn build_only_fetches_fresh_swap_and_authenticates_exact_query() {
     assert_eq!(call["gas_limit"], 700000);
     assert_eq!(call["route_validation"]["gas_quoted"], 200000);
     assert_eq!(call["route_validation"]["gas_preview_cap"], 700000);
-    assert_eq!(call["route_validation"]["recipient_verified"], true);
+    assert_opaque_validation(&call);
     let req = rx.recv().await.unwrap();
     let first = req.lines().next().unwrap();
     let target = first.split_whitespace().nth(1).unwrap();
@@ -111,8 +111,38 @@ async fn build_only_fetches_fresh_swap_and_authenticates_exact_query() {
     h.await.unwrap();
 }
 
+fn assert_opaque_validation(call: &Value) {
+    let validation = &call["route_validation"];
+    assert_eq!(validation["recipient_verified"], false);
+    assert_eq!(validation["calldata_min_out_verified"], false);
+    assert_eq!(validation["requires_runtime_preview"], true);
+    assert_eq!(validation["minimum_output_semantics"], "unknown");
+    assert_eq!(validation["calldata_policy"], "pinned_okx_opaque_v3");
+}
+
 #[test]
-fn decoded_v2_binds_amount_path_wallet_deadline_and_minimum() {
+fn arbitrary_and_old_known_selectors_are_preserved_without_local_verification() {
+    let (_f, c) = fixture();
+    let builder = RouteActionBuilder::new(&c).unwrap();
+    for data in [
+        "0x01".to_string(),
+        "0x123456780000".to_string(),
+        "0xf2c42696".to_string(),
+        "0x9871efa4".to_string(),
+        "0xABCDEF01aB".to_string(),
+        calldata(99),
+        calldata(99).replacen("0x38ed1739", "0x5c11d795", 1),
+    ] {
+        let mut r = response(99);
+        r["data"][0]["tx"]["data"] = json!(data);
+        let call = builder.validate_response(&r).unwrap();
+        assert_eq!(call["input_data"], data);
+        assert_opaque_validation(&call);
+    }
+}
+
+#[test]
+fn old_v2_layout_amount_path_recipient_deadline_and_minimum_are_opaque() {
     let (_f, c) = fixture();
     let b = RouteActionBuilder::new(&c).unwrap();
     for (idx, replacement) in [
@@ -129,15 +159,35 @@ fn decoded_v2_binds_amount_path_wallet_deadline_and_minimum() {
         let mut r = response(99);
         let mut data = calldata(99);
         data.replace_range(10 + idx * 64..10 + (idx + 1) * 64, &replacement);
-        r["data"][0]["tx"]["data"] = json!(data);
-        assert!(
-            b.validate_response(&r).is_err(),
-            "accepted invalid word {idx}"
-        );
+        for selector in ["0x38ed1739", "0x5c11d795"] {
+            let altered = data.replacen("0x38ed1739", selector, 1);
+            r["data"][0]["tx"]["data"] = json!(altered);
+            let call = b.validate_response(&r).unwrap();
+            assert_eq!(call["input_data"], altered, "changed word {idx}");
+            assert_opaque_validation(&call);
+        }
     }
-    let mut r = response(99);
-    r["data"][0]["tx"]["data"] = json!(format!("{}00", calldata(99)));
-    assert!(b.validate_response(&r).is_err());
+    for selector in ["0x38ed1739", "0x5c11d795"] {
+        for data in [
+            selector.to_string(),
+            format!("{selector}00"),
+            format!("{selector}{}", word("ffffffff")),
+            calldata(99).replacen("0x38ed1739", selector, 1)[..74].to_string(),
+            format!("{}00", calldata(99).replacen("0x38ed1739", selector, 1)),
+        ] {
+            let mut r = response(99);
+            r["data"][0]["tx"]["data"] = json!(data);
+            let call = b.validate_response(&r).unwrap();
+            assert_eq!(call["input_data"], data);
+            assert_opaque_validation(&call);
+        }
+    }
+}
+
+#[test]
+fn reported_minimum_is_required_independently_of_opaque_calldata() {
+    let (_f, c) = fixture();
+    let b = RouteActionBuilder::new(&c).unwrap();
     let mut r = response(99);
     r["data"][0]["tx"]
         .as_object_mut()
@@ -148,12 +198,32 @@ fn decoded_v2_binds_amount_path_wallet_deadline_and_minimum() {
         "quote amount is not a minimum"
     );
     assert!(b.validate_response(&response(0)).is_err());
-    let mut c = c;
-    c["allow_zero_min_out"] = json!(true);
-    assert!(RouteActionBuilder::new(&c)
-        .unwrap()
-        .validate_response(&response(0))
-        .is_ok());
+    for minimum in ["1", "98", "100"] {
+        let mut r = response(99);
+        r["data"][0]["tx"]["minReceiveAmount"] = json!(minimum);
+        let call = b.validate_response(&r).unwrap();
+        assert_eq!(call["input_data"], calldata(99));
+        assert_eq!(call["route_validation"]["reported_minimum_output"], minimum);
+        assert_opaque_validation(&call);
+    }
+}
+
+#[test]
+fn opaque_payloads_still_require_bounded_nonempty_canonical_hex() {
+    let (_f, c) = fixture();
+    let b = RouteActionBuilder::new(&c).unwrap();
+    for invalid in [
+        json!("0x"),
+        json!("0x0"),
+        json!("0xzz"),
+        json!("0X01"),
+        Value::Null,
+        json!(format!("0x{}", "00".repeat(131073))),
+    ] {
+        let mut r = response(99);
+        r["data"][0]["tx"]["data"] = invalid;
+        assert!(b.validate_response(&r).is_err());
+    }
 }
 
 #[test]
@@ -190,15 +260,10 @@ fn response_echoes_and_gas_units_are_fail_closed() {
 
 #[test]
 fn opaque_allowlisted_calldata_requires_preview_and_never_claims_verified_recipient_or_minimum() {
-    let (_f, mut c) = fixture();
+    let (_f, c) = fixture();
     let mut r = response(99);
     r["data"][0]["tx"]["data"] = json!("0x123456780000");
     r["data"][0]["tx"]["recipient"] = json!(WALLET);
-    assert!(RouteActionBuilder::new(&c)
-        .unwrap()
-        .validate_response(&r)
-        .is_err());
-    c["require_runtime_preview"] = json!(true);
     let b = RouteActionBuilder::new(&c).unwrap();
     let call = b.validate_response(&r).unwrap();
     assert_eq!(call["route_validation"]["requires_runtime_preview"], true);
@@ -404,10 +469,9 @@ fn duration_bounds_prevent_instant_overflow_and_additional_signing_is_not_silent
 }
 
 #[test]
-fn v2_router_still_must_be_the_configured_spender() {
-    // The V2 path decodes the calldata, so `tx.to` is the spender and stays bound to the config.
-    // The undocumented `approveAddress` / `approveContract` echoes are not part of the V6 schema and
-    // no longer fail an otherwise valid swap.
+fn opaque_router_is_pinned_independently_of_the_configured_approval_spender() {
+    // Aggregator entry router and allowance target may differ. Neither is inferred from ABI.
+    // The signing path separately validates bounded allowance consumption for the pinned spender.
     let (_f, c) = fixture();
     let mut r = response(99);
     r["data"][0]["approveContract"] = json!(WALLET);
@@ -424,8 +488,8 @@ fn v2_router_still_must_be_the_configured_spender() {
         RouteActionBuilder::new(&wrong_spender)
             .unwrap()
             .validate_response(&response(99))
-            .is_err(),
-        "V2 router itself must be the configured spender"
+            .is_ok(),
+        "do not infer that router and approval spender must be equal"
     );
 }
 
@@ -434,8 +498,7 @@ fn zero_minimum_is_refused_but_the_reported_minimum_is_not_re_derived_locally() 
     // `minReceiveAmount` is documented as the minimum received at the slippage limit: the provider's
     // number inside the calldata. Recomputing a floor from the quote only second-guesses its slippage
     // arithmetic, so only "missing/zero" is refused here.
-    let (_f, mut c) = fixture();
-    c["require_runtime_preview"] = json!(true);
+    let (_f, c) = fixture();
     let b = RouteActionBuilder::new(&c).unwrap();
     let mut r = response(99);
     r["data"][0]["tx"]["data"] = json!("0x12345678");
@@ -506,6 +569,24 @@ fn fixture() -> (tempfile::NamedTempFile, Value) {
       "min_request_interval_ms":1,"max_retries":2,"retry_backoff_ms":5,"credential_file":f.path()});
     (f, c)
 }
+#[test]
+fn removed_compatibility_fields_are_unknown_not_ignored() {
+    let (_f, c) = fixture();
+    for (key, value) in [
+        ("allowed_selectors", json!([])),
+        ("require_runtime_preview", json!(false)),
+        ("auto_approve", json!(true)),
+        ("prepare_at_load", json!(true)),
+    ] {
+        let mut old = c.clone();
+        old[key] = value;
+        assert!(
+            RouteActionBuilder::new(&old).is_err(),
+            "still accepted {key}"
+        );
+    }
+}
+
 #[test]
 fn strict_config_accepts_exact_integer_rejects_unknown_or_unsafe_fields() {
     let (_f, c) = fixture();

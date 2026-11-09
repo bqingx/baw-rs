@@ -2,7 +2,7 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`wallets/openfour` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
 
 ## `openfour`
 
@@ -46,12 +46,12 @@ Offline BNB/WBNB budget encoding, options=0; no quote or RPC
 Usage: openfour encode-buy [OPTIONS] --core <CORE> --token <TOKEN> --wallet <FROM> --amount-wei <BUDGET> --min-out-raw <MIN_AMOUNT_OUT>
 
 Options:
-      --core <CORE>                   
+      --core <CORE>
       --json                          Accepted for symmetry with the rest of the CLI; this command always prints JSON
-      --token <TOKEN>                 
-      --wallet <FROM>                 
-      --amount-wei <BUDGET>           
-      --min-out-raw <MIN_AMOUNT_OUT>  
-      --allow-zero-min-out            
+      --token <TOKEN>
+      --wallet <FROM>
+      --amount-wei <BUDGET>
+      --min-out-raw <MIN_AMOUNT_OUT>
+      --allow-zero-min-out
   -h, --help                          Print help
 ```

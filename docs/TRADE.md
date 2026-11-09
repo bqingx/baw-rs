@@ -1,118 +1,28 @@
-# Native market orders and wallet transfers
+# OKX 兑换与钱包转账
 
-Implemented in `src/trade.rs`, based on the installed 1.12.0 bundle and the offline sanitized API specification. Automated development/tests use synthetic credentials and loopback TCP only. Separate, explicitly authorized live OKX smoke testing is described in [OKX-TRADE.md](OKX-TRADE.md).
+## 交易
 
-The default provider remains Binance. Optional `--provider okx` is dispatched through
-`src/okx_trade.rs` and the existing contract-call signing core; configuration, explicit input
-decimals/minimum output, restrictions, and limited live validation are documented in
-[OKX-TRADE.md](OKX-TRADE.md). There is no automatic provider fallback.
+`market-order quote/swap` 默认且仅使用 OKX 聚合器，详见 [OKX-TRADE.md](OKX-TRADE.md)。币安原生报价/兑换实现已删除，不存在自动 provider 回退。`market-order list` 返回明确迁移错误。
 
-## Public integration contract
+- 需要私有 OKX 配置、输入精度、显式滑点；`--okx-min-output-units` 为可选固定底线，默认 `None`，不是 0/1 wei。显式 `Some` 仍额外严格约束固定最低到账。
+- 执行/触发使用 fresh OKX route 的 `minReceiveAmount`：必须存在且 >0、>= 当次 quote 按用户 slippage 计算的 floor、<= quoted output；强制独立模拟的钱包净到账 >= reported minimum。不采用准备期旧 quote floor，不自动增加滑点或税率，不本地解码 calldata，也不称为链上独立保底。
+- 自动授权显式选择、精确本次数量，等待回执、复核额度后重新报价。
+- 币安钱包负责预览、签名和广播；公开外部合约接口没有 MEV/Gas 价格档位参数。不能把原生兑换参数或 OKX 元数据当作最终广播保护。
+- 写操作要求确认和唯一 operation ID；`None` / `Some` 连同完整 args 绑定意图/准备，已有显式任务、授权和截止不变，不静默升级旧记录或重放；未知结果暂停，不自动重发。
 
-```rust
-pub enum MarketCommand { Quote(QuoteArgs), Swap(SwapArgs), List(ListArgs) } // clap::Subcommand
-pub struct QuoteArgs { // clap::Args, Clone, Serialize
-    pub provider: Provider,       // --provider binance|okx; default Binance
-    pub okx_config: Option<std::path::PathBuf>, // --okx-config; private profile
-    pub from_token_decimals: Option<u8>, // --fromTokenDecimals; OKX only
-    pub binance_chain_id: String, // --binanceChainId
-    pub from_token: String,       // --fromToken
-    pub to_token: String,         // --toToken
-    pub from_token_qty: String,   // --fromTokenQty
-    pub slippage: String,         // --slippage; default "auto"
-}
-pub struct SwapArgs { // clap::Args; QuoteArgs flattened in clap and JSON
-    pub quote: QuoteArgs,
-    pub mev: String,                  // --mev; default "true"
-    pub gas_level: String,            // --gasLevel; default "MEDIUM"
-    pub acknowledge_token_risk: bool, // --acknowledge-token-risk
-    pub okx_min_output_units: Option<String>, // --okx-min-output-units
-    pub okx_allow_opaque_calldata: bool, // --okx-allow-opaque-calldata; default false
-    pub auto_approve: bool, // --auto-approve; OKX only, exact amount, default false
-}
-pub struct ListArgs { // clap::Args; Default uses page=1, page_size=20
-    pub order_id: Option<String>,         // --orderId
-    pub binance_chain_id: Option<String>, // --binanceChainId
-    pub status: Option<String>,           // --status
-    pub from_token: Option<String>,       // --fromToken
-    pub to_token: Option<String>,         // --toToken
-    pub start_time: Option<String>,       // --startTime; millisecond integer
-    pub end_time: Option<String>,         // --endTime
-    pub page: u32,                        // --page
-    pub page_size: u32,                   // --pageSize
-}
-pub struct SendArgs { // clap::Args, Clone, Serialize
-    pub binance_chain_id: String, // --binanceChainId
-    pub amount: Option<String>,   // --amount
-    pub max: bool,                // --max; exactly one of amount/max
-    pub recipient: String,       // --recipient; address, not alias/domain
-    pub token_address: String,   // --tokenAddress
-    pub gas_level: String,       // --gasLevel; default "MEDIUM"
-}
-pub async fn run(client: &mut Client, command: &MarketCommand) -> Result<Value, String>;
-pub async fn send(client: &mut Client, args: &SendArgs) -> Result<Value, String>;
-pub fn is_mutating(command: &MarketCommand) -> bool;
-pub fn mutation_payload(command: &MarketCommand) -> Result<Value, String>;
-pub fn send_payload(args: &SendArgs) -> Result<Value, String>;
-```
+## 转账
 
-The parent owns explicit confirmation, persistent operation IDs, durable anti-replay journaling and serialization **before** calling `run(Swap)` or `send`. These functions do not duplicate that guard. Intent functions are pure, validate input, and produce `{"operation":"market-order.swap"|"wallet.send","args":{...}}`. They preserve original amount strings, requested gas spelling, slippage percent, MEV and risk acknowledgement, rather than journaling a silently converted API body. Serialization uses camelCase and flattens `SwapArgs.quote`.
+`wallet send` 保留币安钱包原生转账接口，与已删除的原生兑换不是同一路径。
 
-## Validation and protections
+- `--amount`（人类可读数量）与 `--max` 必须且只能选一个。
+- 明确链、完整 tokenAddress、完整 recipient；域名必须先单独解析并核对地址。
+- 转账接口仍提供 `--gasLevel LOW/MEDIUM/HIGH`，不要与合约调用仅支持 gasLimit 混淆。
+- RWA 转账保留精确份额换算和余额/精度检查，不使用浮点数。
+- 后端要求 App 确认时返回 PENDING_CONFIRMATION，不能视为已发送。
+- 请求断开、HTTP 错误或无可信 hash 时不自动重试；查看本钱包 operation 日志和链上结果。
 
-- Amounts are bounded unsigned decimal strings (`digits[.digits]`, positive, at most 1e18), never parsed with floats. No whitespace, exponent syntax, signs, empty fraction or trailing junk. Up to 512 characters; this deliberate bound prevents unbounded allocation. Decimal percent slippage is exact: `1.234567891234567891` → `0.01234567891234567891`; range 0..100, default `auto`.
-- Supported chain IDs follow the original actual validation set: `1`, `56`, `8453`, `CT_501`, `4663`. Original help mentions `5042`, but its validator does not accept it. EVM tokens/recipients require 0x plus 40 hex digits: all-lowercase accepted, any other casing must match the parent's Keccak EIP55 checksum. Solana uses original base58 length 32..44 validation, with case-sensitive matching; no claim of full public-key decoding.
-- Gas levels LOW/MEDIUM/HIGH are case-insensitive; actual request uppercases them. MEV requires the literal `true` or `false`.
-- Normal/bstock/unknown-RWA swaps support MEV on `1`, `56`, `CT_501`. Unlike the original, unsupported chains do **not silently force false**: explicitly request `--mev false`.
-- Ondo endpoints accept neither gas selection nor MEV fields. Require `--mev false` and the default MEDIUM gas setting; HIGH/LOW fail rather than silently ignoring the selection. MEDIUM is an unset/default sentinel on that endpoint, not a promise of a selected gas fee.
-- Every non-native target requires `--acknowledge-token-risk`, including registry-listed RWA tokens (a registry is not a security audit). Native sentinels are EVM zero/eeee and Solana wrapped SOL. There is no local trusted-token allowlist or token-audit integration, and the flag **never represents a successful audit or overrides backend policy**. The installed original does not automatically audit tokens either. Quote is read-only and does not require this acceptance.
-- Swap reads the RWA registry, settings and daily quota, requires quota remaining, rejects developer-mode balance-exceeded/expired or unknown enabled-mode expiry, then requires exact `status: UNLOCKED` from tx-lock. Missing/malformed settings or lock state fails closed. Backend policies remain authoritative. These local quota checks detect exhaustion, not a guaranteed USD cost or gas cap: backend admission must still enforce the actual trade's cost and token restrictions.
-- Swap obtains a fresh native quote before submission; requires quote ID and positive output, rejects nested quote errors, and for explicit slippage requires quote slippage no greater than the requested fraction. Order still sends the requested slippage (`auto` remains auto), never disables it. This is a preflight, **not** a quote-ID-bound execution guarantee: original place-order API has no quoteId field. No order polling or automatic resubmission.
-- List: status PENDING/FINISHED/FAILED, page 1..10000, pageSize 1..100, orderId alphanumeric/hyphen up to 64. Times are digit-only millisecond integers between January 1, 2020 and current time plus 100×365 days, with start≤end. All filters validate even when orderId overrides them. OrderId request body is only `{orderId,page:1,pageSize:1}`.
+## 自动执行与恢复
 
-## Exact RWA compatibility
+多钱包动作统一由 [实例级流水线](PIPELINES.md) 调度；旧钱包级任务和 typed prepare/trigger 执行路径已删除。
 
-All market commands fetch the command-local registry (even order-ID list). Normal tokens use `/web-dex/agent/quote` and `/place-order`. RWA context selects the source token first, otherwise destination, matching original precedence even when both are RWA.
-
-| Kind | Quote | Order |
-|---|---|---|
-| type 1 / Ondo | `/ondo/quote`, `fromAmount`, `fromTokenShare` / `fromMultiplier` | `/ondo/place-order`, `amount`, `tokenShare` / `multiplier`; no gas/MEV fields |
-| type 3 / bstock | ordinary quote, `amount`, plus share/multiplier fields | ordinary order plus share/multiplier fields |
-| unknown RWA type | same as bstock | same as bstock |
-
-Sell quote divides requested shares by multiplier, rounding **UP at 18 decimal places**. Sell order/send reads the raw wallet token row, divides UP at the token's own decimal precision (original behavior, commonly 18), then clamps the rounded base amount to raw wallet balance. Before clamping, exact cross multiplication rejects true oversell; no rounded comparison hides oversell. Multiplier 1 preserves the input string, while still rejecting oversell (an intentional tightening of the original multiplier-1 shortcut). Matching respects Solana case and treats EVM addresses case-insensitively.
-
-Buy quote multiplies underlying output by destination multiplier and rounds DOWN18. Ondo prefers `toTokenShare`, otherwise backend `toMultiplier`, otherwise registry multiplier. Normal RWA buy quote uses registry multiplier. Sell output restores original share amount as `fromCoinAmount`. Share/multiplier request fields are explicit null on buy; absent on non-RWA normal requests.
-
-## Transfer policy and results
-
-`--amount` XOR `--max` is enforced both by clap and public-call validation. Explicit amount follows original registry/share conversion; max omits amount and sends `isMax:true` without fetching registry/balance. Transfer sends exactly chain, `recipientAddress`, token, **`feeLevel`** (not gasLevel), plus amount or isMax. It does not create/address-book entries, resolve aliases, bypass recipient allowlists, or auto-confirm in the app. Backend recipient/address-book rules and confirmation are preserved. `PENDING_CONFIRMATION` is surfaced as APP_CONFIRMATION_REQUIRED without claiming sent/confirmed.
-
-Successful order acceptance returns `status: SUBMITTED`, orderId/clientOrderId and retained quote. It never infers FILLED from an order ID. Transfer with a txHash similarly returns SUBMITTED with raw `backendData`; on-chain confirmation must be queried independently. Nested order `data.code != "000000"` returns ORDER_API_ERROR with a bounded numeric code, static sanitized message and optional orderId/orderExpireTime. Backend error message text is deliberately not echoed; transfer inner failure codes also reject rather than reporting SUBMITTED.
-
-No application-level retries, polling or automatic resubmission exist. Once an execute request is attempted, transport/envelope errors (including timeouts), missing IDs or unusable response shapes return `status: UNCERTAIN`, `retrySafe:false`; reconcile order/transaction history manually. This conservatively includes backend rejection envelopes when the shared client exposes only an undifferentiated error string. The parent's durable guard must keep the operation consumed even when uncertain or failed.
-
-## Deliberate output improvements
-
-Quote retains quoteId, feeDetail, gasDetails and any new backend metadata instead of the installed original JSON command's information loss. Amount presentation alone is RWA-normalized. List retains original order mappings: chain fallback, checksummed token addresses, **toTokenActualQty** rather than a quoted quantity, unchanged backend status, orderTxId→txHash, local-offset ISO dates, and parsed refund entries with RWA conversion. Malformed `extend` JSON is ignored, as in the original. Rows remain in server order; no claimed submitted=filled mapping. Registry cache behavior is owned/documented by the portfolio module.
-
-## Examples (illustrative; NOT executed)
-
-```sh
-baw-rs market-order quote --binanceChainId 56 \
-  --fromToken 0x1111111111111111111111111111111111111111 \
-  --toToken 0x2222222222222222222222222222222222222222 --fromTokenQty 1.00 --slippage 1
-baw-rs market-order list --binanceChainId 56 --status PENDING --page 1 --pageSize 20
-# Mutation additionally requires the parent/global confirmation and unique operation-ID flags:
-baw-rs market-order swap --binanceChainId 56 \
-  --fromToken 0x1111111111111111111111111111111111111111 \
-  --toToken 0x2222222222222222222222222222222222222222 --fromTokenQty 1.00 \
-  --slippage 1 --acknowledge-token-risk
-# For an Ondo token: additionally --mev false (leave gasLevel at MEDIUM).
-baw-rs wallet send --binanceChainId 56 \
-  --recipient 0x2222222222222222222222222222222222222222 \
-  --tokenAddress 0x1111111111111111111111111111111111111111 --amount 1.00 --gasLevel HIGH
-# Or replace --amount with --max, never both.
-```
-
-The example tokens are synthetic placeholders, not recommendations or verified assets. See scratch `trade-*-red.log` / `trade-*-green.log` for vertical TDD evidence and the isolated harness for test commands. The harness has its own Cargo target directory; it must never share root build artifacts.
+交易/签名/授权是实际资金操作。本轮构建和离线测试不构成真实登录、自动授权、交易或部署的批准，也不代表生产可用性验证。

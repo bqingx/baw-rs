@@ -7,6 +7,169 @@ the current source.
 
 ## Unreleased
 
+- **Optional extra fixed minimum output.** Omission now uses the fresh execution/trigger route
+  minimum bounded by current quote/slippage; a positive reported minimum and successful net
+  balance preview remain mandatory. Explicit fixed floors still apply before approval and
+  submission, and remain distinct in durable/prepared args (None/Some/value changes cannot
+  reuse proof). Never synthesize 0/1 wei or freeze the preparation quote; retain exactly three
+  prepared core HTTP calls and all tax/permission/cancel/deadline/duplicate controls. Add typed
+  minimumOutputPolicy diagnostics and update intent/description/readiness docs. 405 Rust tests
+  pass; existing tasks/data untouched, no deployment or new financial operations.
+
+- **Manual inspection and pre-submit intent summaries.** Add local-default wallets overview,
+  explicit bounded login/settings refresh with independent disposable clients, no session/cache
+  persistence, incomplete/unresolved evidence reporting and no implicit hot-load. A shared
+  execution/inspection admission barrier prevents refresh racing Arm/Resume; per-wallet
+  reservations serialize manual refresh with ordinary execution. Add pure market-order intent
+  and pipeline describe (no profile/policy reads, RPC, load/arm, accepted digest, journal or
+  deadline grant). Preserve exact units and actual gas/MEV limitations, reject malformed fire
+  payloads and scalar journal records. Cookie changes cannot imply stored-session readiness.
+  393 Rust tests pass; no deployment, real-wallet reads, real notifications or transactions.
+
+- **Online wallet adoption and optional task notifications.** Split daemon lifecycle/removal
+  barriers from short registry transactions so CLI add really works against a running
+  daemon. Preserve removal/rebinding/single-owner and cross-registry directory protections;
+  new CLI/daemon lock protocol must be upgraded together. Add disabled-by-default private
+  PushPlus configuration with explicit channel, post-save bounded/nonblocking publication,
+  durable at-most-once attempt claims, no retry/redirect, sanitized typed summaries,
+  mixed-result/expiry/App distinctions, and safe status counters. No synchronous stderr
+  on notification overflow; no historical replay or delivery guarantee. Offline CLI and
+  loopback regressions; no deployment, real-wallet changes or real notification sends.
+
+- **Single-wallet offline fault acceptance.** Exercise full Execute POST followed by connection
+  loss/normal client timeout, lost approval replies, hashless results, and SIGKILL of an OS
+  subprocess followed by a new process's read-only reconciliation and rejected replay.
+  Fix order-ID-only Task completion: submitted now requires a valid transaction hash;
+  standalone OKX swaps with missing/invalid hashes are UNCERTAIN (preserving order ID and
+  reported status). Reject incomplete started preparation before resume dispatch. Original
+  deadlines and synthetic identity/session bytes remain unchanged; strict core-call counts
+  retained. 359 Rust tests pass, no real-wallet access/deployment/transactions.
+
+- **Remove unused compatibility surfaces.** Delete the opaque flag and four ignored route
+  fields, hidden wallets register/run and market-order list, dead Binance provider/direct-run
+  stubs, and duplicate legacy global precheck setters. Existing-wallet adoption is an explicit
+  branch of wallets add (no data rewrite); business commands use --wallet. Preserve actual
+  cold/warm access, session decoding, aliases and terminal read-only archives without accepting
+  retired syntax as executable input. Version the new intent schema, update fixtures/scripts,
+  and retain no-replay/authorization boundaries. 351 Rust tests passed; no deployment/trades.
+
+- **Opaque OKX provider calldata policy.** On explicit user acceptance remove all local
+  ABI/selector parsing, including standard/FOT V2. Pass through bounded nonempty hex unchanged;
+  retain fixed envelope/router/spender/value/gas, fresh mandatory simulation, wallet debit/net
+  minimum/risk/authority checks, preview binding and durable one-shot admission. No claim of
+  locally verified encoded recipient/path/deadline/on-chain minimum. Retired opaque/selector/
+  preview-switch options remain compatible but cannot alter the unified preview requirement.
+  Bind policy version into mutation/preparation so old readiness cannot silently upgrade.
+  347 Rust tests passed. Not deployed/live-tested; no new financial action.
+
+- **Generic bounded transfer-tax support.** Add independent input/sell and output/buy
+  metadata caps (`--max-from-tax-percent`, `--max-to-tax-percent`), both default zero.
+  Exact fraction/percentage arithmetic, no per-token registry, no automatic input/approval
+  gross-up or slippage relaxation. Successful preview must satisfy the original wallet-debit
+  ceiling and reported/user net-credit floor. Never assume quote tax inclusion or subtract tax
+  twice. Decode canonical Router02 supporting-fee token/token minimum semantics; standard or
+  opaque output-tax routes still need separate unproven-minimum risk consent. Caps are in the
+  durable/prepared intent; fresh-tax mismatch stops without repair and the three-call path is
+  preserved. Eighteen new regressions; 346 Rust tests passed. Subsequently switched into
+  test daemon PID 75994 on explicit request, preserving sessions/tasks; not tax-token live-tested.
+
+- **Local event-to-action timeline.** Preserve the actor's completed-text-frame timestamp
+  across subscription buffering; expose canonical-read queue/limiter/exchange phases, durable
+  admission, worker scheduling, wallet queue/preparation, dispatch, core HTTP attempts and
+  result collection/save. Derived durations only, no extra RPC/HTTP/connection or telemetry fsync.
+  Historical backfill and resumed admissions never invent live-event origins. Preserve deadlines,
+  canonical checking, draining and duplicate protection. Nine new tests plus extended controller,
+  backfill and shared-WSS coverage; 328 Rust tests passed. Not deployed or live-tested.
+
+- **Credential-safe HTTP pool observations.** Instrument the existing Binance/OKX pools
+  without adding requests, retries or warmup traffic. Core-call results expose opaque pool/socket
+  IDs, protocol, interval connection attempts/results and aggregate connector time. No raw
+  sockets, URLs, credentials or verbose logs. DNS/TCP/TLS are not individually observable;
+  concurrent pool activity is not request attribution or backend time. Clear stale timing and
+  distinguish an unsent execute from an auxiliary precheck request. Twelve new regressions;
+  319 Rust tests passed. Subsequently explicitly authorized and live-verified on `027b996b…`:
+  all three core calls reused observed sockets with zero new connect attempts; Preview and
+  Execute shared one socket. Wallet stage 1013.15 ms (not event-to-chain latency); 1 USDT
+  actual debit, both receipts successful, remaining allowance zero. No ongoing authorization.
+
+- **Three-core-HTTP Task OKX submission.** Freeze a task-bound wallet policy after
+  pre-listening safeguards; the triggered path performs one fresh OKX swap, one Binance
+  Preview and one Execute. Nested SDK checks use the bound sender/expiry/client identity;
+  auxiliary reads, including cache hits, are prohibited. Keep original task gates, simulation,
+  preview binding and durable duplicate protection. Backend rejection, App confirmation and
+  unknown execution pause without refresh or retry. New receipts use the original sender;
+  WSS event canonicalization/receipts remain separate network operations. Nineteen new
+  regressions passed; 307 Rust tests, 7 skill checks and 27 isolated smoke checks passed.
+  Subsequently deployed to the explicitly authorized test daemon and passed one real event
+  swap: 949.95 ms wallet-stage time, two Binance requests and no auxiliary reads; on-chain
+  debit 1 USDT and remaining allowance zero. Not full event-to-chain latency or a stable SLA.
+
+- **Bounded Task hot path.** Command-local read sets merge duplicate state queries for at
+  most three seconds (0 TTL disables), clear on session/Cookie changes and enforce gates on
+  cache hits; writes/errors are never cached. Per-wallet OKX pools persist across preparation
+  and triggering without storing request credentials in transport defaults. Fixed commands
+  compile at arm/resume, not on trigger; plans are memory-only. Local route validation no longer
+  constructs a transport or reloads secrets. Trigger/InFlight admission share a durable save
+  before execution. Add scoped request counts/timings, not a production latency claim.
+  Eleven regressions passed. This preceding build was later switched and passed a real
+  pre-listening-approval event swap; its roughly 1.42-second wallet-stage timing still includes
+  five auxiliary state reads and is not an end-to-end or latest-build measurement.
+
+- **Task allowances prepared before listening.** Each active step checks its swap allowances
+  and, only with explicit auto-approval consent, submits an exact grant before opening its
+  trigger subscription. Preparation waits for the first bound successful receipt, not extra
+  confirmation depth or an allowance reread. Triggered swaps cannot query/grant/wait for
+  allowances; a changed profile/intent or consumed allowance stops instead of repairing/retrying.
+  Separate deterministic preparation/swap journals, persisted preparation budget and private
+  binding proofs preserve duplicate protection. The listening budget starts after preparation;
+  RUNNING may still be preparing, and results.phase=WAITING denotes listener readiness.
+  Existing standalone swap policy is unchanged. Nine mock regressions passed; this timing
+  was subsequently deployed and passed one explicitly authorized real event swap.
+
+- **Alchemy Free event-backfill compatibility.** Startup log backfill now requests at most
+  10 blocks per page, retaining the 500-block total bound and a single shared WSS transport.
+  Pages preserve live notifications, check cancellation/expiry and reject out-of-page logs;
+  failures still pause without retry, reconnect or payment. RPC errors identify method/numeric
+  code without exposing arbitrary provider text. Ten new regressions and a real read-only
+  Rust 10/10/1-page probe passed; the original event-trade test was cancelled without writes.
+
+- **Single task engine and actual Release artifact.** Removes wallet-local logs/pending/block-time
+  listeners, typed prepare/trigger/disarm execution, per-wallet task books/reservations, obsolete
+  clients/benchmarks and their feature-specific tests. Old IPC frames reject rather than falling
+  back. `task` now aliases instance `pipeline`; directory-form login/business access remains.
+  Current artifact is a stripped Linux x86-64 Release CLI, not just a release test executable.
+  Offline full-suite/skill/artifact smoke results and limits are in `docs/RELEASE-CHECKPOINT.md`.
+
+- **Instance pipelines (working tree, not deployed).** `pipeline load/arm/status/cancel` controls
+  instance-owned tasks with explicit wallet/action membership, overlapping wallet sets, parallel
+  members and sequential completion gates. Local session preparation precedes trigger waiting.
+  Time/newHeads/log triggers, confirmed receipts, durable pre-submit claims, cancellation gates
+  and interrupted-state pause are implemented. No automatic uncertain-write retry; continuation
+  requires explicit confirmation and resolved evidence.
+- **One on-demand RPC actor in the named daemon.** Read RPCs, reference-counted subscriptions,
+  task receipts and OKX auto-approval share one WSS socket. Endpoint conflicts reject, identical
+  reads coalesce, notification buffers are bounded and the final lease closes the socket. No
+  HTTP fallback or automatic reconnect; wallet-local legacy task execution has been removed.
+- **OKX-only trading.** Removes Binance quote/swap implementation and changes the CLI default
+  to OKX. `--provider binance` rejects; slippage and MEV choice are explicit. Transfers remain.
+  Existing contract preview/execute/fire signing remains preview-bound.
+- **Explicit recovery.** `pipeline reconcile` reads bound, canonical receipts using execution or
+  journal hashes; `pipeline resume --confirm` continues Pending actions only. Submitted/Confirmed
+  actions never replay; uncertain/reverted, expired, cancelled, changed-identity or legacy
+  unbound state cannot resume. Original per-step deadlines and trigger admission persist.
+- **Wallet consent binding.** Arm records directory/session/identity fingerprints and checks
+  them before backend requests and resume. Re-authentication cannot silently change task authority.
+- **Cleanup/performance.** Removes the superseded `native_shared` fanout controller and moves
+  generic address reads into the shared wallet runtime; the remaining legacy executor is now removed.
+  Live bookkeeping avoids repeated topology
+  validation/cloning; local release benchmark is documented in `docs/PERFORMANCE.md`.
+- **Accepted interface limitation:** contract-call exposes gasLimit but not gas-price/fee-tier or
+  protected broadcast controls. MEV=true and non-default gas selection remain rejected, not
+  silently ignored. This is not a production latency or real-funds verification claim.
+
+The older Unreleased entries below describe preceding implementations and historical tests;
+where they conflict with the pipeline/OKX-only notes above, the newer behavior takes precedence.
+
 - **Live Binance preview compatibility.** Recognize integer `preAmount`/`postAmount` and
   fungible `tokenType: Erc20` / null `tokenId` in approval and swap allowance metadata. Preserve
   arbitrary-precision uint256 checks, consistent aliases, exact grant amounts and bounded consumption;

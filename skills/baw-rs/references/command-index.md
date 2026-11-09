@@ -1,8 +1,8 @@
 # 完整命令索引
 
-包含根帮助之外的 `openfour`；`vaults` 是 `wallets` 的隐藏别名，不出现在帮助里。
+包含根帮助之外的 `openfour`；`task` 是 `pipeline` 的别名，`vaults` 是 `wallets` 的隐藏别名，不重复计数。
 
-快照版本 `baw-rs 0.3.0`；叶子命令 **46** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。
+快照版本 `baw-rs 0.3.0`；叶子命令 **51** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。
 
 - `approvals approve` → [参数](cli-approvals.md)
 - `approvals detail` → [参数](cli-approvals.md)
@@ -15,21 +15,24 @@
 - `contract-call execute` → [参数](cli-contract-call.md)
 - `contract-call fire` → [参数](cli-contract-call.md)
 - `contract-call preview` → [参数](cli-contract-call.md)
-- `market-order list` → [参数](cli-market-order.md)
+- `market-order intent` → [参数](cli-market-order.md)
 - `market-order quote` → [参数](cli-market-order.md)
 - `market-order swap` → [参数](cli-market-order.md)
 - `openfour encode-buy` → [参数](cli-openfour.md)
 - `openfour quote-buy` → [参数](cli-openfour.md)
+- `pipeline arm` → [参数](cli-pipeline.md)
+- `pipeline cancel` → [参数](cli-pipeline.md)
+- `pipeline describe` → [参数](cli-pipeline.md)
+- `pipeline load` → [参数](cli-pipeline.md)
+- `pipeline reconcile` → [参数](cli-pipeline.md)
+- `pipeline resume` → [参数](cli-pipeline.md)
+- `pipeline status` → [参数](cli-pipeline.md)
 - `serve` → [参数](cli-serve.md)
 - `sign-message execute` → [参数](cli-sign-message.md)
 - `sign-message history` → [参数](cli-sign-message.md)
 - `sign-message preview` → [参数](cli-sign-message.md)
 - `sign-message result` → [参数](cli-sign-message.md)
 - `skill-check` → [参数](cli-skill-check.md)
-- `task arm` → [参数](cli-task.md)
-- `task disarm` → [参数](cli-task.md)
-- `task load` → [参数](cli-task.md)
-- `task status` → [参数](cli-task.md)
 - `wallet address` → [参数](cli-wallet.md)
 - `wallet agent-id` → [参数](cli-wallet.md)
 - `wallet balance` → [参数](cli-wallet.md)
@@ -37,6 +40,7 @@
 - `wallet chains` → [参数](cli-wallet.md)
 - `wallet gas-price` → [参数](cli-wallet.md)
 - `wallet left-quota` → [参数](cli-wallet.md)
+- `wallet operation` → [参数](cli-wallet.md)
 - `wallet resolve-domain` → [参数](cli-wallet.md)
 - `wallet send` → [参数](cli-wallet.md)
 - `wallet settings` → [参数](cli-wallet.md)
@@ -46,6 +50,7 @@
 - `wallet tx-lock` → [参数](cli-wallet.md)
 - `wallets add` → [参数](cli-wallets.md)
 - `wallets list` → [参数](cli-wallets.md)
+- `wallets overview` → [参数](cli-wallets.md)
 - `wallets remove` → [参数](cli-wallets.md)
 - `wallets serve` → [参数](cli-wallets.md)
 - `wallets status` → [参数](cli-wallets.md)

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "okx_prepared_tests.rs"]
+mod task_prepared;
 const AMOUNT: u64 = 1_250_000;
 fn approval_hash() -> String {
     format!("0x{}", "b".repeat(64))
@@ -93,7 +95,9 @@ fn backend(w: Arc<World>, approve_preview: Value) -> (Server, Client) {
     let server = serve(move |request| {
         let line = request.lines().next().unwrap();
         let value = if line.contains("settings/query") {
-            json!({"dailyLimit":"100","devMode":{"enabled":true,"expiresAt":4102444800u64}})
+            let enabled = !(w.mode == "mode-off-after-preview"
+                && w.phases.lock().unwrap().contains(&"swap_preview"));
+            json!({"dailyLimit":"100","devMode":{"enabled":enabled,"expiresAt":4102444800u64}})
         } else if line.contains("trading-limit/query") {
             json!({"quotaUsed":"1"})
         } else if line.contains("tx-lock-status") {
@@ -120,14 +124,50 @@ fn backend(w: Arc<World>, approve_preview: Value) -> (Server, Client) {
                 assert_eq!(body["gasLimit"], 300000);
                 approve_preview.clone()
             } else {
+                if w.mode == "swap-preview-error" {
+                    return (
+                        200,
+                        json!({"code":"351805","message":"state changed; do not retry"}),
+                    );
+                }
+                if w.mode == "mode-off-after-preview" {
+                    w.phases.lock().unwrap().push("swap_preview");
+                }
                 let mut v = preview();
+                if matches!(
+                    w.mode,
+                    "tax-output"
+                        | "tax-both"
+                        | "tax-output-shortfall"
+                        | "tax-output-v2"
+                        | "tax-output-fot"
+                ) {
+                    v["simulationResult"]["balanceChanges"][1]["change"] = json!("9702");
+                }
+                if w.mode == "preview-below-reported" {
+                    v["simulationResult"]["balanceChanges"][1]["change"] = json!("9800");
+                }
+                if w.mode == "lower-fresh-output" {
+                    v["simulationResult"]["balanceChanges"][1]["change"] = json!("9000");
+                }
+                if matches!(w.mode, "tax-output-v2" | "tax-output-fot") {
+                    v["parsedTx"]["contractAddress"] = json!(SPENDER);
+                }
+                if w.mode == "tax-extra-debit" {
+                    v["simulationResult"]["balanceChanges"][0]["change"] =
+                        json!(format!("-{}", AMOUNT + 1));
+                }
                 let before = if w.mined.load(Ordering::SeqCst) {
                     w.after
                 } else {
                     w.before
                 };
-                v["simulationResult"]["allowanceChanges"] = json!([{"owner":FROM,"tokenAddress":INPUT,
-                    "spender":SPENDER,"preAmount":before,"postAmount":before-AMOUNT,"tokenType":"Erc20","tokenId":null}]);
+                if before < AMOUNT {
+                    v["simulationResult"]["simulationCode"] = json!("INSUFFICIENT_ALLOWANCE");
+                } else {
+                    v["simulationResult"]["allowanceChanges"] = json!([{"owner":FROM,"tokenAddress":INPUT,
+                        "spender":SPENDER,"preAmount":before,"postAmount":before-AMOUNT,"tokenType":"Erc20","tokenId":null}]);
+                }
                 v
             }
         } else if line.contains("contract-call/execute") {
@@ -145,6 +185,27 @@ fn backend(w: Arc<World>, approve_preview: Value) -> (Server, Client) {
                 }
             } else {
                 w.phases.lock().unwrap().push("swap_execute");
+                if w.mode == "swap-execute-error" {
+                    return (503, json!({"private":"not echoed"}));
+                }
+                if w.mode == "swap-pending-confirmation" {
+                    return (
+                        200,
+                        json!({"code":"000000","data":{"orderId":"swap-order","status":"PENDING_CONFIRMATION"}}),
+                    );
+                }
+                if w.mode == "swap-order-only" {
+                    return (
+                        200,
+                        json!({"code":"000000","data":{"orderId":"swap-order","status":"BROADCASTED"}}),
+                    );
+                }
+                if w.mode == "swap-invalid-hash" {
+                    return (
+                        200,
+                        json!({"code":"000000","data":{"orderId":"swap-order","status":"BROADCASTED","txHash":"0x1234"}}),
+                    );
+                }
                 json!({"orderId":"swap-order","status":"BROADCASTED","txHash":format!("0x{}","a".repeat(64))})
             }
         } else {
@@ -159,6 +220,30 @@ fn backend(w: Arc<World>, approve_preview: Value) -> (Server, Client) {
     let client = Client::test_client(c, &server.origin).unwrap();
     (server, client)
 }
+fn taxed_quote(w: &World, mut quote: Value, fresh: bool) -> Value {
+    if matches!(
+        w.mode,
+        "tax-input" | "tax-both" | "tax-extra-debit" | "tax-cap-change" | "tax-prep-cap"
+    ) {
+        quote["fromToken"]["taxRate"] = json!(if w.mode == "tax-prep-cap"
+            || (w.mode == "tax-cap-change" && fresh)
+        {
+            "0.05"
+        } else {
+            "0.02"
+        });
+    }
+    if matches!(
+        w.mode,
+        "tax-output" | "tax-both" | "tax-output-shortfall" | "tax-output-v2" | "tax-output-fot"
+    ) {
+        quote["toToken"]["taxRate"] = json!("0.02");
+        if w.mode != "tax-output-shortfall" {
+            quote["toTokenAmount"] = json!("9702");
+        }
+    }
+    quote
+}
 fn provider(w: Arc<World>) -> Server {
     serve(move |request| {
         let line = request.lines().next().unwrap();
@@ -170,13 +255,64 @@ fn provider(w: Arc<World>) -> Server {
         } else if line.contains("/quote?") {
             assert!(!w.mined.load(Ordering::SeqCst));
             w.phases.lock().unwrap().push("pre_quote");
-            (200, json!({"code":"0","data":[quoted()]}))
+            (
+                200,
+                json!({"code":"0","data":[taxed_quote(&w,quoted(),false)]}),
+            )
         } else if line.contains("/swap?") {
             assert!(w.before >= AMOUNT || w.mined.load(Ordering::SeqCst));
             w.phases.lock().unwrap().push("swap_quote");
             let mut r = response();
-            if w.mode == "bad-fresh-quote" {
-                r["data"][0]["tx"]["minReceiveAmount"] = json!("1");
+            r["data"][0]["routerResult"] =
+                taxed_quote(&w, r["data"][0]["routerResult"].clone(), true);
+            if matches!(
+                w.mode,
+                "tax-output" | "tax-both" | "tax-output-v2" | "tax-output-fot"
+            ) {
+                r["data"][0]["tx"]["minReceiveAmount"] = json!("9605");
+            }
+            if matches!(w.mode, "tax-output-v2" | "tax-output-fot") {
+                let word = |raw: &str| format!("{raw:0>64}");
+                let selector = if w.mode == "tax-output-fot" {
+                    "0x5c11d795"
+                } else {
+                    "0x38ed1739"
+                };
+                r["data"][0]["tx"]["to"] = json!(SPENDER);
+                r["data"][0]["tx"]["data"] = json!(format!(
+                    "{selector}{}{}{}{}{}{}{}{}",
+                    word(&format!("{AMOUNT:x}")),
+                    word(&format!("{:x}", 9605)),
+                    word("a0"),
+                    word(&FROM[2..]),
+                    word("ffffffffffffffff"),
+                    word("2"),
+                    word(&INPUT[2..]),
+                    word(&OUTPUT[2..])
+                ));
+            }
+            match w.mode {
+                "bad-fresh-quote" => r["data"][0]["tx"]["minReceiveAmount"] = json!("1"),
+                "minimum-missing" => {
+                    r["data"][0]["tx"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("minReceiveAmount");
+                }
+                "minimum-zero" | "minimum-zero-rounded-floor" => {
+                    r["data"][0]["tx"]["minReceiveAmount"] = json!("0");
+                    if w.mode == "minimum-zero-rounded-floor" {
+                        r["data"][0]["routerResult"]["toTokenAmount"] = json!("1");
+                    }
+                }
+                "lower-fresh-output" => {
+                    r["data"][0]["routerResult"]["toTokenAmount"] = json!("9000");
+                    r["data"][0]["tx"]["minReceiveAmount"] = json!("8910");
+                }
+                "minimum-below-slippage" => r["data"][0]["tx"]["minReceiveAmount"] = json!("9800"),
+                "minimum-above-output" => r["data"][0]["tx"]["minReceiveAmount"] = json!("9901"),
+                "minimum-malformed" => r["data"][0]["tx"]["minReceiveAmount"] = json!("1e4"),
+                _ => {}
             }
             (200, r)
         } else {

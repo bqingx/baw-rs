@@ -2,8 +2,8 @@
 
 参数由 `cli-*.md` 的实际帮助给出；先选好 `$B/$WALLET_DIR/$IDENTITY_FILE`，经 `terminal` 调用。
 以下用单钱包形式；具名钱包改用 `--wallet NAME <业务参数>`（如
-`--registry R --wallet alice wallet status`）。旧形式 `vaults --registry R run NAME -- <业务参数>` 仍可用，
-但不要与新形式混写选择器。
+`--registry R --wallet alice wallet status`）。旧 `vaults ... run` 入口已移除，请使用当前 `--wallet` 入口，
+不要混写钱包选择器。
 
 ## 登录与退出
 
@@ -39,9 +39,9 @@
 
 1. 明确链、完整 fromToken/toToken、支付数量；按 [tokens-and-units.md](tokens-and-units.md) 检查单位。
 2. 先读 quote。准备阶段做代币审计；审计不可用就说明并等用户选择，不能把风险确认旗标当作审计通过。
-3. 明确 slippage（帮助默认 auto，非固定20%）、MEV、gasLevel；不要擅自增大滑点或关闭保护。
+3. 显式确认 OKX slippage（无 auto 默认）和输入精度；固定输出底线 `--okx-min-output-units` 可选，默认 `None`，不补 0/1 wei。执行/触发使用 fresh route 的 `minReceiveAmount`，必须存在且 >0、>= 当次 quote 按用户 slippage 计算的 floor、<= quoted output；显式 `Some` 仍额外严格约束固定底线，独立模拟的钱包净到账必须 >= reported minimum。不采用准备期旧 quote floor，不本地解码 calldata，也不称链上独立保底。当前合约路径不提供 MEV/Gas 价格控制，明确选择 mev=false，不擅自降级、提高滑点或税率上限。`None` / `Some` 连同完整 args 绑定意图/准备，已有显式任务、授权和截止不变，不自动升级或重放。
 4. 获授权后 swap；非本地已审计目标可能要求 `--acknowledge-token-risk`。明确说明该标志仅风险接受。
-5. `market-order list` 按返回的 orderId 查状态，直到终态或任务超时；超时报告待确认，不默认成功/重新买。
+5. `market-order list` 已不支持；按 txHash、`wallet tx-history` 与规范回执对账。只有 orderId 时不能假定已成功，也不能盲目重买。
 6. 用户带价格/时间/状态条件时保留条件；本构建没有限价单入口，不支持该条件就停，不把无法满足的条件兜底为立刻 swap。
 7. RWA 同名不同提供方/后缀不能混淆；先确认资产身份再查询，休市/不支持等以真实接口为准。
 
@@ -50,8 +50,8 @@
 **授权**：list/detail 先展示链、token、spender、额度；revoke 前确认。卖出合约代币可能先需要 approve，
 只给已复核 spender 和需要的额度，不因一次卖出默认无限授权。approve receipt 成功后重新报价/预览卖单。
 
-需要链上事件驱动的自动动作时，用 `--wallet NAME task`（见 [native-event-tasks.md](native-event-tasks.md)）：
-事件命中后执行的是已授权的固定合约调用，不是“看榜单自动交易”。
+需要条件触发的自动动作时，用不带 --wallet 的实例级 `pipeline` / `task`（见 [pipelines.md](pipelines.md)）。
+配置中列出钱包与动作，先 load，再明确授权 arm；旧钱包级任务与 typed 协议已删除。
 
 ## 写入后对账
 
@@ -68,3 +68,5 @@ baw-rs --wallet alice wallet operation --list --json
 - `retrySafe` 恒为 `false`：日志只能证明“可能已提交”，不能证明“没提交”。
 
 该命令只读本地文件，不需要联网；未登录也能查，适合钱包会话过期或服务停止后的事故排查。
+
+流水线故障先 `pipeline reconcile ID` 只读核验，再在未知/失败已解决且原截止有效时 `pipeline resume ID --confirm`。恢复不重发 Submitted/Confirmed，不续期，不沿用变化后的钱包身份。

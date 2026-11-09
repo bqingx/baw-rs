@@ -21,19 +21,15 @@ use tokio::{
     net::{UnixListener, UnixStream},
     sync::{Mutex, Notify, RwLock, Semaphore},
 };
-#[path = "executor.rs"]
-mod executor;
+#[path = "task_runtime.rs"]
+mod task_runtime;
 #[cfg(test)]
 #[path = "resident_tests.rs"]
 mod tests;
-pub use executor::Call;
-#[path = "native_events.rs"]
-pub(crate) mod native_events;
-#[path = "native_shared.rs"]
-mod native_shared;
-#[cfg(test)]
-#[path = "native_events_tests.rs"]
-mod native_events_tests;
+pub(crate) use task_runtime::describe_definition;
+pub use task_runtime::Control as PipelineControl;
+#[path = "overview.rs"]
+mod overview;
 const MAX_FRAME: usize = 65536;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 const FRAME_TIMEOUT: Duration = Duration::from_secs(3);
@@ -68,38 +64,11 @@ fn file_stamp(path: &Path) -> Option<Stamp> {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Request {
-    Run {
-        name: String,
-        argv: Vec<String>,
-    },
-    Ping {
-        id: String,
-    },
-    Prepare {
-        id: String,
-        name: String,
-        operation_id: String,
-        deadline_ms: u64,
-        call: Call,
-        policy: Option<Value>,
-    },
-    Disarm {
-        id: String,
-        name: String,
-        operation_id: String,
-    },
-    Trigger {
-        id: String,
-        name: String,
-        operation_id: String,
-        confirm: bool,
-    },
-    Native {
-        id: String,
-        name: String,
-        command: native_events::Control,
-    },
+    Run { name: String, argv: Vec<String> },
+    Ping { id: String },
+    Pipeline { command: PipelineControl },
     Status,
+    Overview { refresh: bool },
     Stop,
 }
 struct State {
@@ -114,21 +83,28 @@ struct State {
 pub(crate) struct Wallet {
     entry: Entry,
     state: Mutex<State>,
-    tasks: Mutex<executor::Book>,
-    native: Mutex<native_events::Book>,
-    native_reserved: std::sync::atomic::AtomicBool,
-    native_invalid: std::sync::atomic::AtomicBool,
-    native_stopping: std::sync::atomic::AtomicBool,
-    /// Set exactly when every pre-execute gate has passed and the execute POST is next.
-    native_submitted: std::sync::atomic::AtomicBool,
     _lease: File,
-    /// Shared listeners, keyed by source fingerprint. Different wallets running the same task
-    /// shape use one WS connection and one poll loop.
-    feeds: std::sync::OnceLock<Arc<native_events::Feeds>>,
     consumed: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     inline_identity: Option<zeroize::Zeroizing<String>>,
     #[cfg(test)]
     origin: Option<String>,
+}
+enum WalletRequest<'a> {
+    Owned(Box<Cli>),
+    Compiled(&'a Cli),
+}
+impl WalletRequest<'_> {
+    fn cli(&self) -> &Cli {
+        match self {
+            Self::Owned(cli) => cli,
+            Self::Compiled(cli) => cli,
+        }
+    }
+    fn bind_instance(&mut self, instance: &str) {
+        if let Self::Owned(cli) = self {
+            cli.instance_id = instance.to_owned();
+        }
+    }
 }
 impl Wallet {
     pub(crate) fn new(entry: Entry) -> Result<Self, String> {
@@ -146,25 +122,11 @@ impl Wallet {
                 identity_stamp: None,
             }),
             _lease: lease,
-            feeds: std::sync::OnceLock::new(),
-            tasks: Mutex::new(executor::Book::default()),
-            native: Mutex::new(native_events::Book::default()),
-            native_reserved: std::sync::atomic::AtomicBool::new(false),
-            native_invalid: std::sync::atomic::AtomicBool::new(true),
-            native_stopping: std::sync::atomic::AtomicBool::new(false),
-            native_submitted: std::sync::atomic::AtomicBool::new(false),
             consumed: Default::default(),
             inline_identity: None,
             #[cfg(test)]
             origin: None,
         })
-    }
-    /// Shared listener registry. One is created per wallet when no daemon-wide registry was
-    /// installed, so a single-wallet process behaves exactly as before.
-    fn feeds(&self) -> Arc<native_events::Feeds> {
-        self.feeds
-            .get_or_init(native_events::Feeds::new)
-            .clone()
     }
     fn build(&self, c: session::Credentials) -> Result<Client, String> {
         #[cfg(test)]
@@ -173,7 +135,106 @@ impl Wallet {
         }
         Client::new(c)
     }
-    async fn execute(&self, argv: Vec<String>) -> Result<Value, String> {
+    /// Shared read path for receipt reconciliation, independent of legacy task books.
+    async fn chain_address(&self, chain: &str) -> Result<String, String> {
+        self.preload().await?;
+        let binding = self.pipeline_binding()?;
+        let mut state = self.state.lock().await;
+        if self.pipeline_binding()? != binding {
+            return Err("wallet changed before address query".into());
+        }
+        let data = state
+            .client
+            .as_mut()
+            .ok_or("wallet client unavailable")?
+            .cached_addresses()
+            .await?;
+        if self.pipeline_binding()? != binding {
+            return Err("wallet changed during address query".into());
+        }
+        data["addresses"]
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["binanceChainId"].as_str() == Some(chain))
+            })
+            .and_then(|row| row["address"].as_str())
+            .map(String::from)
+            .ok_or_else(|| format!("wallet has no address on chain {chain}"))
+    }
+
+    /// Bind task consent to the registered directory, session and identity, without
+    /// persisting credentials. Re-authentication requires a new reviewed task.
+    fn pipeline_binding(&self) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        self.entry.check()?;
+        let session = session_stamp(&self.entry.dir).ok_or("wallet session missing or unsafe")?;
+        let identity = if self.inline_identity.is_some() {
+            None
+        } else {
+            Some(file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?)
+        };
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&(self.entry.device, self.entry.inode, session, identity))
+                    .map_err(|_| "cannot bind wallet identity")?
+            )
+        ))
+    }
+
+    /// Local-only session preparation, before a task starts waiting for its trigger.
+    async fn preload(&self) -> Result<(), String> {
+        self.entry.check()?;
+        let mut state = self.state.lock().await;
+        let stamp = session_stamp(&self.entry.dir).ok_or("wallet session missing or unsafe")?;
+        let identity_stamp = if self.inline_identity.is_some() {
+            None
+        } else {
+            Some(file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?)
+        };
+        if state.client.is_some()
+            && state.stamp == Some(stamp)
+            && state.identity_stamp == identity_stamp
+        {
+            return Ok(());
+        }
+        let entry = self.entry.clone();
+        let inline = self.inline_identity.clone();
+        let (instance, credentials) = tokio::task::spawn_blocking(move || {
+            entry.check()?;
+            let instance = match inline {
+                Some(value) => value.to_string(),
+                None => session::resolve_instance(String::new(), Some(&entry.instance_file))?,
+            };
+            let credentials = session::load(&entry.dir, &instance)?;
+            Ok::<_, String>((instance, credentials))
+        })
+        .await
+        .map_err(|_| "wallet preload worker failed")??;
+        if credentials.session_id.is_empty() {
+            return Err("wallet session missing".into());
+        }
+        if session_stamp(&self.entry.dir) != Some(stamp)
+            || (self.inline_identity.is_none()
+                && file_stamp(&self.entry.instance_file) != identity_stamp)
+        {
+            return Err("wallet identity/session changed during preparation".into());
+        }
+        let mut client = self.build(session::Credentials {
+            client_id: credentials.client_id.clone(),
+            session_id: credentials.session_id.clone(),
+        })?;
+        client.payment_consumed = self.consumed.clone();
+        state.client = Some(client);
+        state.persisted = Some(credentials);
+        state.instance = Some(instance);
+        state.stamp = Some(stamp);
+        state.identity_stamp = identity_stamp;
+        Ok(())
+    }
+
+    fn compile(&self, argv: Vec<String>) -> Result<Cli, String> {
         validate_argv(&argv)?;
         let mut full = vec![
             "baw-rs".to_owned(),
@@ -183,19 +244,44 @@ impl Wallet {
             "daemon-placeholder".into(),
         ];
         full.extend(argv);
-        let mut cli = Cli::try_parse_from(full).map_err(|_| "invalid daemon command")?;
+        let cli = Cli::try_parse_from(full).map_err(|_| "invalid daemon command")?;
         if matches!(cli.command, Command::Serve) {
             return Err("control commands are not allowed over daemon IPC".into());
         }
         crate::dispatch::preflight(&cli)?;
-        self.check_reservation()?;
+        Ok(cli)
+    }
+    async fn execute(&self, argv: Vec<String>) -> Result<Value, String> {
+        self.execute_request(WalletRequest::Owned(Box::new(self.compile(argv)?)))
+            .await
+    }
+    async fn execute_compiled(&self, cli: &Cli) -> Result<Value, String> {
+        if cli.wallet_dir.as_deref() != Some(self.entry.dir.as_path())
+            || cli.skip_prechecks
+            || !matches!(
+                &cli.command,
+                Command::ContractCall {
+                    command: crate::signing::ContractCommand::Fire(_)
+                } | Command::MarketOrder {
+                    command: crate::trade::MarketCommand::Swap(_)
+                }
+            )
+        {
+            return Err(
+                "compiled task plan is not bound to this wallet or supported action".into(),
+            );
+        }
+        self.execute_request(WalletRequest::Compiled(cli)).await
+    }
+    async fn execute_request(&self, mut request: WalletRequest<'_>) -> Result<Value, String> {
+        crate::task_timing::wallet_queue_entered();
         let mut state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
             .await
             .map_err(|_| "selected wallet busy; request not executed")?;
-        self.check_reservation()?;
+        crate::task_timing::wallet_lock_acquired();
         let entry = self.entry.clone();
         let inline = self.inline_identity.clone();
-        let auth_command = match &cli.command {
+        let auth_command = match &request.cli().command {
             Command::Auth { command } => Some(command.clone()),
             _ => None,
         };
@@ -222,13 +308,16 @@ impl Wallet {
         {
             let instance = state
                 .instance
-                .clone()
+                .as_deref()
                 .ok_or("wallet instance unavailable in resident state")?;
-            cli.instance_id = instance;
+            request.bind_instance(instance);
             let mut client = state.client.take().ok_or("wallet client unavailable")?;
-            let result =
-                tokio::time::timeout(COMMAND_TIMEOUT, crate::dispatch::execute(&mut client, &cli))
-                    .await;
+            crate::task_timing::dispatch_started();
+            let result = tokio::time::timeout(
+                COMMAND_TIMEOUT,
+                crate::dispatch::execute(&mut client, request.cli()),
+            )
+            .await;
             // Same rule as the slow path: an uncertain outcome drops the client instead of
             // retaining a possibly rotated cookie, and forces the next request to reload.
             if result.is_ok() {
@@ -263,7 +352,7 @@ impl Wallet {
                 return Err(e);
             }
         };
-        cli.instance_id = instance;
+        request.bind_instance(&instance);
         let changed = state.persisted.as_ref().is_none_or(|old| {
             old.client_id != credentials.client_id || old.session_id != credentials.session_id
         });
@@ -275,37 +364,24 @@ impl Wallet {
             client.payment_consumed = self.consumed.clone();
             state.client = Some(client);
         }
-        state.instance = Some(cli.instance_id.clone());
+        state.instance = Some(instance);
         state.stamp = stamp;
         state.identity_stamp = identity_stamp;
         state.persisted = Some(credentials);
         // Take ownership: cancellation must drop, not retain, an uncertain in-memory cookie.
         let mut client = state.client.take().ok_or("wallet client unavailable")?;
-        let result =
-            tokio::time::timeout(COMMAND_TIMEOUT, crate::dispatch::execute(&mut client, &cli))
-                .await;
+        crate::task_timing::dispatch_started();
+        let result = tokio::time::timeout(
+            COMMAND_TIMEOUT,
+            crate::dispatch::execute(&mut client, request.cli()),
+        )
+        .await;
         if auth {
             state.persisted = None;
         } else if result.is_ok() {
             state.client = Some(client);
         }
         result.map_err(|_|"command timed out; mutation outcome uncertain; inspect operation journal before retry".to_owned())?
-    }
-    fn check_reservation(&self) -> Result<(), String> {
-        if self
-            .native_reserved
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            return Err("BUSY; wallet reserved by native event task".into());
-        }
-        let mut book = self
-            .tasks
-            .try_lock()
-            .map_err(|_| "BUSY; wallet preparing or executing")?;
-        if book.reserved() {
-            return Err("BUSY; wallet reserved by prepared task".into());
-        }
-        Ok(())
     }
 }
 fn validate_argv(argv: &[String]) -> Result<(), String> {
@@ -439,55 +515,6 @@ async fn serve_inner(
     serve_listener(listener, Arc::new(RwLock::new(wallets)), registry).await
 }
 
-/// Route a `task` control command: a shared task fans out to its members, everything else goes to
-/// the wallet named on the command line. The controlling wallet must be a member, so a mistyped
-/// `--wallet` cannot silently control a group it is not part of.
-async fn shared_or_wallet(
-    wallets: &RwLock<BTreeMap<String, Arc<Wallet>>>,
-    registry: Option<&std::path::PathBuf>,
-    members: &native_shared::Members,
-    name: &str,
-    command: native_events::Control,
-) -> Result<Value, String> {
-    use native_events::Control;
-    match command {
-        Control::Load { config } => {
-            let shared = config
-                .get("wallets")
-                .and_then(Value::as_array)
-                .is_some_and(|list| !list.is_empty());
-            if shared {
-                return native_shared::load(wallets, registry, name, config, members).await;
-            }
-            let wallet = wallet_for(wallets, name, registry).await?;
-            wallet.native_control(Control::Load { config }).await
-        }
-        Control::Arm { task_id, confirm } => {
-            if native_shared::is_member(members, &task_id, name) {
-                return native_shared::arm(wallets, registry, &task_id, confirm, members).await;
-            }
-            let wallet = wallet_for(wallets, name, registry).await?;
-            wallet.native_control(Control::Arm { task_id, confirm }).await
-        }
-        Control::Status {} => {
-            match native_shared::task_of(members, name) {
-                Some(task_id) => native_shared::status(wallets, registry, &task_id, members).await,
-                None => {
-                    let wallet = wallet_for(wallets, name, registry).await?;
-                    wallet.native_control(Control::Status {}).await
-                }
-            }
-        }
-        Control::Disarm { task_id } => {
-            if native_shared::is_member(members, &task_id, name) {
-                return native_shared::disarm(wallets, registry, &task_id, members).await;
-            }
-            let wallet = wallet_for(wallets, name, registry).await?;
-            wallet.native_control(Control::Disarm { task_id }).await
-        }
-    }
-}
-
 /// Resolve a wallet for one request, re-reading the registry when the name is not loaded yet.
 ///
 /// A wallet added with `wallets add` while the daemon runs is picked up on first use instead of
@@ -519,7 +546,7 @@ pub(super) async fn wallet_for(
 pub(super) struct Daemon {
     pub(super) wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
     pub(super) registry: Option<std::path::PathBuf>,
-    pub(super) members: Arc<native_shared::Members>,
+    scheduler: Arc<task_runtime::Scheduler>,
 }
 
 async fn serve_listener(
@@ -531,7 +558,7 @@ async fn serve_listener(
         // Cloned, not moved: shutdown still walks the wallet set directly.
         wallets: wallets.clone(),
         registry,
-        members: Arc::new(native_shared::new_members()),
+        scheduler: Arc::new(task_runtime::Scheduler::default()),
     });
     let stop = Arc::new(Notify::new());
     let (shutdown, _) = tokio::sync::watch::channel(false);
@@ -551,17 +578,11 @@ async fn serve_listener(
             }
         }
     }
-    // Do not cancel submitted mutations on a graceful stop. Idle reads are bounded.
+    // Stop pending pipeline work and drain admitted wallet requests before exit.
     drop(listener);
     shutdown.send_replace(true);
-    let all = wallets.read().await.values().cloned().collect::<Vec<_>>();
-    for wallet in &all {
-        wallet.native_stop().await;
-    }
+    daemon.scheduler.stop().await;
     while tasks.join_next().await.is_some() {}
-    for wallet in &all {
-        wallet.native_drain().await;
-    }
     Ok(json!({"status":"stopped"}))
 }
 async fn handle(
@@ -575,7 +596,6 @@ async fn handle(
     // Cheap clones: the body refers to these by name throughout.
     let wallets = daemon.wallets.clone();
     let registry = daemon.registry.clone();
-    let members = daemon.members.clone();
     let mut shutdown_rx = shutdown.subscribe();
     let mut legacy_permit = Some(permit);
     let mut persistent_permit = None;
@@ -601,13 +621,7 @@ async fn handle(
             Err(_) => Err("IPC read timeout".into()),
         };
         let id = match &request {
-            Ok(
-                Request::Ping { id }
-                | Request::Prepare { id, .. }
-                | Request::Disarm { id, .. }
-                | Request::Trigger { id, .. }
-                | Request::Native { id, .. },
-            ) => Some(id.clone()),
+            Ok(Request::Ping { id }) => Some(id.clone()),
             _ => None,
         };
         let persistent = id.is_some();
@@ -633,50 +647,17 @@ async fn handle(
         }
         let mut stopping = false;
         let result = match request {
-            Ok(Request::Native { name, command, .. }) => {
-                shared_or_wallet(&wallets, registry.as_ref(), &members, &name, command).await
+            Ok(Request::Pipeline { command }) => {
+                daemon.scheduler.control(daemon.clone(), command).await
             }
             Ok(Request::Ping { .. }) => Ok(json!({"status":"ready"})),
-            Ok(Request::Trigger {
-                name,
-                operation_id,
-                confirm,
-                ..
-            }) => match wallet_for(&wallets, &name, registry.as_ref()).await {
-                Ok(wallet) => wallet.trigger_task(&operation_id, confirm, received).await,
-                Err(error) => Err(error),
-            },
-            Ok(Request::Prepare {
-                name,
-                operation_id,
-                deadline_ms,
-                call,
-                policy,
-                ..
-            }) => match wallet_for(&wallets, &name, registry.as_ref()).await {
-                Ok(wallet) => {
-                    wallet
-                        .prepare_task(operation_id, deadline_ms, call, policy)
-                        .await
-                }
-                Err(error) => Err(error),
-            },
-            Ok(Request::Disarm {
-                name, operation_id, ..
-            }) => match wallet_for(&wallets, &name, registry.as_ref()).await {
-                Ok(wallet) => wallet.disarm_task(&operation_id).await,
-                Err(error) => Err(error),
-            },
             Err(e) => Err(e),
             Ok(Request::Status) => Ok({
                 let names = wallets.read().await.keys().cloned().collect::<Vec<_>>();
-                json!({"status":"running","wallets":names,"registry":registry,"hotReload":registry.is_some(),"pid":std::process::id()})
+                json!({"status":"running","wallets":names,"registry":registry,"hotReload":registry.is_some(),"pid":std::process::id(),"notifications":daemon.scheduler.notification_status()})
             }),
+            Ok(Request::Overview { refresh }) => overview::run(&daemon, refresh).await,
             Ok(Request::Stop) => {
-                let all = wallets.read().await.values().cloned().collect::<Vec<_>>();
-                for wallet in &all {
-                    wallet.native_stop().await;
-                }
                 shutdown.send_replace(true);
                 stop.notify_one();
                 stopping = true;
@@ -684,7 +665,13 @@ async fn handle(
             }
             Ok(Request::Run { name, argv }) => {
                 match wallet_for(&wallets, &name, registry.as_ref()).await {
-                    Ok(wallet) => wallet.execute(argv).await,
+                    Ok(wallet) => {
+                        crate::execution::rpc_scope(
+                            daemon.scheduler.rpc.clone(),
+                            wallet.execute(argv),
+                        )
+                        .await
+                    }
                     Err(error) => Err(error),
                 }
             }

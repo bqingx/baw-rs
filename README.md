@@ -1,251 +1,159 @@
 # baw-rs
 
-**Rust 原生实现的币安 Agentic Wallet 客户端：全命令覆盖、原生多钱包、默认拒绝（fail-closed）。**
+Rust 原生的多钱包执行客户端：**OKX 构造交易，币安钱包签名/广播，实例级 Task 与流水线调度**。
 
-面向需要在 Linux 上脚本化操作币安 Web3 钱包的人。官方 `baw` 由 Node 实现，本项目用 Rust 从零重写同一套
-协议：命令面与官方 1.12.0 对齐，并补上了官方没有的多钱包后台与常驻服务。
+> 非官方项目，与 Binance 无隶属关系。涉及真实资金；单钱包事件 Task 的旧授权时序及监听前精确授权时序均已各成功验收一次，不代表全部验收。最新“三次核心 HTTP”版也已完成一次明确授权的事件兑换，钱包执行阶段约 950 ms、币安状态读取 0；这不等于完整事件到上链耗时或稳定延迟保证。
 
-> ⚠️ **非官方项目**，与 Binance 无隶属关系，协议通过逆向已安装的 npm 包还原。
-> 涉及真实资金，使用前请读[安全模型](#安全模型)与[项目状态](#项目状态)。
+## 核心能力
 
-## 目录
+- 多个具名钱包独立登录、独立会话/client/执行队列，不同钱包互不使用全局交易锁。
+- 交易仅走 OKX V6 聚合器；输入精度、显式滑点、固定 router/spender、fresh route 最低值及模拟资产变化检查；额外绝对输出底线可选，不从准备期报价冻结。
+- 显式精确自动授权：Task 在监听前查额度、必要时授权，只等首个成功回执，不额外等两确认/复读额度；触发后不查额度或补授权。独立 swap 保留原确认/复核流程；未知结果停止。
+- 合约 `preview → execute` 分步审核，或明确授权的 `fire` 一次完成必要预览与执行。
+- 一个 task 包含多个钱包的动作，支持时间、区块、已出块日志触发；步骤内并行、流水线按完成条件推进。
+- Alchemy 接入全实例一个按需 WSS actor：订阅、读取、回执和自动授权共用连接；无 HTTP 回退。
+- 持久防重、预览绑定、会话/身份绑定、截止时间与只读对账；显式恢复不重发、不续期。
+- [可选固定最低到账](docs/OPTIONAL-MINIMUM.md)：缺省按触发时 fresh route/滑点及模拟净额约束，不填 0/1 wei；显式固定值仍严格绑定，已有任务不改。本轮仅离线，未部署。
+- [状态总览与意图摘要](docs/INSPECTION.md)：wallets overview 默认本地，--refresh 显式查询且与 Task 准入隔离；market-order intent/pipeline describe 纯本地，不授予授权或期限。本轮仅离线，未部署。
+- [钱包在线接入修复](docs/HOT-ADD.md)：拆分生命周期/注册事务锁，真实 CLI 离线验证新增不重启；删除、重绑定与跨实例抢占仍拒绝。新锁协议须新版 CLI/daemon 配套。
+- [可选任务通知](docs/TASK-NOTIFICATIONS.md)：终态保存后独立发送，未知/App/失败/过期分开，持久去重，通知失败不影响交易。默认关闭，需显式私有 PushPlus 配置及渠道；本轮未部署或真实推送。
+- [单钱包离线故障验收](docs/SINGLE-WALLET-FAULTS.md)：回复丢失/超时、授权未知和真实 SIGKILL 重启/对账防重；修复 orderId 无 hash 被认定 Task 完成。仅模拟环境，未部署/新增真实交易。
+- [兼容壳清理](docs/COMPAT-CLEANUP.md)：已删无效字段/命令及失效 provider，保留加密会话、终态历史核验与真实可用访问模式。最新清理仅离线验证，未切后台。
+- [统一 OKX calldata 策略](docs/CALLDATA-POLICY.md)：按用户接受的提供方信任模型删除本地 ABI/selector 解码，保留 envelope、固定路由/金额/模拟/防重，始终不声称本地证明链上接收方/最低值。最新改动仅离线验证，未切后台。
+- [通用带税币支持](docs/TAXED-TOKENS.md)：输入/输出税元数据上限分别显式设置，默认 0；不按币名适配，不扩大授权或滑点，以钱包模拟净额验证。最新功能仅离线验收，不保证动态税等任意合约。
+- 新增 [事件到执行时序](docs/EVENT-TIMING.md)：区分 WSS 缓冲、规范性读取、准入落盘、调度、钱包排队及动作请求；仅离线验收，不伪造历史/恢复起点，不增加请求或落盘。
+- Task 类型化执行计划、每钱包 OKX HTTP pool 复用及分段耗时/请求计数。新 OKX Task 触发后只做路由/Preview/Execute 三次核心 HTTP，状态检查前移且禁止 SDK 补查；本地 gate/模拟/防重及 WSS 事件/回执校验保留。准备及其他动作保留最多 3 秒读集。见 [三次调用约束](docs/THREE-CALL.md) 与 [热路径优化](docs/HOT-PATH.md)。
 
-- [特性](#特性)
-- [快速开始](#快速开始)
-- [多钱包](#多钱包一个后台管全部)
-- [安全模型](#安全模型)
-- [与官方 CLI 的关系](#与官方-cli-的关系)
-- [项目状态](#项目状态)
-- [文档](#文档)
-- [许可与免责](#许可与免责)
+不追求官方 CLI 全命令覆盖。当前有 51 条可见叶子命令；`task` 是 `pipeline` 的别名，`vaults` 是 `wallets` 的兼容别名，不是独立实现。
 
-## 特性
+## 构建
 
-| | |
-|---|---|
-| **命令面** | 47 条叶子命令：`auth`、`wallet`、`market-order`、`contract-call`、`sign-message`、`approvals`、`task`（事件任务）、`wallets`（钱包生命周期与控制面）、`cli-check`、`skill-check`、`serve`，另有独立入口 `openfour`（`quote-buy` / `encode-buy`） |
-| **交易** | 写操作要求显式授权；普通外部签名支持「预览 → 人工确认 → 执行」。`contract-call fire` 是显式授权的自动预览→执行，没有中途人工审核 |
-| **查询** | 余额、历史、额度、gas、授权（approvals）、Agent ID、会话到期时间 |
-| **多钱包** | 一个后台进程管理多个具名钱包，各自独立登录，可并行；钱包名是全局参数 `--wallet <NAME>` |
-| **常驻后台** | 复用会话和 HTTP Client：单钱包 `serve`（配 `--warm` 走本地 socket），多钱包 `wallets serve`，每笔不必重启进程。性能以同次调用计时与可复现测试为准，不宣称生产延迟下限 |
-
-## 可选 OKX 交易来源（Unreleased）
-
-`market-order quote / swap` 新增 `--provider binance|okx`，默认仍为币安原生接口；选择 OKX 时无失败回退。
-OKX 路径用 V6 聚合 API 获取报价/构造交易，再由显式选中的币安钱包预览、签署，保留确认与持久防重。
-必须指定私有配置、输入精度及显式滑点；兑换还要求固定 router/spender、绝对输出底线。
-自动授权默认关闭，可显式加 `--auto-approve`：不足才精确授权本次所需数量，等待确认、重读额度，再重新取价兑换；结果不确定即停。
-不透明聚合 calldata 默认拒绝，显式接受后仍需严格的模拟资产变化检查；模拟不等于链上最低输出证明。
-
-详细参数、配置、限制与离线测试见 [docs/OKX-TRADE.md](docs/OKX-TRADE.md)。本机新版已同步部署，真实OKX/默认币安只读报价及用户授权的BSC 1 USDT→BNB精确授权/兑换测试通过；不代表全部币种、链和路由都已验证。
-
-## 离线编码与低本地开销路径
-
-离线 `openfour encode-buy` 不联网、不需要会话：精确 uint256、必填绝对最低数量。
-只支持已知 BNB/WBNB options=0 模板；无 quote **不是百分比滑点保护**。
-日常多钱包继续使用 `--wallet <NAME>`。测试仅使用合成数据与本地 mock，不包含任何真实下单。
-
-通用 EVM 固定调用的低本地开销路径见 [typed resident 执行器](docs/resident-executor.md)：
-同用户持久 socket 的 `prepare → trigger / disarm`，固定参数、钱包预约、提交前截止时间和持久防重。
-这不是新增 CLI 子命令；代码接口不等于已部署或实盘验收。
-基准命令与指标口径见该文，本文不提供未经实测的加速数字。
-
-### 链上授权（`approvals approve`）
-
-`approvals` 除了查询与撤销，还能直接发 ERC-20 `approve(spender, amount)`：calldata 本地拼
-（`0x095ea7b3`），走与 `contract-call fire` 同一条「预览 → 执行」核心，不需要外部脚本或聚合器接口。
+Linux，Rust stable。仓库不携带预编译产物或钱包凭据。
 
 ```sh
-baw-rs --wallet w1 approvals approve --binanceChainId 56 \
-  --tokenContract <代币> --spender <被授权方> --amount <最小单位> \
-  --from <钱包地址> --confirm --operation-id approve-$(date +%s) --json
+cargo build --locked --release --bin baw-rs
+./target/release/baw-rs --version
+sha256sum target/release/baw-rs
 ```
 
-- `--amount` 收最小单位；`max`（uint256 最大值，即无限授权）**必须**再加 `--unlimited` 才放行
-- `--policy <文件>` 可选：钉住代币合约、value、选择器、calldata 摘要和 gas 上限，任一项不符即拒绝
-- 返回里带 `approval.unlimited` 与 `approval.policy`，便于事后核对
-- 授权有成本且长期有效，任务要花新代币前先核对额度，别在抢单窗口里现场 approve
+Release 使用优化、Thin LTO 和 strip；Debug 产物含调试信息，不能据其文件大小判断发行版大小或运行内存。
+版本号相同不代表构建相同，请同时核对哈希和命令帮助。
 
-自动触发合约调用见 [原生任务](docs/native-event-tasks.md)：常驻订阅 WS 已出块日志，或显式选择
-**待处理交易**，按发送方/目标/方法/静态参数匹配后执行任意已授权调用。
-**必须填写有效时长 `valid_for_ms`，从启用起算，无固定五分钟上限**；不再让用户填写截止日期。
-支持固定调用、受控字段绑定和触发后实时路由，无外部监听脚本依赖。旧日志版已实跑，
-本机新版已同步部署；本次未实测时长/pending任务触发，测试结果、节点可见性与断线限制见该文。
+## 钱包管理与登录
 
-## Agent Skill
-
-面向 AI Agent 的中文版操作技能：[`skills/baw-rs/SKILL.md`](skills/baw-rs/SKILL.md)。
-覆盖本仓库实际提供的 47 条叶子命令（已裁剪官方 baw 中的 DeFi、预测、跟踪、信号、榜单、限价与 x402 面），
-并记录 Rust 新增的多钱包、原生事件任务与离线编码路径。
-附实际 `--help` 参数快照、登录/交易/签名/对账流程和仅离线的校验工具，不携带任何登录态。
-
-```sh
-python3 tests/test_baw_skill.py --binary <VERIFIED_BINARY>
-```
-
-## 快速开始
-
-需要 Rust 稳定版工具链（开发时用 1.99.1）。**仓库不发布预编译二进制**——只有你自己构建的产物，
-哈希才可核对。
-
-```sh
-git clone https://github.com/bqingx/baw-rs.git
-cd baw-rs && cargo build --release     # 产物：target/release/baw-rs
-```
-
-### 1. 准备钱包目录与加密口令
-
-```sh
-umask 077
-mkdir -m 700 ~/.baw
-printf '%s' 'your-passphrase' > ~/.baw-instance.key   # 0600
-```
-
-这个口令文件是登录态的加密依据：**丢了会话就永久打不开**。详见[安全模型](#安全模型)。
-
-### 2. 登录
+优先使用已有钱包目录和身份文件，不覆盖、迁移或删除现有会话。以下新建命令仅用于用户明确需要的新钱包。
 
 ```sh
 B=./target/release/baw-rs
-W="--wallet-dir $HOME/.baw --instance-id-file $HOME/.baw-instance.key"
-
-$B $W --confirm --operation-id login-1 --json auth signin
-# → {"urlForWeb":"https://app.binance.com/uni-qr/xxxx","qrCodeId":"...","pairingCode":"abc123","expireAt":...}
-```
-
-把 `urlForWeb` 渲染成二维码（例如 `qrencode -o qr.png '<urlForWeb>'`）用手机确认，然后：
-
-```sh
-$B $W --confirm --operation-id login-2 --json auth verify --qrCodeId <上一步的 qrCodeId>
-```
-
-`verify` 每 2 秒轮询一次，最长 5 分钟。成功即完成落盘。
-
-### 3. 日常使用
-
-```sh
-$B $W --json wallet status      # CONNECTED / UNCONNECTED
-$B $W --json wallet address     # 多链地址
-$B $W --json wallet balance     # 全部链资产
-$B $W --json wallet settings    # 会话到期时间、日限额、开发者模式
-
-# 只询价，不下单
-$B $W --json market-order quote --binanceChainId 56 \
-   --fromToken <代币地址> --toToken <代币地址> --fromTokenQty 1
-```
-
-写操作（swap / 转账 / 签名执行 / signin / signout）**必须**同时给 `--confirm` 和唯一的 `--operation-id`：
-
-```sh
-$B $W --confirm --operation-id send-1 --json wallet send \
-   --binanceChainId 56 --tokenAddress <代币地址> --recipient <收款地址> --amount 0.01
-```
-
-## 多钱包：一个后台管全部
-
-钱包名是**全局参数**：每条钱包作用域命令都写 `--wallet <NAME>`；管理子命令 `wallets`
-（增删、列表、状态、常驻）**不需要**钱包名。一个进程管理多个命名钱包，**不**为每个钱包起子进程，
-也**不**调用官方 CLI。
-
-```sh
-B=./target/release/baw-rs
-R=$HOME/wallets/registry
-export BAW_RS_REGISTRY=$R      # 也可每次传全局 --registry
-
-# 生命周期：add 创建 0700 目录 + 0600 identity 并注册；已有目录用 register
-$B wallets add alice
-$B wallets add bob
+$B wallets add w1
+$B wallets add w2
 $B wallets list
-$B wallets serve               # 前台常驻，一个进程服务全部钱包
+$B wallets serve                # 前台常驻；在另一终端运行后续命令
 
-# 另开终端：每次必须写明钱包名，没有默认值、不回退
-$B --wallet alice wallet status
-$B --wallet bob wallet address
-$B --wallet alice auth signin --confirm --operation-id alice-signin-001
-$B --wallet alice task arm sell-1 --confirm      # 原生事件任务
-$B wallets status
-$B wallets remove bob                            # 默认保留数据；--delete-data --confirm 才删
-$B wallets stop
+$B --wallet w1 auth signin --confirm --operation-id signin-w1-001 --json
+# 用户按返回的 urlForWeb / 配对码在币安 App 确认，再使用原 qrCodeId：
+$B --wallet w1 auth verify --qrCodeId <QR_ID> --confirm --operation-id verify-w1-001 --json
+$B --wallet w1 wallet status --json
+$B --wallet w1 wallet address --json
 ```
 
-设计要点：
+每个钱包分别登录。registry 选择顺序为 `--registry`、`BAW_RS_REGISTRY`、`$HOME/wallets/registry`。
+钱包名写错、未注册、未登录直接报错，不回退到其他钱包。新增钱包可在首次使用时由 daemon 重新读取 registry。
 
-- **不同钱包并行**：各自独立的客户端、连接池、会话与队列；一个钱包等网络不阻塞另一个。
-- **同一钱包串行**：普通命令按钱包锁串行，写操作另有互斥锁与意图日志；typed 任务预约期间，
-  同钱包普通命令（包括查询）拒绝 BUSY，typed 锁争用不排队。持久连接内响应逐请求串行。
-- **绝不串号**：名字写错、未登录、目录被替换都直接报错；`--wallet` 模式里夹带
-  `--wallet-dir` / `--instance-id` / `--warm` 会被拒绝。
-- **注册表是启动快照**：运行期间不能修改，新增钱包需 `wallets stop` → `wallets add` → `wallets serve`。
-- **registry 位置**：全局 `--registry`，否则 `$BAW_RS_REGISTRY`，否则 `$HOME/wallets/registry`。
+已有目录通过 `wallets add NAME --wallet-dir ... --instance-id-file ...` 显式接入，保留原身份/会话；旧 register/run 和无效参数已删除，见 [清理范围](docs/COMPAT-CLEANUP.md)。普通单钱包目录/`serve --warm` 访问仍保留，不包含旧任务引擎。详见 [多钱包](docs/MULTIWALLET.md)、[登录](docs/AUTH.md)。
 
-兼容旧形式（语义不变，现役脚本可直接继续跑）：
+## OKX 报价与兑换
 
-- 传统单钱包：`--wallet-dir ... --instance-id-file ...`，`serve` 与 `--warm` 仍走
-  `<wallet-dir>/.baw-rs.sock`。
-- 旧命名形式：`vaults --registry R run NAME -- <命令>`；`vaults` 是 `wallets` 的隐藏别名，
-  `register`、`run`、`task NAME` 仍解析。
+完整配置、授权和保护边界见 [OKX-TRADE.md](docs/OKX-TRADE.md)。配置与凭据须在私有目录，不能放入 Git。
 
-完整语义见 [docs/MULTIWALLET.md](docs/MULTIWALLET.md)。
+```sh
+$B --wallet w1 market-order quote \
+  --okx-config /absolute/private/okx.json --binanceChainId 56 \
+  --fromToken <INPUT_TOKEN> --toToken <OUTPUT_TOKEN> \
+  --fromTokenQty 1 --fromTokenDecimals 18 --slippage 1 --json
+```
 
-## 安全模型
+兑换另需绝对最小输出、风险接受和明确写操作授权；需要时加 `--auto-approve`。默认且唯一 provider 是 OKX，`--provider binance` 拒绝，没有自动择优/失败回退。
 
-原则：**默认拒绝，出错就停，能少给的权限绝不多给。**
+**已接受的接口限制**：官方原生币安兑换有 MEV/Gas 档位选项，但 OKX calldata 使用的币安 `contract-call` 公开接口只暴露 `gasLimit`，不暴露 Gas 价格档位或保护广播参数。因此必须显式选择 `--mev false`；不支持的保护/费率请求明确拒绝，不能把 OKX 报价字段当最终广播保证。`gasLimit` 是执行用量上限，不是价格。
 
-- **口令即凭据**：登录态用 AES-256-GCM 加密，密钥只由固定口令经 PBKDF2-HMAC-SHA256（10 万轮）推导。
-  不读主机名、网卡、机器码、系统钥匙串或 TPM —— 所以目录可以整体搬到另一台机器，配同一口令即可解密。
-  代价是口令丢失即永久打不开，口令与 `session.json` 同时泄露即等于登录态泄露。推荐 `--instance-id-file`
-  而不是命令行明文（后者会进 `ps` 与 shell 历史）。
-- **写操作三重门**：`--confirm` + 一次性 `--operation-id` + 提交前的意图日志。用过的 ID 永久拒绝，
-  崩溃后也不复用。`RESPONSE_RECEIVED` 只代表拿到接口响应，**不代表成交**。
-- **签名钉住预览**：`contract-call execute` / `sign-message execute` 还需 `--accept-preview-sha256`，
-  把执行绑定在你确认过的那份预览上，且只能消费一次。
-- **默认校验发送方**：每次预览前都会核对 `--from` 与本钱包在该链上的真实地址，不一致直接报错不发请求。
-  显式传 `--skip-prechecks` 可移除这道检查（连同开发者模式检查）换取约 0.95 秒，此时 `--from` 必填，
-  写错地址由服务端报错 —— 这是本工具唯一一个「减少检查」的开关，默认关闭。
-- **文件与网络**：目录 0700、凭据文件 0600、禁符号链接、校验属主；接口域名写死，禁止重定向、代理和
-  任意 URL 覆盖。
-- **不确定就不重发**：传输层失败返回 `UNCERTAIN` / `retrySafe:false`，必须人工对账后再决定。
+## 合约调用
 
-## 与官方 CLI 的关系
+需要在币安 App 启用有效的 Developer Mode。value 使用最小单位 wei，不是人类可读代币数量。
 
-- 保留命令面的命令名、参数名、默认值按官方 `--help` 逐条对齐；官方完整帮助快照见
-  [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md)（其中已裁剪的命令仅作官方语法参考，本仓库不再实现）。
-- 两者互不干扰：官方用 `BINANCE_BAW_DIR` 与系统钥匙串，本项目只读自己指定目录下的文件。
-- 有意的行为差异（例如余额默认做 RWA 规范化、`settings` 返回无损结构、交易结果区分 SUBMITTED 与 FILLED）
-  记录在 [CHANGELOG.md](CHANGELOG.md) 与各 `docs/*.md`。
-- `--help` 清单覆盖**不等于**功能等价，也不等于已实盘验证；真实状态见下节。
+- 分步：`contract-call preview` 后审核内容，`execute --requestId ... --accept-preview-sha256 ...`。
+- 一步：已明确授权时 `contract-call fire`，仍进行必要预览、发送方/风险/策略检查。
+- 所有写操作要求 `--confirm`、唯一 `--operation-id`；不要重复使用或更换 ID 盲目重发同一意图。
+- 授权管理保留 `approvals list/detail/approve/revoke`；无限授权需要额外显式确认，不是默认行为。
 
-## 项目状态
+参数见实际 `--help` 与 [SIGNING.md](docs/SIGNING.md)。
 
-- **版本**：0.3.0，主要测试平台 Linux
-- **测试**：220 项通过、0 失败；另有 1 项本地基准默认忽略（离线：回环 HTTP fixture + 合成会话文件）
-- **实盘验证**：完成过一次真实二维码登录，并通过 `status` / `address` / `balance` / `left-quota` /
-  `settings` 只读查询（会话有效期实测 48 小时）
-- **未验证**：转账、swap、approvals 撤销、contract-call / sign-message 执行等**任何真实资金动作**。
-  这些路径目前只有离线测试覆盖；首次在真实账户上执行前请自行小额试跑
-- **可复现**：`sh scripts/verify.sh` 重跑 fmt / clippy / test / release 并重写 `verification/` 下的
-  日志与源码清单；多钱包专项证据在 `verification/multiwallet/`
+## Task 与流水线
 
-## 文档
+任务属于实例，不属于钱包。示例：
 
-| 文件 | 内容 |
-|---|---|
-| [docs/AUTH.md](docs/AUTH.md) | 登录、验证、登出与本地存储 |
-| [docs/SESSION-LIFECYCLE.md](docs/SESSION-LIFECYCLE.md) | 登录态从生成到失效的全过程 |
-| [docs/TRADE.md](docs/TRADE.md) | swap 与风控检查 |
-| [docs/SIGNING.md](docs/SIGNING.md) | 合约调用与消息签名的预览/执行绑定 |
-| [docs/PORTFOLIO.md](docs/PORTFOLIO.md) | 余额、历史与 RWA 规范化 |
-| [docs/MULTIWALLET.md](docs/MULTIWALLET.md) | 多钱包后台、IPC 与并发语义 |
-| [docs/resident-executor.md](docs/resident-executor.md) | 通用 EVM typed resident 协议、预约/期限/防重、离线基准 |
-| [docs/JS-CLI-PARITY.md](docs/JS-CLI-PARITY.md) | 官方 `baw` 帮助快照（含已裁剪命令的原始语法，仅作参考） |
-| [CHANGELOG.md](CHANGELOG.md) | 版本变更与已知缺口 |
+```text
+task1：w1、w2 并行
+       ↓ 全部达到完成条件
+task2：w2、w3 并行
+       ↓ 全部达到完成条件
+task3：w3、w4 并行
+```
 
-## 许可与免责
+```sh
+$B pipeline load --config /absolute/private/pipeline.json
+$B pipeline status <PIPELINE_ID>
+$B pipeline arm <PIPELINE_ID> --confirm
+$B pipeline cancel <PIPELINE_ID>
 
-本项目以 **MIT 许可证**发布，全文见 [LICENSE](LICENSE)。转载、修改、二次分发都可以，保留版权与许可声明即可。
+# task 是相同入口，不带 --wallet：
+$B task status <PIPELINE_ID>
 
-选择 MIT 而不是 AGPL 的理由：这个项目是钱包客户端，可能被改动后重新分发，任何许可证都挡不住有人拿它做坏事；
-能降低的是别人想读源码核对时的门槛。宽松许可让审计和复用没有摩擦，剩下的风险由上面的免责声明和三重门来承担。
+# 故障停止后先对账，再显式继续：
+$B pipeline reconcile <PIPELINE_ID>
+$B pipeline resume <PIPELINE_ID> --confirm
+```
 
-本项目为第三方实现，**不提供任何担保**。链上交易不可撤销，代币与合约可能包含恶意逻辑，钱包授权可能被
-滥用。是否使用、用到什么程度，以及由此产生的任何损失，由使用者自行承担。
+- 默认所有成员链上成功后推进；显式 `submitted` 模式不保证链上成功，也不是跨钱包原子交易。
+- 步骤须指定正数 `valid_for_ms`；已开始步骤的截止时间不因重启/恢复延长。
+- arm 预加载会话并绑定钱包身份，也可能立即执行已明确允许的精确授权。results.phase=WAITING 才是监听就绪；会话、身份或配置变化后不能沿用旧准备记录。
+- reconcile 只读取执行/本钱包日志中的 hash 与规范回执。resume 只执行 Pending；未知、失败、取消、过期或旧状态缺少绑定时拒绝。
+- 没有 hash、只有 order ID 时继续暂停，不能猜测没提交。目前没有无人值守自动重连/推进。
+- 一实例只接受一个活跃 RPC endpoint；不同端点/链的冲突明确报错。
+
+配置参考 [PIPELINES.md](docs/PIPELINES.md) 与 [合成三步示例](examples/pipeline-contract.json)。示例是占位数据，不能直接用于实盘。
+
+**旧接口迁移**：钱包级 `--wallet NAME task ...`、旧日志/pending 任务引擎，以及 typed `prepare/trigger/disarm/native` IPC 已删除，旧帧直接拒绝。不要用旧脚本绕回另一套执行路径。新系统目前支持已出块日志，不包含 pending 交易监听。
+
+## 安全边界
+
+- 会话 AES-256-GCM 加密；identity 是解密凭据，丢失后不能打开对应会话。不要同时泄露两者。
+- 私有目录 0700、文件 0600、属主/符号链接/硬链接检查；API origin 固定，限制重定向和代理。
+- 提交前持久记录意图；预览绑定执行。响应超时/未知不证明未提交，不自动重发。
+- `BROADCASTED`、`SUBMITTED`、接口受理均不等于链上成功，需按 hash/规范回执确认。
+- 断线、过载、日志缺口或不支持的请求明确停止。没有无限可靠/无限并发/不会重组的保证。
+- 本项目不是资金安全审计、投资建议或生产延迟承诺。
+
+## 验证与文档
+
+```sh
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets -- --test-threads=1
+python3 tests/test_baw_skill.py --binary target/release/baw-rs
+```
+
+旧功能随实现删除的专用测试不再计入；保留普通登录/签名/多钱包和新任务/恢复测试，并验证旧协议拒绝。
+
+- [重构进度](docs/REFACTOR-PLAN.md)
+- [本地基准与性能边界](docs/PERFORMANCE.md)：不包含网络、fsync 或链上耗时。
+- [OKX 配置与交易](docs/OKX-TRADE.md)
+- [余额与历史](docs/PORTFOLIO.md)
+- [会话生命周期](docs/SESSION-LIFECYCLE.md)
+- [Agent Skill](skills/baw-rs/SKILL.md)：实际帮助快照与中文版操作流程。
+
+已有 w1 登录、报价、RPC 检查和一次旧授权时序的真实单钱包事件兑换；新监听前准备时序、多钱包/多步骤与端到端延迟仍待验收。任何新的链上写操作或任务窗口需明确授权。构建不自动安装二进制、切换现役服务或改变登录态；当前修复见 [Release 检查点](docs/RELEASE-CHECKPOINT.md)。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。非 Binance 官方产品，不保证资金安全、收益、服务端可用性或协议长期兼容。

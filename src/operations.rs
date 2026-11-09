@@ -65,10 +65,7 @@ fn open_private_dir(path: &Path) -> Result<std::fs::File, String> {
     let meta = file
         .metadata()
         .map_err(|_| "cannot inspect wallet directory")?;
-    if !meta.is_dir()
-        || meta.uid() != unsafe { libc::geteuid() }
-        || meta.mode() & 0o7777 != 0o700
-    {
+    if !meta.is_dir() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o7777 != 0o700 {
         return Err("wallet directory must be owned and private (0700)".into());
     }
     Ok(file)
@@ -95,8 +92,7 @@ fn read_record(dir: &Path, id: &str) -> Result<Value, String> {
     if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o7777 != 0o700 {
         return Err("operation journal must be owned and private".into());
     }
-    let name =
-        std::ffi::CString::new(format!("{id}.json")).map_err(|_| "invalid operation-id")?;
+    let name = std::ffi::CString::new(format!("{id}.json")).map_err(|_| "invalid operation-id")?;
     let fd = unsafe {
         libc::openat(
             journal.as_raw_fd(),
@@ -127,6 +123,9 @@ fn read_record(dir: &Path, id: &str) -> Result<Value, String> {
     }
     let mut record: Value =
         serde_json::from_slice(&bytes).map_err(|_| "operation entry is not valid JSON")?;
+    if !record.is_object() {
+        return Err("operation entry must be a JSON object".into());
+    }
     let (state, retry_safe) = verdict(&record);
     record["verdict"] = json!(state);
     record["retrySafe"] = json!(retry_safe);
@@ -221,6 +220,20 @@ mod tests {
     }
 
     #[test]
+    fn non_object_journal_entries_are_errors_not_panics() {
+        let dir = wallet();
+        write(dir.path(), "invalid", "[]");
+        assert!(run(
+            dir.path(),
+            &OperationArgs {
+                id: Some("invalid".into()),
+                list: false
+            }
+        )
+        .is_err());
+    }
+
+    #[test]
     fn recovery_fields_survive_but_arbitrary_fields_are_not_invented() {
         let dir = wallet();
         write(
@@ -230,7 +243,10 @@ mod tests {
         );
         let record = read_record(dir.path(), "op-1").unwrap();
         assert_eq!(record["recovery"]["txHash"], "0xabc");
-        assert!(record["nextStep"].as_str().unwrap().contains("do not resubmit"));
+        assert!(record["nextStep"]
+            .as_str()
+            .unwrap()
+            .contains("do not resubmit"));
         assert!(record.get("private").is_none() || record["private"].is_null());
     }
 
@@ -260,9 +276,18 @@ mod tests {
     #[test]
     fn listing_and_lookup_are_mutually_exclusive() {
         let dir = wallet();
-        let both = OperationArgs { id: Some("a".into()), list: true };
-        let neither = OperationArgs { id: None, list: false };
-        let listing = OperationArgs { id: None, list: true };
+        let both = OperationArgs {
+            id: Some("a".into()),
+            list: true,
+        };
+        let neither = OperationArgs {
+            id: None,
+            list: false,
+        };
+        let listing = OperationArgs {
+            id: None,
+            list: true,
+        };
         assert!(run(dir.path(), &both).is_err());
         assert!(run(dir.path(), &neither).is_err());
         assert_eq!(run(dir.path(), &listing).unwrap()["count"], 0);

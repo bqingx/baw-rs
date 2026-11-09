@@ -22,6 +22,8 @@ fn recognizes_previously_missing_command_families() {
         vec![
             "market-order",
             "quote",
+            "--slippage",
+            "0.5",
             "--binanceChainId",
             "56",
             "--fromToken",
@@ -34,6 +36,10 @@ fn recognizes_previously_missing_command_families() {
         vec![
             "market-order",
             "swap",
+            "--slippage",
+            "0.5",
+            "--mev",
+            "false",
             "--binanceChainId",
             "56",
             "--fromToken",
@@ -43,7 +49,6 @@ fn recognizes_previously_missing_command_families() {
             "--fromTokenQty",
             "1",
         ],
-        vec!["market-order", "list"],
         vec![
             "wallet",
             "send",

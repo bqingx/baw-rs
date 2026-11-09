@@ -6,12 +6,12 @@ Native wallet client with explicit consent and preview-bound signing
 Usage: baw-rs [OPTIONS] <COMMAND>
 
 Commands:
-  task           Native event task control for the wallet named by --wallet
-  auth           
-  market-order   
-  contract-call  
-  sign-message   
-  wallet         
+  pipeline       Instance-owned multi-wallet tasks and sequential pipelines; no --wallet
+  auth
+  market-order
+  contract-call
+  sign-message
+  wallet
   approvals      Token approvals: list, detail, revoke
   cli-check      Check whether the installed CLI meets a required version
   skill-check    Check whether a skill has a newer version available
@@ -31,15 +31,15 @@ Options:
       --instance-id-file <PATH>
           Read the instance identity from a private (0600) file instead of the command line
       --json
-          
+
       --timing
-          
+
       --confirm
-          
+
       --operation-id <OPERATION_ID>
-          
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-          
+
       --warm
           Route this command through the resident warm server when it is running
       --skip-prechecks

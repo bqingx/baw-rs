@@ -78,10 +78,11 @@ fn nonempty(value: &str) -> Result<String, String> {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Native event task control for the wallet named by --wallet.
-    Task {
+    /// Instance-owned multi-wallet tasks and sequential pipelines; no --wallet.
+    #[command(alias = "task")]
+    Pipeline {
         #[command(subcommand)]
-        command: crate::wallets::TaskAction,
+        command: crate::wallets::PipelineAction,
     },
     Auth {
         #[command(subcommand)]
@@ -311,17 +312,9 @@ mod tests {
         assert!(legacy.wallet.is_none());
         assert_eq!(legacy.wallet_dir.as_deref(), Some(Path::new("/synthetic")));
 
-        // Task control is wallet-scoped at the top level.
-        let task = Cli::try_parse_from([
-            "baw-rs",
-            "--wallet",
-            "alice",
-            "task",
-            "arm",
-            "sell-1",
-            "--confirm",
-        ])
-        .unwrap();
-        assert!(matches!(task.command, Command::Task { .. }));
+        // `task` is an alias of the instance scheduler, never wallet-scoped.
+        let task = Cli::try_parse_from(["baw-rs", "task", "arm", "sell-1", "--confirm"]).unwrap();
+        assert!(matches!(task.command, Command::Pipeline { .. }));
+        assert!(task.wallet.is_none());
     }
 }

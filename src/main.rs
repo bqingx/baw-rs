@@ -62,17 +62,8 @@ fn emit(result: Result<Value, String>) -> io::Result<bool> {
 /// Named-wallet path: registry resolution, then one IPC request. There is no cold fallback,
 /// no second wallet, and no legacy selector is consulted.
 async fn named(cli: &Cli, raw: &[String], name: &str, registry: &Path) -> Result<Value, String> {
-    match &cli.command {
-        Command::Serve => {
-            return Err(
-                "`serve` is not a wallet-scoped command: use `baw-rs wallets serve` for the named registry, or drop --wallet to run the legacy single-wallet daemon"
-                    .into(),
-            )
-        }
-        Command::Task { command } => {
-            return wallets::dispatch_task(registry, name, command.clone()).await
-        }
-        _ => {}
+    if matches!(cli.command, Command::Serve) {
+        return Err("`serve` is not a wallet-scoped command: use `baw-rs wallets serve` for the named registry, or drop --wallet to run the legacy single-wallet daemon".into());
     }
     let argv = forward_argv(raw)?;
     let require_session = !matches!(cli.command, Command::Auth { .. });
@@ -103,7 +94,6 @@ async fn run() -> io::Result<bool> {
     let cli = match Cli::try_parse() {
         Ok(cli) => {
             baw_rs::signing::set_skip_prechecks_default(cli.skip_prechecks);
-            baw_rs::signing::apply_skip_prechecks(cli.skip_prechecks);
             cli
         }
         Err(error)
@@ -116,7 +106,12 @@ async fn run() -> io::Result<bool> {
             return Ok(true);
         }
         Err(_) => {
-            let message = if named_flag
+            let instance_task = raw
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "pipeline" | "task"));
+            let message = if instance_task {
+                "invalid instance task command; use `baw-rs pipeline --help` (status/arm/cancel/reconcile/resume require a pipeline ID; no --wallet)"
+            } else if named_flag
                 && raw
                     .iter()
                     .any(|a| baw_rs::openfour::NAMES.contains(&a.as_str()))
@@ -135,6 +130,13 @@ async fn run() -> io::Result<bool> {
             return emit(Err(message.into()));
         }
     };
+    // Intent is pure local inspection, even with wallet/warm selectors supplied.
+    // Do not resolve registries, identity files, sessions, or private OKX profiles.
+    if let Command::MarketOrder { command } = &cli.command {
+        if let Some(summary) = baw_rs::trade::local_summary(command) {
+            return emit(summary);
+        }
+    }
     let start = Instant::now();
 
     // Management namespace: wallet lifecycle and the daemon. It never needs a wallet and
@@ -151,6 +153,24 @@ async fn run() -> io::Result<bool> {
         };
         let result = wallets::run(action.action.clone(), registry).await;
         return emit(result);
+    }
+
+    if let Command::Pipeline { command } = &cli.command {
+        if cli.wallet.is_some()
+            || cli.wallet_dir.is_some()
+            || cli.instance_id_file.is_some()
+            || !cli.instance_id.is_empty()
+            || cli.warm
+        {
+            return emit(Err(
+                "pipeline is instance-scoped and rejects wallet selectors".into(),
+            ));
+        }
+        let registry = match wallets::registry_path(cli.registry.as_deref()) {
+            Ok(path) => path,
+            Err(error) => return emit(Err(error)),
+        };
+        return emit(wallets::dispatch_pipeline(&registry, command.clone(), cli.confirm).await);
     }
 
     // Named wallet: resolve against the registry and forward the rest to the daemon.

@@ -138,6 +138,7 @@ dependencies = [
  "clap",
  "fs2",
  "futures-util",
+ "hyper-util",
  "k256",
  "libc",
  "num-bigint",
@@ -150,6 +151,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "tower",
  "url",
  "zeroize",
 ]

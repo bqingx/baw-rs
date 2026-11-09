@@ -60,10 +60,20 @@ fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
 }
 /// Must run before loading any wallet/session files.
 pub fn preflight(cli: &Cli) -> Result<(), String> {
-    if matches!(&cli.command, Command::MarketOrder { command } if trade::provider(command) == trade::Provider::Okx)
-        && cli.skip_prechecks
-    {
-        return Err("OKX market-order does not allow --skip-prechecks".into());
+    if let Command::MarketOrder { command } = &cli.command {
+        if cli.skip_prechecks {
+            return Err("OKX market-order does not allow --skip-prechecks".into());
+        }
+        match command {
+            trade::MarketCommand::Intent(a) => {
+                trade::intent_summary(a)?;
+            }
+            trade::MarketCommand::Quote(a) => crate::okx_trade::validate_quote_options(a)?,
+            trade::MarketCommand::Swap(a) => {
+                crate::okx_trade::validate_quote_options(&a.quote)?;
+                crate::okx_trade::validate_swap_options(a)?;
+            }
+        }
     }
     let writes = matches!(
         &cli.command,
@@ -99,7 +109,24 @@ pub fn preflight(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
-    signing::request_precheck_policy(cli.skip_prechecks, execute_inner(client, cli)).await
+    if let Command::MarketOrder { command } = &cli.command {
+        if let Some(summary) = trade::local_summary(command) {
+            return summary;
+        }
+    }
+    client.end_policy_snapshot();
+    let task = crate::execution::in_task_scope() || crate::execution::task_allowance().is_some();
+    if task {
+        client.begin_policy_snapshot();
+    }
+    let mut result =
+        signing::request_precheck_policy(cli.skip_prechecks, execute_inner(client, cli)).await;
+    if let Some(stats) = client.end_policy_snapshot() {
+        if let Ok(Value::Object(output)) = &mut result {
+            output.insert("stateReadStats".into(), stats);
+        }
+    }
+    result
 }
 
 async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> {
@@ -157,10 +184,9 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         Command::CliCheck(args) => selfcheck::cli_check(client, args).await,
         Command::SkillCheck(args) => selfcheck::skill_check(client, args).await,
         Command::Wallet { command } => client.execute(command).await,
-        Command::MarketOrder { command } if trade::provider(command) == trade::Provider::Okx => {
+        Command::MarketOrder { command } => {
             crate::okx_trade::run(client, &wallet_dir, command, guard.as_mut()).await
         }
-        Command::MarketOrder { command } => trade::run(client, command).await,
         Command::ContractCall { command } => {
             signing::contract(
                 client,
@@ -179,8 +205,8 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
             )
             .await
         }
-        Command::Task { .. } | Command::Wallets(_) => {
-            Err("task and wallets control are handled before dispatch".into())
+        Command::Pipeline { .. } | Command::Wallets(_) => {
+            Err("pipeline and wallets control are handled before dispatch".into())
         }
         Command::Serve => Err("serve runs before dispatch".into()),
     };

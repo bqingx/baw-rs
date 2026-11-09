@@ -1,0 +1,40 @@
+{
+  "id": "three-tasks-example",
+  "chain_id": "56",
+  "rpc_url": "wss://YOUR_CHAIN.g.alchemy.com/v2/YOUR_KEY",
+  "steps": [
+    {
+      "task_id": "task1",
+      "trigger": {"kind": "immediate"},
+      "valid_for_ms": 60000,
+      "completion": "confirmed",
+      "confirmations": 1,
+      "actions": [
+        {"wallet": "w1", "argv": ["contract-call", "fire", "--binanceChainId", "56", "--from", "0x1111111111111111111111111111111111111111", "--to", "0x9999999999999999999999999999999999999999", "--value", "0", "--inputData", "0x12345678"]},
+        {"wallet": "w2", "argv": ["contract-call", "fire", "--binanceChainId", "56", "--from", "0x2222222222222222222222222222222222222222", "--to", "0x9999999999999999999999999999999999999999", "--value", "0", "--inputData", "0x12345678"]}
+      ]
+    },
+    {
+      "task_id": "task2",
+      "trigger": {"kind": "immediate"},
+      "valid_for_ms": 60000,
+      "completion": "confirmed",
+      "confirmations": 1,
+      "actions": [
+        {"wallet": "w2", "argv": ["contract-call", "fire", "--binanceChainId", "56", "--from", "0x2222222222222222222222222222222222222222", "--to", "0x9999999999999999999999999999999999999999", "--value", "0", "--inputData", "0x12345678"]},
+        {"wallet": "w3", "argv": ["contract-call", "fire", "--binanceChainId", "56", "--from", "0x3333333333333333333333333333333333333333", "--to", "0x9999999999999999999999999999999999999999", "--value", "0", "--inputData", "0x12345678"]}
+      ]
+    },
+    {
+      "task_id": "task3",
+      "trigger": {"kind": "immediate"},
+      "valid_for_ms": 60000,
+      "completion": "confirmed",
+      "confirmations": 1,
+      "actions": [
+        {"wallet": "w3", "argv": ["contract-call", "fire", "--binanceChainId", "56", "--from", "0x3333333333333333333333333333333333333333", "--to", "0x9999999999999999999999999999999999999999", "--value", "0", "--inputData", "0x12345678"]},
+        {"wallet": "w4", "argv": ["contract-call", "fire", "--binanceChainId", "56", "--from", "0x4444444444444444444444444444444444444444", "--to", "0x9999999999999999999999999999999999999999", "--value", "0", "--inputData", "0x12345678"]}
+      ]
+    }
+  ]
+}

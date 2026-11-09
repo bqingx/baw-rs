@@ -11,31 +11,31 @@ use std::time::Duration;
 const ORIGIN: &str = "https://www.binance.com";
 pub(crate) const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
+#[cfg(test)]
+#[path = "client_connection_tests.rs"]
+mod connection_tests;
+#[path = "policy_snapshot.rs"]
+mod policy_snapshot;
+#[cfg(test)]
+#[path = "client_policy_tests.rs"]
+mod policy_tests;
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct HttpTiming {
+    /// Static operation class, set only when send is about to be invoked; never a URL.
+    pub(crate) endpoint: Option<&'static str>,
     /// Local send-to-response-headers latency, NOT backend processing time.
     pub request_ms: Option<f64>,
     /// Response headers through bounded body drain and JSON decoding.
     pub body_ms: Option<f64>,
     /// Entire local HTTP invocation through body decode (including failures); not backend time.
     pub full_roundtrip_ms: Option<f64>,
-}
-#[derive(serde::Serialize)]
-pub(crate) struct HttpTrace {
-    #[serde(skip)]
-    received: std::time::Instant,
-    #[serde(skip)]
-    last_response: Option<std::time::Instant>,
-    first_request_gap_ms: Option<f64>,
-    network_wait_ms: f64,
-    response_to_next_request_ms: Vec<f64>,
-    requests: u64,
+    /// Transport-only evidence; never raw endpoints, socket addresses or credentials.
+    pub(crate) connection: Option<crate::http_observe::Observation>,
 }
 pub struct Client {
     pub(crate) last_http: HttpTiming,
-    trace: Option<HttpTrace>,
-    http: reqwest::Client,
+    http: crate::http_observe::Transport,
     origin: String,
     credentials: Credentials,
     invalidated: bool,
@@ -47,6 +47,8 @@ pub struct Client {
     /// and cleared outright whenever the session changes.
     settings_cache: Option<(std::time::Instant, Value)>,
     addresses_cache: Option<(std::time::Instant, Value)>,
+    policy_snapshot: Option<policy_snapshot::Snapshot>,
+    okx_http: Option<std::sync::Arc<crate::http_observe::Transport>>,
 }
 
 /// Freshness window for the pre-preview reads.
@@ -65,19 +67,6 @@ fn check_ttl() -> std::time::Duration {
 }
 
 impl Client {
-    pub(crate) fn begin_trace(&mut self, received: std::time::Instant) {
-        self.trace = Some(HttpTrace {
-            received,
-            last_response: None,
-            first_request_gap_ms: None,
-            network_wait_ms: 0.0,
-            response_to_next_request_ms: Vec::new(),
-            requests: 0,
-        });
-    }
-    pub(crate) fn take_trace(&mut self) -> Option<HttpTrace> {
-        self.trace.take()
-    }
     pub fn new(credentials: Credentials) -> Result<Self, String> {
         Self::build(credentials, ORIGIN)
     }
@@ -97,20 +86,20 @@ impl Client {
         id.set_sensitive(true);
         headers.insert("agentclientid", id.clone());
         headers.insert("bnc-uuid", id);
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            // Mutating POSTs are one-shot even for protocol-level retry classifiers.
-            .retry(reqwest::retry::never())
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .no_proxy()
-            .default_headers(headers)
-            .user_agent(concat!("baw-rs/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|_| "failed to create HTTP client")?;
+        let http = crate::http_observe::Transport::build(
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                // Mutating POSTs are one-shot even for protocol-level retry classifiers.
+                .retry(reqwest::retry::never())
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .no_proxy()
+                .default_headers(headers)
+                .user_agent(concat!("baw-rs/", env!("CARGO_PKG_VERSION"))),
+        )
+        .map_err(|_| "failed to create HTTP client")?;
         Ok(Self {
             last_http: HttpTiming::default(),
-            trace: None,
             http,
             origin: origin.into(),
             credentials,
@@ -118,6 +107,8 @@ impl Client {
             payment_consumed: Default::default(),
             settings_cache: None,
             addresses_cache: None,
+            policy_snapshot: None,
+            okx_http: None,
         })
     }
 
@@ -144,6 +135,12 @@ impl Client {
     /// value is reused for [`check_ttl`]. Set `BAW_RS_CHECK_TTL_MS=0` for the strict
     /// original behaviour.
     pub(crate) async fn cached_settings(&mut self) -> Result<Value, String> {
+        crate::execution::check_auxiliary_read()?;
+        if self.policy_snapshot.is_some() {
+            return self
+                .request(Method::GET, &format!("{API}/settings/query"), None)
+                .await;
+        }
         let ttl = check_ttl();
         self.settings_with_ttl(ttl).await
     }
@@ -165,7 +162,12 @@ impl Client {
 
     /// `wallet address` (two requests: wallet list + active networks), cached the same way.
     pub(crate) async fn cached_addresses(&mut self) -> Result<Value, String> {
-        let ttl = check_ttl();
+        crate::execution::check_auxiliary_read()?;
+        let ttl = self
+            .policy_snapshot
+            .as_ref()
+            .map(|s| s.ttl)
+            .unwrap_or_else(check_ttl);
         self.addresses_with_ttl(ttl).await
     }
 
@@ -173,6 +175,10 @@ impl Client {
         if !ttl.is_zero() {
             if let Some((at, value)) = &self.addresses_cache {
                 if at.elapsed() < ttl {
+                    crate::execution::check_task_gate()?;
+                    if let Some(snapshot) = self.policy_snapshot.as_mut() {
+                        snapshot.hit();
+                    }
                     return Ok(value.clone());
                 }
             }
@@ -186,8 +192,89 @@ impl Client {
     pub(crate) fn clear_check_caches(&mut self) {
         self.settings_cache = None;
         self.addresses_cache = None;
+        if let Some(snapshot) = self.policy_snapshot.as_mut() {
+            snapshot.clear();
+        }
     }
 
+    pub(crate) fn begin_policy_snapshot(&mut self) {
+        let ttl = if matches!(
+            crate::execution::task_allowance(),
+            Some(crate::execution::TaskAllowance::Prepared(_))
+        ) {
+            Duration::ZERO // Counters only: prepared execution cannot read or refresh policy state.
+        } else {
+            policy_snapshot::ttl()
+        };
+        let mut snapshot = policy_snapshot::Snapshot::new(ttl);
+        if let Some((at, value)) = &self.settings_cache {
+            if at.elapsed() < snapshot.ttl {
+                let key = policy_snapshot::Snapshot::key(
+                    &Method::GET,
+                    &format!("{API}/settings/query"),
+                    None,
+                )
+                .expect("fixed read key");
+                snapshot.put(key, *at, value.clone());
+            }
+        }
+        self.policy_snapshot = Some(snapshot);
+    }
+    pub(crate) fn end_policy_snapshot(&mut self) -> Option<Value> {
+        self.policy_snapshot.take().map(|s| s.stats())
+    }
+    pub(crate) fn okx_transport(
+        &mut self,
+    ) -> Result<std::sync::Arc<crate::http_observe::Transport>, String> {
+        if self.okx_http.is_none() {
+            self.okx_http = Some(Self::build_okx_transport()?);
+        }
+        Ok(self
+            .okx_http
+            .as_ref()
+            .ok_or("OKX transport unavailable")?
+            .clone())
+    }
+    pub(crate) fn build_okx_transport(
+    ) -> Result<std::sync::Arc<crate::http_observe::Transport>, String> {
+        crate::http_observe::Transport::build(
+            reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(15))
+                .pool_idle_timeout(Duration::from_secs(600))
+                .pool_max_idle_per_host(1),
+        )
+        .map(std::sync::Arc::new)
+        .map_err(|_| "cannot build OKX HTTP client".into())
+    }
+
+    pub(crate) fn session_active(&self) -> bool {
+        !self.invalidated && !self.credentials.session_id.is_empty()
+    }
+    /// Explicit manual diagnostic: exactly one fixed read-only settings GET, no cache lookup.
+    /// Return timing only, never settings, identities, headers or session credentials.
+    pub async fn observe_readonly_settings(&mut self) -> Result<Value, String> {
+        if crate::execution::in_task_scope()
+            || crate::execution::task_allowance().is_some()
+            || self.policy_snapshot.is_some()
+        {
+            self.last_http = Default::default();
+            return Err("manual diagnostic is forbidden inside task/read-set execution".into());
+        }
+        self.request(Method::GET, &format!("{API}/settings/query"), None)
+            .await?;
+        serde_json::to_value(&self.last_http).map_err(|_| "cannot encode HTTP observation".into())
+    }
+    pub(crate) fn http_timing_for(&self, endpoint: &str) -> HttpTiming {
+        if self.last_http.endpoint == Some(endpoint) {
+            self.last_http.clone()
+        } else {
+            HttpTiming::default()
+        }
+    }
     pub(crate) fn credentials(&self) -> &Credentials {
         &self.credentials
     }
@@ -365,14 +452,42 @@ impl Client {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, String> {
+        self.last_http = HttpTiming::default();
+        crate::execution::check_prepared_http(&method, path)?;
         let mut timing = HttpTiming::default();
         let started = std::time::Instant::now();
+        let key = self
+            .policy_snapshot
+            .as_ref()
+            .and_then(|_| policy_snapshot::Snapshot::key(&method, path, body.as_ref()));
+        if let Some(value) = key
+            .as_ref()
+            .and_then(|k| self.policy_snapshot.as_mut().and_then(|s| s.get(k)))
+        {
+            if self.invalidated {
+                return Err("session invalidated; restart with a valid session".into());
+            }
+            crate::execution::check_task_gate()?;
+            if let Some(snapshot) = self.policy_snapshot.as_mut() {
+                snapshot.hit();
+            }
+            self.last_http = HttpTiming::default();
+            return Ok(value);
+        }
+        let settings =
+            method == Method::GET && path == format!("{API}/settings/query") && body.is_none();
         let result = self.request_inner(method, path, body, &mut timing).await;
+        if let Ok(value) = &result {
+            let at = std::time::Instant::now();
+            if settings {
+                self.settings_cache = Some((at, value.clone()));
+            }
+            if let (Some(snapshot), Some(key)) = (self.policy_snapshot.as_mut(), key) {
+                snapshot.put(key, at, value.clone());
+            }
+        }
         timing.full_roundtrip_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
         self.last_http = timing;
-        if let Some(trace) = &mut self.trace {
-            trace.last_response = Some(std::time::Instant::now());
-        }
         result
     }
     async fn request_inner(
@@ -396,6 +511,15 @@ impl Client {
         ))
         .map_err(|_| "invalid session credential")?;
         cookie.set_sensitive(true);
+        let policy_read = self.policy_snapshot.is_some()
+            && policy_snapshot::Snapshot::key(&method, path, body.as_ref()).is_some();
+        let endpoint = if method == Method::POST && path == format!("{API}/contract-call/preview") {
+            "contract_preview"
+        } else if method == Method::POST && path == format!("{API}/contract-call/execute") {
+            "contract_execute"
+        } else {
+            "other"
+        };
         let mut request = self.http.request(method, url).header("x-trace-id", trace);
         if !self.credentials.session_id.is_empty() {
             request = request.header("cookie", cookie);
@@ -404,23 +528,23 @@ impl Client {
             request = request.json(&body);
         }
         let started = std::time::Instant::now();
-        if let Some(trace) = &mut self.trace {
-            trace
-                .first_request_gap_ms
-                .get_or_insert_with(|| trace.received.elapsed().as_secs_f64() * 1000.0);
-            if let Some(last) = trace.last_response {
-                if trace.response_to_next_request_ms.len() < 32 {
-                    trace
-                        .response_to_next_request_ms
-                        .push(last.elapsed().as_secs_f64() * 1000.0);
-                }
-            }
-            trace.requests += 1;
+        crate::execution::check_task_gate()?;
+        if let Some(snapshot) = self.policy_snapshot.as_mut() {
+            snapshot.sent(policy_read);
         }
+        timing.endpoint = Some(endpoint);
+        let _core_guard = match endpoint {
+            "contract_preview" => Some(crate::task_timing::CoreGuard::begin(
+                crate::task_timing::CoreRequest::Preview,
+            )),
+            "contract_execute" => Some(crate::task_timing::CoreGuard::begin(
+                crate::task_timing::CoreRequest::Execute,
+            )),
+            _ => None,
+        };
+        let probe = self.http.begin();
         let response = request.send().await;
-        if let Some(trace) = &mut self.trace {
-            trace.network_wait_ms += started.elapsed().as_secs_f64() * 1000.0;
-        }
+        timing.connection = Some(probe.finish(response.as_ref().ok()));
         timing.request_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
         let mut response = response.map_err(|error| {
             if error.is_timeout() {
@@ -460,11 +584,7 @@ impl Client {
             }
             let mut bytes = Vec::new();
             loop {
-                let waiting = std::time::Instant::now();
                 let chunk = response.chunk().await;
-                if let Some(trace) = &mut self.trace {
-                    trace.network_wait_ms += waiting.elapsed().as_secs_f64() * 1000.0;
-                }
                 let Some(chunk) = chunk.map_err(|_| "failed to read HTTP response")? else {
                     break;
                 };
@@ -492,6 +612,9 @@ impl Client {
                         .bytes()
                         .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
                 {
+                    if self.credentials.session_id.as_str() != cookie {
+                        self.clear_check_caches();
+                    }
                     self.credentials.session_id = zeroize::Zeroizing::new(cookie);
                 }
             }
@@ -721,7 +844,9 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::mpsc::{self, Receiver};
 
-    fn mock(responses: Vec<String>) -> (String, Receiver<String>, std::thread::JoinHandle<()>) {
+    pub(super) fn mock(
+        responses: Vec<String>,
+    ) -> (String, Receiver<String>, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let (tx, rx) = mpsc::channel();
@@ -758,7 +883,7 @@ mod tests {
         (base, rx, thread)
     }
 
-    fn response(data: Value, cookie: Option<&str>) -> String {
+    pub(super) fn response(data: Value, cookie: Option<&str>) -> String {
         let body = json!({"code":"000000","data":data}).to_string();
         format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
@@ -770,7 +895,7 @@ mod tests {
         )
     }
 
-    fn credentials() -> Credentials {
+    pub(super) fn credentials() -> Credentials {
         Credentials {
             client_id: zeroize::Zeroizing::new("synthetic-client".into()),
             session_id: zeroize::Zeroizing::new("synthetic-session".into()),

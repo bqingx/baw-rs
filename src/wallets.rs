@@ -3,7 +3,6 @@
 //! Every wallet-scoped command names its wallet with the global `--wallet <NAME>` flag; the
 //! name is resolved here and forwarded to the resident daemon as `Request::Run { name, argv }`.
 //! Management (`wallets add|remove|list|status|serve|stop`) never needs a wallet.
-use crate::resident::native_events::Control;
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -33,7 +32,7 @@ pub enum Action {
         /// Directory holding per-wallet subdirectories. Defaults to $HOME/wallets.
         #[arg(long, value_name = "PATH")]
         wallet_root: Option<PathBuf>,
-        /// Use this wallet directory instead of <root>/<name>/wallet.
+        /// Use this wallet directory; with an explicit existing identity, adopt without overwriting.
         #[arg(long, value_name = "PATH")]
         wallet_dir: Option<PathBuf>,
         /// Use this identity file path instead of <root>/<name>/identity.key.
@@ -56,50 +55,99 @@ pub enum Action {
     List,
     /// Resident daemon status: pid and the names it was started with.
     Status,
+    /// On-demand sanitized wallet/task/journal snapshot; no background polling.
+    Overview {
+        /// Explicitly read login/settings (max two GETs per eligible wallet); skips active tasks/busy wallets.
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Run the resident daemon in the foreground for every registered wallet.
     Serve,
     /// Stop accepting work, drain admitted requests, then exit.
     Stop,
-    /// Compatibility: register an existing wallet directory and identity file.
-    #[command(hide = true)]
-    Register {
-        name: String,
-        #[arg(long)]
-        wallet_dir: PathBuf,
-        #[arg(long)]
-        instance_id_file: PathBuf,
-    },
-    /// Compatibility: forward argv to the resident daemon under an explicit name.
-    #[command(hide = true)]
-    Run {
-        name: String,
-        #[arg(last = true, required = true)]
-        argv: Vec<String>,
-    },
-    /// Compatibility: native event task control with an explicit wallet name.
-    #[command(hide = true)]
-    Task {
-        name: String,
-        #[command(subcommand)]
-        command: TaskAction,
-    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum TaskAction {
+pub enum PipelineAction {
+    /// Describe a fixed definition locally, without loading/arming it or granting a deadline.
+    Describe {
+        #[arg(long)]
+        config: PathBuf,
+    },
     Load {
         #[arg(long)]
         config: PathBuf,
     },
+    /// Prepare allowances before enabling triggers; authorized approvals may spend gas now.
     Arm {
-        task_id: String,
+        id: String,
+        /// Confirm pre-trigger preparation and all fixed task actions.
         #[arg(long)]
         confirm: bool,
     },
-    Status,
-    Disarm {
-        task_id: String,
+    Status {
+        id: String,
     },
+    Cancel {
+        id: String,
+    },
+    /// Read-only chain reconciliation of the active task; never submits a write.
+    Reconcile {
+        id: String,
+    },
+    /// Continue only pending actions, without replay or deadline renewal.
+    Resume {
+        id: String,
+        #[arg(long)]
+        confirm: bool,
+    },
+}
+
+pub async fn dispatch_pipeline(
+    registry: &Path,
+    action: PipelineAction,
+    confirm: bool,
+) -> Result<Value, String> {
+    use crate::resident::PipelineControl;
+    let describe = matches!(action, PipelineAction::Describe { .. });
+    let command = match action {
+        PipelineAction::Load { config } | PipelineAction::Describe { config } => {
+            if !config.is_absolute() {
+                return Err("pipeline config path must be absolute".into());
+            }
+            private_dir(config.parent().ok_or("config parent missing")?)?;
+            let mut bytes = Vec::new();
+            private_file(&config, false)?
+                .take(65537)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "cannot read pipeline config")?;
+            if bytes.len() > 65536 {
+                return Err("pipeline configuration exceeds 64 KiB".into());
+            }
+            let config = serde_json::from_slice(&bytes)
+                .map_err(|_| "invalid pipeline configuration JSON")?;
+            if describe {
+                return crate::resident::describe_definition(config);
+            }
+            PipelineControl::Load { config }
+        }
+        PipelineAction::Arm { id, confirm: local } => PipelineControl::Arm {
+            id,
+            confirm: confirm || local,
+        },
+        PipelineAction::Status { id } => PipelineControl::Status { id },
+        PipelineAction::Cancel { id } => PipelineControl::Cancel { id },
+        PipelineAction::Reconcile { id } => PipelineControl::Reconcile { id },
+        PipelineAction::Resume { id, confirm: local } => PipelineControl::Resume {
+            id,
+            confirm: confirm || local,
+        },
+    };
+    crate::resident::send(
+        &socket_path(registry),
+        crate::resident::Request::Pipeline { command },
+    )
+    .await
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -200,6 +248,20 @@ pub(crate) fn private_file(path: &Path, create: bool) -> Result<File, String> {
 
 fn lock_registry(path: &Path, exclusive: bool) -> Result<File, String> {
     let lock = private_file(&path.join("registry.lock"), true)?;
+    let result = if exclusive {
+        fs2::FileExt::try_lock_exclusive(&lock)
+    } else {
+        fs2::FileExt::try_lock_shared(&lock)
+    };
+    result.map_err(|_| "registry busy; retry after the current registry update")?;
+    Ok(lock)
+}
+
+// Separate the daemon lifetime/removal barrier from the short registry transaction lock.
+// Always acquire this before registry.lock. Additions need only registry.lock; removals
+// must exclude every daemon, including one that is still loading its initial entries.
+fn lock_lifecycle(path: &Path, exclusive: bool) -> Result<File, String> {
+    let lock = private_file(&path.join("registry-lifecycle.lock"), true)?;
     let result = if exclusive {
         fs2::FileExt::try_lock_exclusive(&lock)
     } else {
@@ -368,6 +430,11 @@ fn register(path: &Path, name: &str, dir: &Path, key: &Path) -> Result<Value, St
     {
         return Err("duplicate wallet directory".into());
     }
+    // Do not adopt a directory owned by another registry's daemon (or legacy serve).
+    // Keep the lease until the registry update is durable; never replace its lock file.
+    let lease = private_file(&dir.join(".baw-rs-resident.lock"), true)?;
+    fs2::FileExt::try_lock_exclusive(&lease)
+        .map_err(|_| "wallet is owned by a running resident daemon")?;
     entries.insert(
         name.to_owned(),
         Entry {
@@ -414,9 +481,21 @@ fn add(
     let key = instance_file
         .map(Path::to_path_buf)
         .unwrap_or_else(|| root.join(name).join("identity.key"));
+    if wallet_dir.is_some()
+        && instance_file.is_some()
+        && std::fs::symlink_metadata(&dir).is_ok()
+        && std::fs::symlink_metadata(&key).is_ok()
+    {
+        register(registry, name, &dir, &key)?;
+        return Ok(
+            json!({"added":name,"walletDir":dir.canonicalize().unwrap_or(dir.clone()),
+            "instanceIdFile":key.canonicalize().unwrap_or(key),"signedIn":dir.join("session.json").exists(),
+            "note":"existing wallet data and identity preserved"}),
+        );
+    }
     if std::fs::symlink_metadata(&dir).is_ok() {
         return Err(format!(
-            "wallet directory {} already exists; use `baw-rs wallets register {name} --wallet-dir ... --instance-id-file ...` to register an existing wallet",
+            "wallet directory {} already exists; refusing to overwrite existing wallet data",
             dir.display()
         ));
     }
@@ -528,6 +607,7 @@ fn remove(
         return Err("--delete-data requires --confirm".into());
     }
     registry_dir(registry, false)?;
+    let _lifecycle = lock_lifecycle(registry, true)?;
     let _lock = lock_registry(registry, true)?;
     let mut entries = load(registry)?;
     let entry = entries.remove(name).ok_or_else(|| {
@@ -548,32 +628,6 @@ fn remove(
     }))
 }
 
-pub(crate) fn task_control(action: TaskAction) -> Result<Control, String> {
-    Ok(match action {
-        TaskAction::Load { config } => {
-            if !config.is_absolute() {
-                return Err("task configuration path must be absolute".into());
-            }
-            private_dir(config.parent().ok_or("task config parent missing")?)?;
-            let mut bytes = Vec::new();
-            private_file(&config, false)?
-                .take(65537)
-                .read_to_end(&mut bytes)
-                .map_err(|_| "cannot read task config")?;
-            if bytes.len() > 65536 {
-                return Err("task configuration exceeds limit".into());
-            }
-            Control::Load {
-                config: serde_json::from_slice(&bytes)
-                    .map_err(|_| "invalid task configuration JSON")?,
-            }
-        }
-        TaskAction::Arm { task_id, confirm } => Control::Arm { task_id, confirm },
-        TaskAction::Status => Control::Status {},
-        TaskAction::Disarm { task_id } => Control::Disarm { task_id },
-    })
-}
-
 /// Forward a business command to the resident daemon under a resolved name.
 pub async fn dispatch_named(
     registry: &Path,
@@ -592,26 +646,6 @@ pub async fn dispatch_named(
         crate::resident::Request::Run {
             name: name.to_owned(),
             argv,
-        },
-    )
-    .await
-    .map_err(|message| clarify(message, name))
-}
-
-/// Native event task control for a named wallet.
-pub async fn dispatch_task(
-    registry: &Path,
-    name: &str,
-    action: TaskAction,
-) -> Result<Value, String> {
-    let control = task_control(action)?;
-    resolve(registry, name)?;
-    crate::resident::send(
-        &socket_path(registry),
-        crate::resident::Request::Native {
-            id: "native-control".into(),
-            name: name.to_owned(),
-            command: control,
         },
     )
     .await
@@ -662,11 +696,6 @@ pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
             delete_data,
             confirm,
         } => remove(&registry, &name, keep_data, delete_data, confirm),
-        Action::Register {
-            name,
-            wallet_dir,
-            instance_id_file,
-        } => register(&registry, &name, &wallet_dir, &instance_id_file),
         Action::List => {
             registry_dir(&registry, false)?;
             let _lock = lock_registry(&registry, false)?;
@@ -681,9 +710,19 @@ pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
         }
         Action::Serve => {
             registry_dir(&registry, false)?;
-            let _lock = lock_registry(&registry, false)?;
-            let entries = load(&registry)?;
+            let _lifecycle = lock_lifecycle(&registry, false)?;
+            let entries = {
+                let _lock = lock_registry(&registry, false)?;
+                load(&registry)?
+            };
             crate::resident::serve(&socket_path(&registry), entries, Some(registry.clone())).await
+        }
+        Action::Overview { refresh } => {
+            crate::resident::send(
+                &socket_path(&registry),
+                crate::resident::Request::Overview { refresh },
+            )
+            .await
         }
         Action::Status => {
             crate::resident::send(&socket_path(&registry), crate::resident::Request::Status)
@@ -694,24 +733,6 @@ pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
             crate::resident::send(&socket_path(&registry), crate::resident::Request::Stop)
                 .await
                 .map_err(|message| daemon_hint(message, &registry))
-        }
-        Action::Task { name, command } => {
-            crate::resident::send(
-                &socket_path(&registry),
-                crate::resident::Request::Native {
-                    id: "native-control".into(),
-                    name,
-                    command: task_control(command)?,
-                },
-            )
-            .await
-        }
-        Action::Run { name, argv } => {
-            crate::resident::send(
-                &socket_path(&registry),
-                crate::resident::Request::Run { name, argv },
-            )
-            .await
         }
     }
 }

@@ -53,6 +53,31 @@ impl Okx {
             .as_deref()
             .ok_or("ERC-20 --auto-approve requires rpc_url in private OKX profile")?;
         validate_rpc_url(url)?;
+        if let Some(manager) = crate::execution::task_rpc() {
+            let mut endpoint = url::Url::parse(url).map_err(|_| "invalid private OKX RPC URL")?;
+            let scheme = if cfg!(test)
+                && endpoint.scheme() == "http"
+                && endpoint.host_str() == Some("127.0.0.1")
+            {
+                "ws"
+            } else {
+                "wss"
+            };
+            endpoint
+                .set_scheme(scheme)
+                .map_err(|_| "cannot select shared WS RPC")?;
+            if self.rpc_lease.get().is_none() {
+                let lease = manager.acquire(endpoint.as_str())?;
+                let _ = self.rpc_lease.set(lease);
+            }
+            crate::execution::check_task_gate()?;
+            return self
+                .rpc_lease
+                .get()
+                .ok_or("shared approval RPC unavailable")?
+                .read(method, params)
+                .await;
+        }
         let mut r = self
             .http
             .post(url)
@@ -131,6 +156,14 @@ impl Okx {
                             .as_str()
                             .filter(|s| hex(s, 32))
                             .ok_or("invalid approval block hash")?;
+                        if matches!(
+                            crate::execution::task_allowance(),
+                            Some(crate::execution::TaskAllowance::Prepare)
+                        ) {
+                            // Task preparation waits for the first bound successful receipt only.
+                            // No extra confirmation-depth wait or post-approval allowance reread.
+                            return Ok(success);
+                        }
                         let head = quantity(&self.rpc("eth_blockNumber", json!([])).await?)?;
                         if head >= number
                             && head - number >= self.profile.approval_confirmations - 1
@@ -351,12 +384,16 @@ pub(super) async fn prepare(
     route: &Value,
     journal: Option<&mut OperationGuard>,
 ) -> Result<Outcome, String> {
-    if !a.auto_approve {
+    let preparation = matches!(
+        crate::execution::task_allowance(),
+        Some(crate::execution::TaskAllowance::Prepare)
+    );
+    if !a.auto_approve && !preparation {
         return Ok(Outcome::Continue(Value::Null));
     }
     if is_native(&a.quote.from_token) {
         return Ok(Outcome::Continue(
-            json!({"enabled":true,"needed":false,"reason":"native input needs no ERC-20 allowance"}),
+            json!({"enabled":a.auto_approve,"needed":false,"reason":"native input needs no ERC-20 allowance"}),
         ));
     }
     let journal =
@@ -367,10 +404,16 @@ pub(super) async fn prepare(
     let amount = uint(text(route, "amount")?)?;
     api.check_rpc_chain(&q.binance_chain_id).await?;
     let before = api.allowance(&token, sender, spender).await?;
-    let mut evidence = json!({"enabled":true,"needed":before<amount,"token":token,"spender":spender,
+    let mut evidence = json!({"enabled":a.auto_approve,"needed":before<amount,"token":token,"spender":spender,
         "amount":amount.to_string(),"allowanceBefore":before.to_string(),"unlimited":false});
     if before >= amount {
         return Ok(Outcome::Continue(evidence));
+    }
+    if !a.auto_approve {
+        return Err(
+            "task preparation found insufficient allowance; automatic approval was not authorized"
+                .into(),
+        );
     }
     // Fail on bad tokens, impact, or an already impossible output floor before spending approval gas.
     let mut params = query(q)?;
@@ -380,11 +423,13 @@ pub(super) async fn prepare(
     ));
     let raw = api.get("quote", &params).await?;
     let quote = api.validate_quote(q, single(&raw)?)?;
-    if uint(text(&quote, "toTokenAmount")?)?
-        < uint(a.okx_min_output_units.as_deref().ok_or("minimum missing")?)?
-    {
-        return Err("pre-approval quote is already below the user's output floor".into());
+    if let Some(minimum) = a.okx_min_output_units.as_deref() {
+        if uint(text(&quote, "toTokenAmount")?)? < uint(minimum)? {
+            return Err("pre-approval quote is already below the user's output floor".into());
+        }
     }
+    // Without a fixed user floor, this risk/metadata quote grants no output-price
+    // promise. The trigger fetches and enforces its own fresh reported/slippage minimum.
     let data = crate::approvals::approve_calldata(spender, &amount.to_string(), false)?;
     let args = signing::ContractPreview {
         binance_chain_id: q.binance_chain_id.clone(),
@@ -447,7 +492,15 @@ pub(super) async fn prepare(
         }
         Ok(true) => {}
     }
-    // The receipt alone is insufficient: verify this RPC is still on the right chain and read state.
+    if preparation {
+        evidence["confirmed"] = json!(true);
+        evidence["confirmations"] = json!(1);
+        evidence["allowanceRechecked"] = json!(false);
+        evidence["preparedBeforeTrigger"] = json!(true);
+        journal.checkpoint("approval_confirmed", &recovery)?;
+        return Ok(Outcome::Continue(evidence));
+    }
+    // Standalone swaps retain the original depth and state verification policy.
     let checked = async {
         api.check_rpc_chain(&q.binance_chain_id).await?;
         api.allowance(&token, sender, spender).await

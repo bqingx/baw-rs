@@ -18,6 +18,7 @@ SCRATCH.mkdir(parents=True, exist_ok=True)
 ENV["TMPDIR"] = str(SCRATCH)
 ENV.pop("BINANCE_BAW_DIR", None)
 ENV.pop("BINANCE_INSTANCE_ID", None)
+ENV.pop("BAW_RS_NOTIFY_CONFIG", None)
 TARGET = Path(ENV.get("CARGO_TARGET_DIR", str(ROOT / "target"))).resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 results = []
@@ -47,7 +48,7 @@ def smoke(binary):
             key = root / (name + ".identity")
             key.write_text("synthetic-" + name)
             key.chmod(0o600)
-            command("register-" + name, common + ["register", name, "--wallet-dir", str(wallet),
+            command("add-" + name, common + ["add", name, "--wallet-dir", str(wallet),
                     "--instance-id-file", str(key)])
         listing = json.loads(command("list", common + ["list"]))
         assert [w["name"] for w in listing["data"]["wallets"]] == ["alice", "bob"]
@@ -91,11 +92,11 @@ def smoke(binary):
 
 def main():
     command("fmt", ["cargo", "fmt", "--all", "--", "--check"])
-    command("clippy", ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"])
-    tests = command("cargo-test", ["cargo", "test", "--all-targets"])
+    command("clippy", ["cargo", "clippy", "--locked", "--all-targets", "--", "-D", "warnings"])
+    tests = command("cargo-test", ["cargo", "test", "--locked", "--all-targets", "--", "--test-threads=1"])
     counts = re.findall(r"test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored", tests)
     assert counts
-    command("release-build", ["cargo", "build", "--release"])
+    command("release-build", ["cargo", "build", "--locked", "--release", "--bin", "baw-rs"])
     binary = TARGET / "release" / "baw-rs"
     command("release-version", [str(binary), "--version"])
     command("wallets-help", [str(binary), "wallets", "--help"])

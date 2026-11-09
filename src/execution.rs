@@ -2,6 +2,133 @@
 use serde_json::Value;
 use std::path::Path;
 
+#[derive(Clone)]
+pub(crate) enum TaskAllowance {
+    Prepare,
+    Prepared(Value),
+}
+
+#[path = "prepared_wallet.rs"]
+mod prepared_wallet;
+pub(crate) use prepared_wallet::Policy as PreparedWalletPolicy;
+#[cfg(test)]
+#[path = "prepared_policy_tests.rs"]
+mod prepared_policy_tests;
+
+type BindingCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+tokio::task_local! {
+    static BINDING_GATE: BindingCheck;
+    static TASK_GATE: (u64, std::sync::Arc<std::sync::atomic::AtomicBool>);
+    static RPC_GATE: std::sync::Arc<crate::chain_rpc::SharedRpc>;
+    static ALLOWANCE_GATE: TaskAllowance;
+    static PREPARED_WALLET: PreparedWalletPolicy;
+}
+
+pub(crate) async fn task_scope<F: std::future::Future>(
+    deadline_ms: u64,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    future: F,
+) -> F::Output {
+    TASK_GATE.scope((deadline_ms, cancelled), future).await
+}
+
+pub(crate) async fn binding_scope<F: std::future::Future>(
+    check: BindingCheck,
+    future: F,
+) -> F::Output {
+    BINDING_GATE.scope(check, future).await
+}
+
+pub(crate) async fn rpc_scope<F: std::future::Future>(
+    rpc: std::sync::Arc<crate::chain_rpc::SharedRpc>,
+    future: F,
+) -> F::Output {
+    RPC_GATE.scope(rpc, future).await
+}
+
+pub(crate) async fn allowance_scope<F: std::future::Future>(
+    phase: TaskAllowance,
+    future: F,
+) -> F::Output {
+    ALLOWANCE_GATE.scope(phase, future).await
+}
+
+pub(crate) fn task_allowance() -> Option<TaskAllowance> {
+    ALLOWANCE_GATE.try_with(Clone::clone).ok()
+}
+
+pub(crate) async fn prepared_wallet_scope<F: std::future::Future>(
+    policy: PreparedWalletPolicy,
+    future: F,
+) -> F::Output {
+    PREPARED_WALLET.scope(policy, future).await
+}
+pub(crate) fn prepared_wallet() -> Option<PreparedWalletPolicy> {
+    PREPARED_WALLET.try_with(Clone::clone).ok()
+}
+pub(crate) fn task_deadline_ms() -> Result<u64, String> {
+    TASK_GATE
+        .try_with(|(deadline, _)| *deadline)
+        .map_err(|_| "prepared execution requires the original task deadline".into())
+}
+pub(crate) fn require_prepared_context() -> Result<(), String> {
+    task_deadline_ms()?;
+    BINDING_GATE
+        .try_with(|_| ())
+        .map_err(|_| "prepared execution requires the original wallet binding gate".to_owned())
+}
+pub(crate) fn check_prepared_task() -> Result<(), String> {
+    require_prepared_context()?;
+    check_task_gate()
+}
+pub(crate) fn check_auxiliary_read() -> Result<(), String> {
+    if PREPARED_WALLET.try_with(|_| ()).is_ok() {
+        return Err("auxiliary state reads forbidden on prepared task execution path".into());
+    }
+    Ok(())
+}
+pub(crate) fn check_prepared_http(method: &reqwest::Method, path: &str) -> Result<(), String> {
+    if PREPARED_WALLET.try_with(|_| ()).is_err() {
+        return Ok(());
+    }
+    require_prepared_context()?;
+    if method == reqwest::Method::POST
+        && matches!(
+            path.strip_prefix(crate::client::API),
+            Some("/contract-call/preview" | "/contract-call/execute")
+        )
+    {
+        return Ok(());
+    }
+    Err("prepared task permits only preview/execute backend requests".into())
+}
+
+pub(crate) fn in_task_scope() -> bool {
+    TASK_GATE.try_with(|_| ()).is_ok()
+}
+
+pub(crate) fn task_rpc() -> Option<std::sync::Arc<crate::chain_rpc::SharedRpc>> {
+    RPC_GATE.try_with(std::sync::Arc::clone).ok()
+}
+
+/// Rechecked immediately before each backend request; never cancels a submitted request.
+pub(crate) fn check_task_gate() -> Result<(), String> {
+    TASK_GATE
+        .try_with(|(deadline, cancelled)| {
+            if cancelled.load(std::sync::atomic::Ordering::SeqCst)
+                || chrono::Utc::now().timestamp_millis().max(0) as u64 >= *deadline
+            {
+                Err::<(), String>(
+                    "task cancelled or expired; no new backend request admitted".into(),
+                )
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_or(Ok(()))?;
+    BINDING_GATE.try_with(|check| check()).unwrap_or(Ok(()))
+}
+
 pub fn require_consent(confirmed: bool, operation_id: Option<&str>) -> Result<&str, String> {
     if !confirmed {
         return Err("mutating command requires explicit --confirm and --operation-id; never auto-retry an uncertain submission".into());

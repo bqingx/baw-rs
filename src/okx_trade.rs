@@ -2,7 +2,7 @@
 use crate::{
     client::Client,
     route_action, signing,
-    trade::{MarketCommand, Provider, QuoteArgs, SwapArgs},
+    trade::{MarketCommand, QuoteArgs, SwapArgs},
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use serde::Deserialize;
@@ -19,12 +19,19 @@ const PREFIX: &str = "/api/v6/dex/aggregator/";
 
 #[path = "okx_approval.rs"]
 mod approval;
+#[path = "okx_prepared.rs"]
+mod prepared;
+#[path = "okx_tax.rs"]
+mod tax;
 use crate::execution::OperationGuard;
 use approval::validate_rpc_url;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
+    #[cfg(test)]
+    #[serde(default)]
+    test_origin: Option<String>,
     credential_file: PathBuf,
     chain_index: String,
     #[serde(default)]
@@ -99,14 +106,14 @@ fn uint(raw: &str) -> Result<BigUint, String> {
     }
     crate::uint::uint256(raw)
 }
-fn percentage(raw: &str) -> Result<BigUint, String> {
+pub(crate) fn percentage(raw: &str) -> Result<BigUint, String> {
     let n = amount_units(raw, 8, false)?;
     if n >= BigUint::from(100u32) * BigUint::from(10u32).pow(8) {
         return Err("OKX percentage must be 0..<100".into());
     }
     Ok(n)
 }
-fn amount_units(raw: &str, decimals: u8, positive: bool) -> Result<BigUint, String> {
+pub(crate) fn amount_units(raw: &str, decimals: u8, positive: bool) -> Result<BigUint, String> {
     if decimals > 36 || raw.len() > 128 {
         return Err("unsupported decimals or amount length".into());
     }
@@ -170,12 +177,6 @@ fn address(raw: &str) -> Result<(), String> {
 }
 
 pub(crate) fn validate_quote_options(a: &QuoteArgs) -> Result<(), String> {
-    if a.provider == Provider::Binance {
-        if a.okx_config.is_some() || a.from_token_decimals.is_some() {
-            return Err("OKX options require --provider okx; no implicit source switching".into());
-        }
-        return Ok(());
-    }
     if !matches!(a.binance_chain_id.as_str(), "1" | "56" | "8453" | "4663") {
         return Err("OKX market-order currently supports the existing EVM chain set only".into());
     }
@@ -196,44 +197,48 @@ pub(crate) fn validate_quote_options(a: &QuoteArgs) -> Result<(), String> {
         return Err("native EVM coin requires 18 decimals".into());
     }
     percentage(&a.slippage).map_err(|_| "OKX requires explicit --slippage percent (not auto)")?;
+    tax::validate_caps(a)?;
     if token(&a.from_token) == token(&a.to_token) {
         return Err("identical swap tokens".into());
     }
     Ok(())
 }
 pub(crate) fn validate_swap_options(a: &SwapArgs) -> Result<(), String> {
-    if a.quote.provider == Provider::Binance {
-        if a.okx_min_output_units.is_some() || a.okx_allow_opaque_calldata || a.auto_approve {
-            return Err("OKX swap options require --provider okx".into());
-        }
-        return Ok(());
-    }
+    tax::validate_caps(&a.quote)?;
     if a.mev != "false" || !a.gas_level.eq_ignore_ascii_case("MEDIUM") {
         return Err("OKX signing path cannot promise MEV/gas-price selection; require --mev false and default gasLevel".into());
     }
     if !a.acknowledge_token_risk {
         return Err("OKX swap requires --acknowledge-token-risk (not an audit)".into());
     }
-    let minimum = a
-        .okx_min_output_units
-        .as_deref()
-        .ok_or("OKX swap requires --okx-min-output-units")?;
-    if uint(minimum)?.bits() == 0 {
-        return Err("OKX minimum output must be positive".into());
+    if let Some(minimum) = a.okx_min_output_units.as_deref() {
+        if uint(minimum)?.bits() == 0 {
+            return Err("OKX minimum output must be positive".into());
+        }
     }
     Ok(())
 }
 
 struct Okx {
     profile: Profile,
+    profile_hash: String,
     credentials: route_action::Credentials,
-    http: reqwest::Client,
+    http: std::sync::Arc<crate::http_observe::Transport>,
     origin: String,
+    rpc_lease: std::sync::OnceLock<crate::chain_rpc::Lease>,
 }
 impl Okx {
+    #[cfg(test)]
     fn load(a: &QuoteArgs) -> Result<Self, String> {
+        Self::load_with_http(a, Client::build_okx_transport()?)
+    }
+    fn load_with_http(
+        a: &QuoteArgs,
+        http: std::sync::Arc<crate::http_observe::Transport>,
+    ) -> Result<Self, String> {
         validate_quote_options(a)?;
         let bytes = private_read(a.okx_config.as_deref().ok_or("missing OKX profile")?)?;
+        let profile_hash = prepared::digest(&bytes);
         let profile: Profile =
             serde_json::from_slice(&bytes).map_err(|_| "invalid strict OKX profile")?;
         if profile.chain_index != a.binance_chain_id {
@@ -265,21 +270,43 @@ impl Okx {
                 .to_str()
                 .ok_or("invalid credential path")?,
         )?;
-        let http = reqwest::Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|_| "cannot build OKX HTTP client")?;
+        let origin = "https://web3.okx.com".to_owned();
+        #[cfg(test)]
+        let origin = if let Some(origin) = &profile.test_origin {
+            let parsed = url::Url::parse(origin).map_err(|_| "invalid test OKX origin")?;
+            if parsed.scheme() != "http"
+                || parsed.host_str() != Some("127.0.0.1")
+                || parsed.path() != "/"
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+            {
+                return Err("test OKX origin must be loopback HTTP".into());
+            }
+            origin.clone()
+        } else {
+            origin
+        };
         Ok(Self {
             profile,
+            profile_hash,
             credentials,
             http,
-            origin: "https://web3.okx.com".into(),
+            origin,
+            rpc_lease: std::sync::OnceLock::new(),
         })
     }
     async fn get(&self, endpoint: &str, query: &[(&str, String)]) -> Result<Value, String> {
+        self.get_observed(endpoint, query)
+            .await
+            .map(|(value, _)| value)
+    }
+    async fn get_observed(
+        &self,
+        endpoint: &str,
+        query: &[(&str, String)],
+    ) -> Result<(Value, crate::http_observe::Observation), String> {
         if !matches!(endpoint, "quote" | "swap" | "approve-transaction") {
             return Err("unsupported OKX endpoint".into());
         }
@@ -308,13 +335,13 @@ impl Okx {
             headers.insert(name, value);
         }
         // No retries, redirects, proxies, payments, subscriptions or partner-fee parameters.
-        let mut response = self
-            .http
-            .get(url)
-            .headers(headers)
-            .send()
-            .await
-            .map_err(|_| "OKX request failed (details redacted)")?;
+        let request = self.http.get(url).headers(headers);
+        let _core_guard = (endpoint == "swap")
+            .then(|| crate::task_timing::CoreGuard::begin(crate::task_timing::CoreRequest::Route));
+        let probe = self.http.begin();
+        let response = request.send().await;
+        let observed = probe.finish(response.as_ref().ok());
+        let mut response = response.map_err(|_| "OKX request failed (details redacted)")?;
         if !response.status().is_success() {
             return Err(format!(
                 "OKX HTTP {}; no automatic retry/payment",
@@ -336,7 +363,7 @@ impl Okx {
         if v["code"] != "0" {
             return Err("OKX business error (details redacted)".into());
         }
-        Ok(v)
+        Ok((v, observed))
     }
     fn validate_quote(&self, q: &QuoteArgs, row: &Value) -> Result<Value, String> {
         if text(row, "chainIndex")? != q.binance_chain_id || text(row, "swapMode")? != "exactIn" {
@@ -357,11 +384,8 @@ impl Okx {
             if row[key]["isHoneyPot"] != false {
                 return Err("OKX token risk missing or honeypot detected".into());
             }
-            let tax = text(&row[key], "taxRate")?;
-            if amount_units(tax, 18, false)?.bits() != 0 {
-                return Err("taxed tokens unsupported in OKX market-order v1".into());
-            }
         }
+        let taxes = tax::Taxes::from_quote(q, row)?;
         let decimals = |key: &str| -> Result<u8, String> {
             text(&row[key], "decimal")?
                 .parse::<u8>()
@@ -390,6 +414,7 @@ impl Okx {
             "fromCoinAmount":q.from_token_qty,"toCoinAmount":display_units(&out,decimals("toToken")?),
             "fromCoinSymbol":row["fromToken"]["tokenSymbol"],"toCoinSymbol":row["toToken"]["tokenSymbol"],
             "priceImpactPercent":impact,"tradeFee":row["tradeFee"],"estimateGasFee":row["estimateGasFee"],
+            "transferTax":taxes.summary(q),
             "limitations":["quote is not a fill or an on-chain hard minimum","OKX infrastructure fees and actual gas may differ; no partner fee is added locally"]}),
         )
     }
@@ -417,7 +442,7 @@ impl Okx {
             "max_gas_limit":self.profile.max_gas_limit,"max_price_impact_percent":self.profile.max_price_impact_percent,
             "deadline_unix_ms":now+60000,"timeout_ms":15000,"connect_timeout_ms":5000,"max_wait_ms":15000,
             "min_request_interval_ms":1000,"max_retries":0,"retry_backoff_ms":1000,
-            "credential_file":self.profile.credential_file,"require_runtime_preview":true}),
+            "credential_file":self.profile.credential_file}),
         )
     }
 }
@@ -492,7 +517,7 @@ fn validate_preview(
     minimum: &BigUint,
     target: &str,
     spender: &str,
-) -> Result<(), String> {
+) -> Result<Value, String> {
     if v["parsedTx"]["contractAddress"]
         .as_str()
         .is_none_or(|a| !a.eq_ignore_ascii_case(target))
@@ -581,7 +606,11 @@ fn validate_preview(
             return Err("unexpected top-level authority/allowance changes".into());
         }
     }
-    Ok(())
+    Ok(
+        json!({"walletDebitUnits":debited.to_string(),"walletNetCreditUnits":received.to_string(),
+        "minimumNetOutputUnits":minimum.to_string(),"basis":"successful_simulation_wallet_net_balance_delta",
+        "notAFillOrFutureStateGuarantee":true}),
+    )
 }
 
 pub(crate) async fn run(
@@ -596,11 +625,9 @@ pub(crate) async fn run(
     let q = match command {
         MarketCommand::Quote(q) => q,
         MarketCommand::Swap(a) => &a.quote,
-        _ => {
-            return Err("OKX list is unsupported; reconcile contract-call history by txHash".into())
-        }
+        MarketCommand::Intent(a) => return crate::trade::intent_summary(a),
     };
-    let api = Okx::load(q)?;
+    let api = Okx::load_with_http(q, client.okx_transport()?)?;
     match command {
         MarketCommand::Quote(_) => {
             let mut params = query(q)?;
@@ -608,11 +635,14 @@ pub(crate) async fn run(
                 "priceImpactProtectionPercent",
                 api.profile.max_price_impact_percent.clone(),
             ));
-            let raw = api.get("quote", &params).await?;
-            api.validate_quote(q, single(&raw)?)
+            let (raw, observation) = api.get_observed("quote", &params).await?;
+            let mut output = api.validate_quote(q, single(&raw)?)?;
+            output["httpTransport"] =
+                serde_json::to_value(observation).map_err(|_| "cannot encode HTTP observation")?;
+            Ok(output)
         }
         MarketCommand::Swap(a) => swap(client, dir, a, &api, journal).await,
-        _ => unreachable!(),
+        MarketCommand::Intent(a) => crate::trade::intent_summary(a),
     }
 }
 async fn swap(
@@ -625,9 +655,25 @@ async fn swap(
     validate_quote_options(&a.quote)?;
     validate_swap_options(a)?;
     let q = &a.quote;
+    let phase = crate::execution::task_allowance();
+    if let Some(crate::execution::TaskAllowance::Prepared(proof)) = phase {
+        crate::execution::check_prepared_task()?;
+        let policy = prepared::validate(api, a, client, &proof)?;
+        let sender = policy.sender.clone();
+        let mut attempted = false;
+        let mut output = crate::execution::prepared_wallet_scope(
+            policy,
+            perform_swap(client, dir, a, api, &sender, journal, &mut attempted),
+        )
+        .await?;
+        output["autoApproval"] = proof["autoApproval"].clone();
+        output["allowancePreparedBeforeTrigger"] = json!(true);
+        output["preparedWalletPolicyUsed"] = json!(true);
+        return Ok(output);
+    }
     crate::trade::safeguards(client, &q.binance_chain_id).await?;
-    // Never honor --skip-prechecks for provider switching: derive the selected wallet's real sender.
-    let (sender, _) =
+    // Preparation/standalone commands derive the real sender; a fast task uses only its bound record.
+    let (sender, expires) =
         signing::check_wallet_policy(client, &q.binance_chain_id, None, false).await?;
     let route = api.route_config(q, &sender)?;
     if !is_native(&q.from_token) {
@@ -656,6 +702,12 @@ async fn swap(
             approval::Outcome::Continue(note) => note,
             approval::Outcome::Stop(output) => return Ok(output),
         };
+    if matches!(
+        crate::execution::task_allowance(),
+        Some(crate::execution::TaskAllowance::Prepare)
+    ) {
+        return prepared::proof(api, a, client, &sender, expires, approval);
+    }
     let mut attempted = false;
     let result = perform_swap(client, dir, a, api, &sender, journal, &mut attempted).await;
     match result {
@@ -684,8 +736,10 @@ async fn perform_swap(
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
     let q = &a.quote;
-    // Approval may have taken time or consumed quota: check again and construct a completely fresh route.
-    crate::trade::safeguards(client, &q.binance_chain_id).await?;
+    // Standalone commands recheck after approval. Prepared tasks do not read remote state.
+    if crate::execution::prepared_wallet().is_none() {
+        crate::trade::safeguards(client, &q.binance_chain_id).await?;
+    }
     let route = api.route_config(q, sender)?;
     let mut params = query(q)?;
     params.extend([
@@ -698,27 +752,32 @@ async fn perform_swap(
             api.profile.max_price_impact_percent.clone(),
         ),
     ]);
-    let raw = api.get("swap", &params).await?;
+    let fetch_started = std::time::Instant::now();
+    let (raw, route_connection) = api.get_observed("swap", &params).await?;
+    let route_fetch_ms = fetch_started.elapsed().as_secs_f64() * 1000.0;
+    let validation_started = std::time::Instant::now();
     let row = single(&raw)?;
     let quote = api.validate_quote(q, &row["routerResult"])?;
-    let call = route_action::RouteActionBuilder::new(&route)?.validate_response(&raw)?;
+    let taxes = tax::Taxes::from_quote(q, &row["routerResult"])?;
+    let call = route_action::RouteActionBuilder::validate_only(&route, &raw)?;
     let note = &call["route_validation"];
-    let opaque = note["requires_runtime_preview"] == true;
-    if opaque && !a.okx_allow_opaque_calldata {
-        return Err("opaque OKX calldata: cannot prove on-chain minimum/recipient; review and explicitly pass --okx-allow-opaque-calldata, or use decoded preview/execute manually".into());
-    }
-    let minimum = uint(
-        a.okx_min_output_units
-            .as_deref()
-            .ok_or("minimum output missing")?,
-    )?;
+    // Provider calldata is opaque under the versioned policy. All routes must still pass
+    // the exact same fresh preview, wallet balance, risk and durable-binding checks below.
+    // Optional fixed floor is bound as Option in the durable/prepared args. Absence
+    // never means zero/1 wei: the fresh provider/slippage minimum remains mandatory.
+    let minimum = a.okx_min_output_units.as_deref().map(uint).transpose()?;
     let reported = uint(text(&row["tx"], "minReceiveAmount")?)?;
     let out = uint(text(&quote, "toTokenAmount")?)?;
     let scale = BigUint::from(100u32) * BigUint::from(10u32).pow(8);
     let slippage_floor = &out * (&scale - percentage(&q.slippage)?) / &scale;
-    if reported < minimum || reported < slippage_floor || reported > out {
+    if reported.bits() == 0
+        || minimum.as_ref().is_some_and(|m| &reported < m)
+        || reported < slippage_floor
+        || reported > out
+    {
         return Err("OKX reported minimum violates user floor/slippage bounds".into());
     }
+    let minimum_policy = json!({"mode":if minimum.is_some(){"fresh_route_plus_fixed_floor"}else{"fresh_route"},"fixedUserMinimumUnits":minimum.as_ref().map(|m|m.to_string()),"reportedMinimumOutputUnits":reported.to_string(),"slippageReferenceMinimumUnits":slippage_floor.to_string(),"runtimeNetMinimumUnits":reported.to_string(),"onchainMinimumVerified":false});
     let amount = uint(text(&route, "amount")?)?;
     let expected_value = if is_native(&q.from_token) {
         amount
@@ -737,9 +796,14 @@ async fn perform_swap(
         unsigned_tx: None,
         gas_limit: call["gas_limit"].as_u64(),
     };
+    let route_validation_ms = validation_started.elapsed().as_secs_f64() * 1000.0;
+    let preview_started = std::time::Instant::now();
+    client.last_http = Default::default();
     let preview =
         signing::contract(client, dir, &signing::ContractCommand::Preview(args), None).await?;
-    validate_preview(
+    let preview_ms = preview_started.elapsed().as_secs_f64() * 1000.0;
+    let preview_http = client.http_timing_for("contract_preview");
+    let runtime_balances = validate_preview(
         &preview,
         q,
         sender,
@@ -756,6 +820,9 @@ async fn perform_swap(
         journal.checkpoint("swap_submitting", &json!({}))?;
     }
     *attempted = true;
+    let before_execute_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let execute_started = std::time::Instant::now();
+    client.last_http = Default::default();
     let result = signing::contract(
         client,
         dir,
@@ -763,6 +830,10 @@ async fn perform_swap(
         Some(digest),
     )
     .await;
+    let timings = json!({"routeFetchMs":route_fetch_ms,"routeValidationMs":route_validation_ms,
+        "previewCallMs":preview_ms,"executeCallMs":execute_started.elapsed().as_secs_f64()*1000.0,
+        "beforeExecuteCallMs":before_execute_ms,"buildThroughResponseMs":started.elapsed().as_secs_f64()*1000.0,
+        "httpTransport":{"okxSwap":route_connection,"binancePreview":preview_http,"binanceExecute":client.http_timing_for("contract_execute")}});
     match result {
         Ok(mut output) => {
             if !output.is_object() {
@@ -770,21 +841,42 @@ async fn perform_swap(
                     "unexpected execute response; reconcile journal before any retry".into(),
                 );
             }
-            if let Some(journal) = journal {
-                if let Some(hash) = output.get("txHash").and_then(Value::as_str) {
-                    journal.checkpoint("swap_broadcast", &json!({"swapTxHash":hash}))?;
-                }
+            let hash = output
+                .get("txHash")
+                .and_then(Value::as_str)
+                .filter(|raw| {
+                    raw.len() == 66
+                        && raw.starts_with("0x")
+                        && raw[2..].bytes().all(|b| b.is_ascii_hexdigit())
+                })
+                .map(str::to_owned);
+            if hash.is_none() && output["status"] != "PENDING_CONFIRMATION" {
+                output["backendReportedStatus"] =
+                    output.get("status").cloned().unwrap_or(Value::Null);
+                output["status"] = json!("UNCERTAIN");
+                output["message"]=json!("execute response has no valid transaction hash; order ID is not proof of submission; reconcile before any new action, never automatically resubmit");
+            }
+            if let (Some(journal), Some(hash)) = (journal, hash) {
+                journal.checkpoint("swap_broadcast", &json!({"swapTxHash":hash}))?;
             }
             output["provider"] = json!("okx");
+            output["hotPathTiming"] = timings;
             output["quote"] = quote;
             output["routeValidation"] = note.clone();
             output["retrySafe"] = json!(false);
             output["reportedMinimumOutputUnits"] = json!(reported.to_string());
-            output["onchainMinimumDecoded"] = json!(!opaque);
+            output["minimumOutputPolicy"] = minimum_policy;
+            output["onchainMinimumDecoded"] = json!(false);
+            output["onchainNetMinimumDecoded"] = json!(false);
+            output["calldataPolicy"] = json!(route_action::CALLDATA_POLICY);
+            output["transferTax"] = taxes.summary(q);
+            output["runtimeBalanceValidation"] = runtime_balances;
             Ok(output)
         }
         Err(_) => Ok(
-            json!({"provider":"okx","status":"UNCERTAIN","retrySafe":false,
+            json!({"provider":"okx","status":"UNCERTAIN","retrySafe":false,"hotPathTiming":timings,
+            "calldataPolicy":route_action::CALLDATA_POLICY,"onchainMinimumDecoded":false,"onchainNetMinimumDecoded":false,
+            "transferTax":taxes.summary(q),"runtimeBalanceValidation":runtime_balances,"minimumOutputPolicy":minimum_policy,
             "message":"execute outcome unknown; reconcile wallet operation journal and contract-call history; never automatically resubmit"}),
         ),
     }
