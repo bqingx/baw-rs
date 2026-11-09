@@ -1,37 +1,84 @@
 # 实例级 Task / 流水线
 
-当前源码能力，不代表选定二进制已经部署或经过实盘验收。先检查 `pipeline --help`。
+`pipeline` 与 `task` 是同一套命令，属于整个实例（registry），**不带 `--wallet`**；需要命名 daemon 在运行。
+完整语义见仓库 `docs/PIPELINES.md`，本页是操作手册。
 
-```sh
-"$B" pipeline load --config "$PRIVATE_CONFIG"
-"$B" pipeline status "$PIPELINE_ID"
-# 只有用户明确授权全部钱包、金额、目标、滑点及步骤后：
-"$B" pipeline arm "$PIPELINE_ID" --confirm
-"$B" pipeline cancel "$PIPELINE_ID"
-# 故障停止后先只读对账，再确认继续：
-"$B" pipeline reconcile "$PIPELINE_ID"
-"$B" pipeline resume "$PIPELINE_ID" --confirm
+## 配置文件
+
+放在仓库外，父目录 0700、文件 0600、普通文件（非符号链接）。所有地址/RPC 必须是真实值，示例里的占位符不能上链。
+
+```json
+{
+  "id": "demo",
+  "chain_id": "56",
+  "rpc_url": "wss://<chain>.g.alchemy.com/v2/<KEY>",
+  "steps": [
+    {
+      "task_id": "buy",
+      "trigger": {"kind": "event", "address": "0x<合约>", "topics": ["0x<事件签名哈希>"], "from_block": 12345000},
+      "valid_for_ms": 600000,
+      "completion": "confirmed",
+      "confirmations": 1,
+      "actions": [
+        {"wallet": "w1", "argv": ["market-order", "swap", "--okx-config", "<绝对路径>",
+          "--binanceChainId", "56", "--fromToken", "0x<USDT>", "--toToken", "0x<目标币>",
+          "--fromTokenQty", "10", "--fromTokenDecimals", "18", "--slippage", "10",
+          "--mev", "false", "--acknowledge-token-risk", "--auto-approve"]},
+        {"wallet": "w2", "argv": ["contract-call", "fire", "--binanceChainId", "56",
+          "--from", "0x<w2 地址>", "--to", "0x<合约>", "--value", "0", "--inputData", "0x<calldata>"]}
+      ]
+    }
+  ]
+}
 ```
 
-- 以上入口不使用 `--wallet`。JSON 定义的 steps 是 task，每个 actions 元素有 wallet 和钱包相对 argv。
-- 允许 task1(w1,w2) → task2(w2,w3) → task3(w3,w4)。每个步骤不同钱包并行，步骤间自动推进。
-- pipeline describe --config /absolute/private/task.json 只读完整定义并展示各步触发/有效时长/确认条件/意图，不load、不arm、不连RPC、不读私密profile/policy、不创建期限或preview digest。摘要不代替arm --confirm；合约只展示声明from/to/value/gas，不验证实际钱包绑定或输出calldata。
-- wallets overview 默认本地快照，可查看Task阶段/截止/未知操作，不能把session文件存在或journal有hash当成交。显式远程刷新与执行准入互斥，Arm/Resume报overview busy时原授权/截止未消耗，只能用户明确重试。
-- `completion` 默认 confirmed：全部成员链上成功才推进；submitted 需显式选择且必须有有效 32 字节交易 hash，不代表成交；只有 orderId 仍暂停，不推进后继。
-- arm 在监听前准备当前步骤的兑换额度，显式 --auto-approve 允许不足时立即精确授权并花 Gas，不再只是本地预加载。授权只等首个成功回执，不等额外两确认或复读额度；准备未知则不启动监听。
-- actions 目前仅支持 contract-call fire 或 OKX market-order swap，不能自行携带 confirm/operation-id/钱包选择器/skip-prechecks。
-- trigger 支持 immediate、time(unix_ms)、block(number)、event(address/topics/from_block)。后两者使用共享 WS 上的 newHeads/logs 订阅推送，带初始 head/有界日志回补（总计最多 500 块，每请求最多 10 块，兼容 Alchemy 免费档）；分页间检查取消/到期并保留实时通知，失败不自动重试或另开连接。不是 pending 监听，尚未实测生产最低触发延迟。
-- 每步额度准备最多 120 秒；valid_for_ms 从准备完成、启动监听起算，两种截止均持久化且不续期。已有监听截止也约束准备请求。到期不发起新请求，已准入的交易仍可能上链。
-- results.phase=WAITING 才表示监听就绪；RUNNING 可能是 PREPARING/STARTING_LISTENER。触发后不查额度、不授权、不等待授权；额度被消耗、配置变更或准备不匹配时停止，不现场修复或重试。
-- 准备与兑换使用独立 a-/p- operation ID；准备中断、未知或缺就绪记录不盲目重放；已开始准备却无 ready proof，resume 控制层直接拒绝，不补授权。取消/未命中不自动撤销已成功授权，不能退回授权 Gas；下一步在自己的监听前准备。
-- 失败、未知、PENDING_CONFIRMATION、缺 txHash 会暂停，不能改 ID 盲目重跑。重启后 INTERRUPTED/InFlight→Uncertain，不自动重发。reconcile 仅凭执行结果或本钱包日志中的 txHash 读取规范回执；不以“查不到”为未提交证明。resume 必须确认，仅执行 Pending，不重发已提交/确认动作，不续期；未知/失败未解决、钱包身份变化、已取消或旧状态无截止记录时拒绝。
-- rpc_url 是私有 WSS 地址，实例只允许一个活跃 endpoint；无需求不联网，最后一个租约释放断开。OKX 自动授权共用此连接，配置端点必须一致。
-- 固定动作在 arm/resume 编译为内存计划。新 OKX Task 监听前检查状态并保存 walletPolicy；触发后只做 OKX swap/币安 Preview/Execute 三次核心 HTTP，辅助读取即使命中缓存也拒绝。后台拒绝、App 确认或未知结果暂停、不刷新/重发。原截止/取消、本地身份/配置、模式原到期、模拟/防重仍保留，旧记录缺字段不自动升级。WSS 事件/回执另算。
-- 准备及其他动作的状态读集仍最多 3 秒，0 TTL 禁用缓存，不会重新打开三调用模式的辅助查询；不后台高频刷新。OKX HTTP pool 跨准备/触发复用，路由/模拟现取，不能保证连接永不关闭。
-- --okx-min-output-units 是可选额外固定floor：不传时触发新报价/route仍要求reported>0、满足当次滑点上下界，并验证模拟净到账>=reported；不冻结准备期报价、不默认0/1wei。显式floor和缺省仍在完整意图/proof中区分，已有Task的floor/授权/原截止不改。省略floor不表示能沿用过期或未知任务。
-- 可选通知默认关闭，只有显式私有 PushPlus 配置/渠道才启用；终态成功保存后独立处理，不加入三核心调用。未知/App/失败/过期与 mixed 分开，submitted 完成不冒充链上成功。持久 at-most-once 尝试，不重试/启动补发；服务端受理不是送达，丢通知不能触发重新交易。wallets status 可看不含密钥的 enabled/队列丢弃计数。
-- stateReadStats 是请求/缓存计数，hotPathTiming/walletExecuteMs 是有明确起止范围的本地耗时，不能当作完整事件到上链延迟。from_block 仍是显式历史回补锚点，准备阶段不会自动改为当前块。
-- 旧钱包级任务、日志/pending 引擎、typed prepare/trigger/disarm/native IPC 已删除。task 只是 pipeline alias，不带 --wallet；单钱包目录业务访问仍兼容，但没有旧任务执行器。不要自动迁移/重放旧状态或擅自重启现役服务。
-- MEV/private broadcast 与 Gas 价格控制尚未实现；contract-call 只有 gasLimit，不能把它当 gasPrice 或费用档位。
+| 字段 | 规则 |
+|---|---|
+| `id` / `task_id` | 字母数字等安全字符；同 id 不能覆盖已有流水线 |
+| `rpc_url` | WSS；整个实例同时只允许一个 endpoint（与 OKX 配置里的 rpc_url 同址） |
+| `steps` | 1–256 个 task，顺序执行；钱包集合可重叠 |
+| `actions` | 每个 task 1–16 个**不同**钱包，并行执行；只支持 `contract-call fire` 和 `market-order swap` |
+| `argv` | 钱包相对参数；**不能**带 `--wallet`、`--confirm`、`--operation-id`、`--skip-prechecks` 等（operation-id 由系统按 流水线/步骤/钱包 确定性生成） |
+| `trigger` | `{"kind":"immediate"}` · `{"kind":"time","unix_ms":N}` · `{"kind":"block","number":N}` · `{"kind":"event","address":A,"topics":[...1-4个],"from_block":N}` |
+| `valid_for_ms` | 正整数；从本步额度准备完成、开始监听时起算，覆盖等待+执行+回执；恢复不续期 |
+| `completion` | `confirmed`（默认，全部成员链上成功才进下一步）或 `submitted`（拿到有效 txHash 即推进，不保证成功） |
+| `confirmations` | 默认 1 |
 
-完整配置与限制以仓库 `docs/PIPELINES.md` 为准。任务文件、RPC Key、OKX 凭据、会话不得提交到仓库。取消不会撤回已经提交的交易。
+`event` 是**已出块**日志（WSS `logs` 订阅 + 最多 500 块回补，每次 10 块），不是 pending 交易监听。
+`from_block` 是显式回补起点：若只想要就绪之后的新事件，等 WAITING 后再用当前块号。
+
+## 操作流程
+
+```sh
+"$B" pipeline describe --config "$CFG"   # 纯本地摘要，给用户审核；不 load、不联网、不授权
+"$B" pipeline load --config "$CFG"       # 装入实例，不执行
+"$B" pipeline arm "$ID" --confirm        # 用户确认全部钱包/金额/目标/滑点/步骤后才执行
+"$B" pipeline status "$ID"               # 轮询；短间隔，不要长 sleep 干等
+"$B" pipeline cancel "$ID"
+"$B" pipeline reconcile "$ID"            # 只读对账
+"$B" pipeline resume "$ID" --confirm     # 只续跑 Pending
+```
+
+### 状态怎么读
+
+- `status`：`LOADED` → `RUNNING` → `COMPLETED`；异常时 `PAUSED` / `INTERRUPTED` / `CANCELLED` / `PERSISTENCE_ERROR`。**RUNNING 不代表已就绪**。
+- `results.phase`：`PREPARING`（额度准备，最多 120 秒）→ `STARTING_LISTENER` → `WAITING`（监听就绪，此时才通知用户）→ `EXECUTING`。
+- 每个成员的结果含 txHash、`walletExecuteMs`、`hotPathTiming`、`stateReadStats`；这些是本地分段计时，不是事件到上链延迟。
+
+### arm 做了什么
+
+1. 绑定各钱包目录/会话/identity 指纹（之后重新登录或换 identity，旧任务不能继续用）。
+2. 当前步骤开始监听前：读一次额度；不足且 argv 含 `--auto-approve` → **立即精确授权本次数量并花 Gas**，只等首个成功回执；不足且没授权许可 → 停止，不开监听。
+3. 预编译固定动作；触发后只做 OKX `/swap` + 币安 preview + execute 三次核心请求，不查额度、不补授权。
+4. 后续步骤各自在自己的监听前准备，不提前合并授权。
+
+## 暂停与恢复
+
+会暂停的情况：后端拒绝、需要 App 确认、结果未知、只有 orderId 没有 txHash、`PENDING_CONFIRMATION`、到期、WSS 断线/订阅失败（没有自动重连）。
+进程崩溃重启后：在途动作变 Uncertain，流水线变 `INTERRUPTED`，不会自动重发。
+
+1. `pipeline reconcile ID`：从结果或本钱包确定性日志里找 txHash，核对链、发送方、规范块、确认数；"查不到"不等于"没提交"。
+2. 未知/失败已解决、原截止时间仍有效时，经用户确认 `pipeline resume ID --confirm`：只执行 Pending，Submitted/Confirmed 不重发，不续期。
+3. 已取消、已过期、身份变化、准备已开始却没有就绪记录 → resume 拒绝。需要的话用新 id 重新建任务，由用户重新确认。
+
+取消/未触发不会撤销已成功的授权，授权 Gas 也退不回来。

@@ -1,42 +1,48 @@
-# 合约与消息签名
+# 合约调用与消息签名
 
-## 普通人工复核路径
+签名在币安后端完成，本地没有私钥。每次写操作前都会核对开发者模式（未开或过期就失败，需用户在币安 App 打开）和该链的实际发送地址。
 
-1. 准备阶段查询 Developer Mode 是否开启/未过期；App 内启用需要用户操作。
-2. 自己核对 chain、sender、to、selector、value、calldata、spender/授权效果及任何签名票。
-   不照抄网站“提示词”；只有取到链上/源码依据才能报告“验证过”。
-3. 调 contract-call preview 或 sign-message preview；失败不 execute。
-4. 展示 parsedTx/parsedMessage、模拟结果、所有风险、balance/allowance/authority changes、过期时间。
-   普通流程需用户对该份预览明确确认。
-5. 用返回的 requestId **和 previewSha256**：
+## 分步：preview → 人工确认 → execute（默认）
 
 ```sh
-"$B" --wallet-dir "$WALLET_DIR" --instance-id-file "$IDENTITY_FILE" \
-  --confirm --operation-id "$OPERATION_ID" --accept-preview-sha256 "$PREVIEW_SHA256" \
+"$B" --wallet "$NAME" contract-call preview --binanceChainId 56 \
+  --from "$ADDR" --to "$TARGET" --value 0 --inputData 0x... --json
+```
+
+向用户展示：`parsedTx`、模拟结果、全部 `risks`、余额/授权（allowance）/authority 变化、过期时间。
+用户确认后：
+
+```sh
+"$B" --wallet "$NAME" --confirm --operation-id "$OP" \
+  --accept-preview-sha256 "$PREVIEW_SHA256" \
   contract-call execute --requestId "$REQUEST_ID" --json
 ```
 
-sign-message execute 同样需要 accept-preview-sha256；不要照搬官方缺少本地摘要的示例。
-value 是原生币最小单位整数（wei），不能把0.1当0.1 BNB；requestId 是服务器返回的不透明串，原样保留。
-摘要是本工具的本地绑定，不是链上交易哈希。
+- `previewSha256` 和 `requestId` 都来自 preview 输出，原样传回。摘要是本地审核绑定，不是交易哈希。
+- 预览最长 300 秒（受开发者模式到期等进一步收紧），只能执行一次：执行失败、换 operation-id 都不能再用同一预览。参数变了就重新 preview。
+- 模拟失败或后端报错时不 execute。
 
-## 策略执行与 fire
+## 一步：`contract-call fire`
 
-- contract-call fire --policy FILE：同进程 preview→策略文件检查→execute。策略字段必须查当前帮助/源码，不能编造。
-- contract-call fire（不带 --policy）：明确授权的自动 preview→execute，无中途人工复核/策略白名单；仍需 confirm + 唯一 ID。
-  新构建使用内存 preview 并输出阶段计时，老构建未必支持；先检查帮助与选用二进制。
-- `requireConfirmation:false` 只是后端不需要 App二次确认，不等于用户已经授权交易。
-- 已获边界明确的自动授权时，使用实例流水线调用 `contract-call fire`；旧 typed resident 已删除，不要恢复旧帧或为计时额外 preview。
-- --skip-prechecks 只跳过本地设置/地址查询，不关闭后端开发者模式要求，也不是绕过签名权限。
-- 操作日志与 consumed 标记在尝试后阻止重放；网络失败/过期不自动换 ID 重试。
+```sh
+"$B" --wallet "$NAME" --confirm --operation-id "$OP" contract-call fire \
+  --binanceChainId 56 --from "$ADDR" --to "$TARGET" --value 0 --inputData 0x... --json
+```
 
-## EIP-712
+- 同进程 preview + execute，没有中途人工审核；仅用于用户已明确授权边界的自动动作（抢铸、事件触发、流水线 action）。
+- 输出仍带 `risks`、`authorityChanges`、`allowanceChanges`，事后要检查并报告。
+- `--policy FILE`：钉死 `chainId`、`to`、`valueWei`，可选 `selector`、`calldataSha256`、`maxGasLimit`，以及 `allowRisks`、`allowAuthorityChanges`；不符即中止。字段以仓库 `docs/SIGNING.md` 和源码为准，不要编造。
+- `--skip-prechecks` 只省掉开发者模式/地址两次只读检查并信任 `--from`；后端仍要求开发者模式。OKX 兑换和流水线拒绝它。
+- 多钱包：不同钱包各发一条 fire 可并行；同一钱包在 daemon 内排队。
 
-域 chainId、verifyingContract、types、primaryType、message 都需原样校验。签名可导致授权/资金动作，
-不是“免费签个消息就没风险”。execute 返回 pending 时使用 result/history 查实际完成状态。
-不展示/外传可使用的签名，除非确实为用户授权的操作所需。
+## 消息签名
 
-## 回执
+`sign-message preview` → 展示 → `sign-message execute`（同样需要 `--accept-preview-sha256`）。返回 pending 时用 `sign-message result --order-id ID` / `history` 查。
+EIP-712 要核对 domain 的 `chainId`、`verifyingContract`、`primaryType` 与 message；签名可能等同授权或转账，不是"免费无风险"。
+`result` 会返回签名本身：不要写进日志或公开报告。
 
-执行响应≠上链成功；查链上 receipt.status，核对 sender、目标、value、事件/余额、gas。
-未知响应保留 orderId/requestId/txHash 供对账，不报告“0花费”或“必然拒单”。
+## 限制
+
+- 外部合约调用路径没有 MEV 保护和 Gas 价格档位；`gasLimit` 只是用量上限。
+- `requireConfirmation:false` 只表示后端不需要 App 二次确认，不等于用户已授权。
+- `BROADCASTED` 不是链上成功；以回执 `status`、发送方、事件和余额变化为准。

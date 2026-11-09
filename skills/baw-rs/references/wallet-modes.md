@@ -1,53 +1,44 @@
-# 钱包选择与常驻模式
+# 钱包选择与常驻进程
 
-## 三个入口不能混用
+## 入口
 
-- 普通 CLI：显式 `--wallet <NAME>`（命名钱包，走 resident daemon）或 wallet-dir + instance-id-file
-  （传统单钱包），一条命令一个进程。
-- 传统单钱包 `serve`：该钱包私有 socket，业务 CLI 加 `--warm`；连接不到时旧路径可能回退冷执行。
-- `wallets`：registry 管理与常驻控制面（add/remove/list/status/serve/stop），本身不需要钱包。
-  具名钱包的业务命令用全局 `--wallet <NAME>`；daemon 不可用时报告，不悄悄换钱包。
+| 入口 | 用途 | 带 `--wallet`？ |
+|---|---|---|
+| `"$B" --wallet NAME <command>` | 日常业务；经命名 daemon 执行 | 必须 |
+| `"$B" wallets <add/remove/list/status/overview/serve/stop>` | 注册表与 daemon 管理（`vaults` 是隐藏别名） | 不能带 |
+| `"$B" pipeline/task ...` | 实例级任务 | 不能带 |
+| `"$B" openfour ...` | 链上只读/离线编码，不需要钱包 | 不能带 |
+| `"$B" --wallet-dir D --instance-id-file K <command>` | 兼容旧单钱包目录（冷执行；可配 `serve` + `--warm` 走该钱包私有 socket） | 不能混用 |
 
-## 原生日常多钱包
+`--wallet` 模式下不允许再带 `--wallet-dir` / `--instance-id` / `--instance-id-file` / `--warm`。名字不存在、未登录、daemon 未运行都直接报错，不会回退到别的钱包或冷执行。
 
-先征得创建目录/注册/启动后台的授权；使用已存在的钱包及固定身份文件，不搬运/显示凭据。
+## 命名 daemon
 
 ```sh
-# registry：--registry ＞ $BAW_RS_REGISTRY ＞ $HOME/wallets/registry
-"$B" --registry "$REGISTRY" wallets add "$WALLET_NAME"     # 新建 0700 目录 + 0600 identity 并注册
-"$B" --registry "$REGISTRY" wallets add alice --wallet-root /abs/wallets
-"$B" --registry "$REGISTRY" wallets add "$WALLET_NAME" \
-  --wallet-dir "$WALLET_DIR" --instance-id-file "$IDENTITY_FILE"   # 注册已有目录
-"$B" --registry "$REGISTRY" wallets list
-"$B" --registry "$REGISTRY" wallets serve
-"$B" --registry "$REGISTRY" wallets status
-"$B" --registry "$REGISTRY" --wallet "$WALLET_NAME" wallet address --json
-"$B" --registry "$REGISTRY" pipeline status "$PIPELINE_ID"
-"$B" --registry "$REGISTRY" wallets remove bob              # 默认保留数据
-"$B" --registry "$REGISTRY" wallets remove bob --delete-data --confirm
+"$B" wallets status --json      # 先查；本地、零网络
+nohup "$B" wallets serve >/dev/null 2>&1 &   # 仅在未运行时启动
+"$B" wallets stop               # 停止接新请求、排空在途请求后退出
 ```
 
-serve 为长驻命令，运行方式由已授权的服务管理决定；不重复启动、不擅自安装 systemd。
-配套新版 CLI/daemon 的 add 可在线新增，首次业务引用热加载；移除/删除仍需先经授权停止后台。新锁协议分离了短事务与生命周期锁，不允许重绑定/重复目录别名/跨 registry 抢占运行中钱包。旧 daemon 仍持旧长锁时须显式升级，不能靠新版 CLI 单边解锁或自动 stop。新增不改写原身份/会话。
-`--wallet` 模式不允许 wallet-dir/instance-id/warm 等选择器覆盖；名字无效、未注册、未登录就报错，禁止 fallback。
-管理子命令本身输出 JSON，--json 可选；业务命令也支持。不同钱包可并行，同钱包当前 resident 将整个
-命令排队，连预览也包含在内。这只是本地实现行为，不证明链上或币安协议绝对不能并行。
+- 注册表：`--registry` > `$BAW_RS_REGISTRY` > `$HOME/wallets/registry`。socket 是 `<registry>/daemon.sock`（0600，校验同 UID）。
+- 每钱包独立客户端、连接池、cookie、会话；不同钱包并行，同一钱包的命令按 FIFO 串行，排队超过 30 秒的请求被拒绝（未执行）。
+- 运行中 `wallets add` 新增的钱包在第一次被引用时热加载，无需重启；在线删除/重绑定会被拒绝，需先 stop。
+- 不重复启动 serve，不擅自安装 systemd 或替换正在运行的二进制。
 
-隐藏 `wallets run/register` 已删除，不再接受旧包装；`vaults` 只是 `wallets` 的当前别名，不提供第二套入口。业务统一使用 `--wallet NAME <业务参数>`。
+## 钱包生命周期
 
-## 手动总览
+```sh
+"$B" wallets add NAME                                   # 新建 0700 目录 + 0600 随机 identity，然后要 auth 登录
+"$B" wallets add NAME --wallet-dir D --instance-id-file K   # 接入已有目录，只登记不覆写
+"$B" wallets list                                       # 名称与路径；signedIn 只看 session 文件是否存在
+"$B" wallets remove NAME                                # 只注销，保留数据
+"$B" wallets remove NAME --delete-data --confirm        # 删除 session/identity/目录（需 daemon 已停）
+```
 
-wallets overview 要求配套新版 daemon，默认只读本地钱包/Task/journal白名单快照（会话存在不等于CONNECTED），不后台轮询。--refresh 才查login/settings；最多16钱包、并发4、单钱包6秒，不改财务Client/cache或持久Cookie。活动/中断未解决Task、忙钱包或未加载钱包跳过。刷新保留钱包互斥，Arm/Resume在准入前明确报忙而不消费授权/期限；普通随后命令可能等最多该钱包6秒，不是事件热路径固定延迟。临时GET若换Cookie，原持久会话标UNKNOWN，不自动续期。快照per_item_not_atomic，部分读取/截断不等于无风险。
+- identity 是解密 session 的密钥，不绑定设备；只备份 session 而丢了 identity 无法恢复。
+- 官方 `baw` 与 baw-rs 的会话各自管理；格式同源，可用官方登录后的目录 + 显式 instance id 文件接入，但不要自动导入/覆盖。
+- `wallets overview` 默认只读本地快照；`--refresh` 才查登录/设置（每钱包最多 6 秒，与 arm/resume 互斥，报忙时不要自动重试）。
 
-## 凭据与文件
+## 文件要求
 
-目录要求 0700；身份/会话是用户所有、0600、普通单硬链接文件，不接受 symlink。
-identity 是解密凭据，不绑定设备；只备份 session 而丢失 identity 无法恢复。
-`wallets add` 生成随机 identity，从不覆盖已存在的 identity 文件。
-普通 baw 与 baw-rs 独立管理会话。禁止自动 import/覆盖/迁移；不按“同一地址”推断两边登录同时有效。
-
-## 常驻与任务
-
-新任务全部使用 named daemon 的实例级流水线；旧单钱包任务和 typed executor 已删除。`task` 只是 `pipeline` 的别名。
-普通目录形式 `serve`/`--warm` 仍用于兼容业务命令，与已有 resident 争用同一钱包独占锁时明确报错。
-只有用户确认维护/切换后才能交接服务，不能通过拷贝会话或设置并发环境变量暗绕所有权。
+目录 0700、identity/session/配置 0600，属主为当前用户，普通单硬链接文件，不接受符号链接。权限不符时报错，不要 chmod/删除"修复"他人文件，先问用户。

@@ -54,16 +54,25 @@ pub struct Client {
 /// Freshness window for the pre-preview reads.
 ///
 /// Defaults to zero: a one-shot command performs each check exactly once anyway, so
-/// caching buys nothing and re-reading keeps the strict behaviour. A resident server sets
-/// `BAW_RS_CHECK_TTL_MS` when it starts, which is where the saving is real — the preview
-/// and the execute that follows it then share one settings read and one address read
-/// instead of paying four round trips.
+/// caching buys nothing and re-reading keeps the strict behaviour. A resident server raises
+/// the process default with [`set_default_check_ttl_ms`] when it starts, which is where the
+/// saving is real — the preview and the execute that follows it then share one settings read
+/// and one address read instead of paying four round trips. An explicit
+/// `BAW_RS_CHECK_TTL_MS` always wins. The environment is only read, never written: mutating
+/// it from a multi-threaded runtime is undefined behaviour.
 fn check_ttl() -> std::time::Duration {
     let ms = std::env::var("BAW_RS_CHECK_TTL_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
+        .unwrap_or_else(|| DEFAULT_CHECK_TTL_MS.load(std::sync::atomic::Ordering::Relaxed));
     std::time::Duration::from_millis(ms)
+}
+
+static DEFAULT_CHECK_TTL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Process-wide default for [`check_ttl`] when `BAW_RS_CHECK_TTL_MS` is unset.
+pub(crate) fn set_default_check_ttl_ms(ms: u64) {
+    DEFAULT_CHECK_TTL_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
 }
 
 impl Client {

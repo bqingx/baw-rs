@@ -505,9 +505,7 @@ async fn serve_inner(
     crate::signing::set_skip_prechecks_default(
         std::env::var("BAW_RS_SKIP_PRECHECKS").is_ok_and(|v| v == "1" || v == "true"),
     );
-    if std::env::var_os("BAW_RS_CHECK_TTL_MS").is_none() {
-        std::env::set_var("BAW_RS_CHECK_TTL_MS", "3000");
-    }
+    crate::client::set_default_check_ttl_ms(3000);
     let listener = UnixListener::bind(path).map_err(|_| "cannot bind daemon socket")?;
     let _cleanup = SocketGuard(path.to_owned());
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))

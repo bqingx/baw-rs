@@ -1,11 +1,21 @@
 # 地址与单位
 
-- 先区分chainId、token合约地址、原生币占位地址与钱包地址；不能因为ticker相同就跨链复用地址。
-- 原生BNB在某些币安报价API用占位地址，不是WBNB合约。Core内盘支付的value是原生BNB的wei。
-- contract-call value / openfour encode-buy budget：原生最小单位整数；EVM常用18位，但非原生token按其decimals。
-- openfour encode-buy 的 --min-out-raw：代币最小单位整数；不是数量小数、百分比、美元价格。无报价就没有相对滑点基准。
-- openfour quote-buy amount：人类可读BNB小数字符串；不要将wei传进去造成巨大预算。
-- market-order fromTokenQty / wallet send amount：按具体帮助与资产约定的人类可读数量，不能自动从value格式推断。
-- 使用整数/Decimal/BigUint，不转JS Number或Python float；显示时四舍五入只影响展示，不修改交易payload。
-- 地址必须来自用户确认的输入或可信查询，并核对完整地址及链。合成示例地址不能拿去交易。
-- 本skill不维护永久“热门币安全列表”。需要查币时用已授权只读来源，审计结果只陈述事实，不做收益判断。
+| 参数 | 单位 | 例 |
+|---|---|---|
+| `market-order --fromTokenQty` | 人类可读数量（配 `--fromTokenDecimals` 精确换算，不用浮点） | `1.25` + `18` → `1250000000000000000` |
+| `market-order --slippage` | 百分数 | `10` = 10%，最多 8 位小数，<100 |
+| `--max-from-tax-percent` / `--max-to-tax-percent` | 百分数；OKX `taxRate=0.02` 即 2% | 默认 `0` = 不接受带税币 |
+| `--okx-min-output-units` | 输出代币最小单位整数 | 可选，不填 0/1 |
+| `wallet send --amount` | 人类可读数量（以帮助为准） | `0.05` |
+| `contract-call --value` | 原生币最小单位整数（wei） | 0.01 BNB = `10000000000000000` |
+| `contract-call --gasLimit` | Gas 用量上限，不是 Gas 价格 | 仅用户指定时传 |
+| `openfour quote-buy --amount` | 人类可读 BNB | `0.1` |
+| `openfour encode-buy --amount-wei` / `--min-out-raw` | 最小单位整数 | |
+
+## 地址
+
+- EVM 原生币在 OKX 路径用 `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`（零地址也接受并规范化），精度必须 18。原生 BNB 不是 WBNB。
+- 区分 chainId、代币合约、钱包地址；同名 ticker 不能跨链复用地址。地址只来自用户确认的输入或可信查询，展示时给完整地址。
+- 支持的链以 `wallet chains` 为准；OKX 兑换目前限 EVM 链 `1 / 56 / 8453 / 4663`、exact-in。
+- 计算用整数/Decimal，不转 float；四舍五入只用于展示，不改交易参数。
+- 本技能不维护"安全币列表"；查币用已授权的只读来源，只陈述事实，不给投资建议。

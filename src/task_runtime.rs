@@ -402,9 +402,15 @@ fn path(registry: &Path, id: &str) -> Result<PathBuf, String> {
     crate::wallets::private_dir(registry)?;
     Ok(registry.join(format!("pipeline-{id}.json")))
 }
+const MAX_STATE_BYTES: usize = 4 * 1024 * 1024;
 fn save(registry: &Path, stored: &Stored) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
     let target = path(registry, &stored.definition.id)?;
+    // Never publish a state that `load` would refuse: a task must stay recoverable.
+    let encoded = serde_json::to_vec(stored).map_err(|_| "cannot encode pipeline state")?;
+    if encoded.len() > MAX_STATE_BYTES {
+        return Err("pipeline state too large; not saved".into());
+    }
     let tmp = registry.join(format!(".pipeline-{:016x}.tmp", rand::random::<u64>()));
     let result = (|| {
         let mut file = std::fs::OpenOptions::new()
@@ -414,7 +420,8 @@ fn save(registry: &Path, stored: &Stored) -> Result<(), String> {
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&tmp)
             .map_err(|_| "cannot create pipeline state")?;
-        serde_json::to_writer(&mut file, stored).map_err(|_| "cannot encode pipeline state")?;
+        file.write_all(&encoded)
+            .map_err(|_| "cannot write pipeline state")?;
         file.flush().map_err(|_| "cannot flush pipeline state")?;
         file.sync_all().map_err(|_| "cannot sync pipeline state")?;
         std::fs::rename(&tmp, &target).map_err(|_| "cannot publish pipeline state")?;
@@ -431,10 +438,10 @@ fn save(registry: &Path, stored: &Stored) -> Result<(), String> {
 fn load(registry: &Path, id: &str) -> Result<Stored, String> {
     let mut bytes = Vec::new();
     crate::wallets::private_file(&path(registry, id)?, false)?
-        .take(4 * 1024 * 1024 + 1)
+        .take(MAX_STATE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "cannot read pipeline state")?;
-    if bytes.len() > 4 * 1024 * 1024 {
+    if bytes.len() > MAX_STATE_BYTES {
         return Err("pipeline state too large".into());
     }
     let mut state: Stored = serde_json::from_slice(&bytes).map_err(|_| "invalid pipeline state")?;

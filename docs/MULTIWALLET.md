@@ -9,7 +9,7 @@
 ```text
 baw-rs [GLOBAL] --wallet <NAME> <wallet-scoped command>     # 业务命令
 baw-rs [GLOBAL] wallets <add|remove|list|status|serve|stop>  # 管理，永不需要 --wallet
-baw-rs [GLOBAL] --wallet <NAME> task <load|arm|status|disarm>
+baw-rs [GLOBAL] pipeline <describe|load|arm|status|cancel|reconcile|resume>  # 实例级，`task` 为别名，拒绝 --wallet
 ```
 
 全局参数（可出现在子命令前后）：
@@ -131,8 +131,7 @@ Linux Unix socket 为 `<registry>/daemon.sock`，父目录 0700、socket 0600，
 | `--wallet-dir D --instance-id-file K <command>` | 保留；冷执行与 `--warm` 行为不变 |
 | `serve`（单钱包常驻） | 保留；socket 仍是 `<D>/.baw-rs.sock` |
 | `vaults` 命名空间 | 保留为 `wallets` 的隐藏别名 |
-| `vaults --registry R run NAME -- <argv>` | 保留；与 `--wallet NAME <argv>` 等价 |
-| `vaults ... register / task NAME` | 保留为隐藏兼容子命令 |
+| `vaults ... register / run / task NAME` | 已删除（见 [COMPAT-CLEANUP.md](COMPAT-CLEANUP.md)）；任务改用实例级 `pipeline`/`task` |
 
 新脚本一律用 `--wallet <NAME>`；旧形式不会在缺少钱包时报错回退，也不会把名字换成别的钱包。
 

@@ -146,7 +146,10 @@ pub fn require_consent(confirmed: bool, operation_id: Option<&str>) -> Result<&s
 }
 
 pub struct OperationGuard {
-    record: std::fs::File,
+    /// Private `.baw-rs-operations` directory; updates are published into it by rename.
+    journal: std::fs::File,
+    /// `<operation-id>.json`; created once with `O_EXCL`, which is the duplicate guard.
+    name: std::ffi::CString,
     metadata: Value,
     /// Held for the duration of the mutation unless `BAW_RS_CONCURRENT_WRITES=1`
     /// explicitly opts out (needed to find out what the backend does with two writes from
@@ -268,8 +271,10 @@ impl OperationGuard {
         directory
             .sync_all()
             .map_err(|_| "cannot sync wallet directory")?;
+        drop(record);
         Ok(Self {
-            record,
+            journal,
+            name,
             metadata,
             _lock: lock,
         })
@@ -307,18 +312,61 @@ impl OperationGuard {
         self.persist()
     }
 
+    /// Replace the record atomically: write a private temporary file, sync it, rename it over
+    /// `<id>.json` and sync the directory. A crash leaves either the previous complete record
+    /// or the new one, never a truncated file, and the record name never disappears, so the
+    /// `O_EXCL` duplicate guard keeps holding.
     fn persist(&mut self) -> Result<(), String> {
-        use std::io::{Seek, SeekFrom, Write};
-        self.record
-            .seek(SeekFrom::Start(0))
-            .map_err(|_| "journal update failed; reconcile before any retry")?;
-        self.record
-            .set_len(0)
-            .map_err(|_| "journal update failed; reconcile before any retry")?;
-        self.record
-            .write_all(self.metadata.to_string().as_bytes())
-            .map_err(|_| "journal update failed; reconcile before any retry")?;
-        self.record
+        use std::io::Write;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::os::unix::fs::MetadataExt;
+        const FAILED: &str = "journal update failed; reconcile before any retry";
+        let dir = self.journal.as_raw_fd();
+        let mut tmp_name = b".".to_vec();
+        tmp_name.extend_from_slice(self.name.as_bytes());
+        tmp_name.extend_from_slice(b".tmp");
+        let tmp = std::ffi::CString::new(tmp_name).map_err(|_| FAILED)?;
+        let fd = unsafe {
+            libc::openat(
+                dir,
+                tmp.as_ptr(),
+                libc::O_WRONLY
+                    | libc::O_CREAT
+                    | libc::O_TRUNC
+                    | libc::O_NOFOLLOW
+                    | libc::O_CLOEXEC
+                    | libc::O_NONBLOCK,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(FAILED.into());
+        }
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let written = (|| {
+            let m = file.metadata().map_err(|_| FAILED)?;
+            if !m.is_file()
+                || m.uid() != unsafe { libc::geteuid() }
+                || m.mode() & 0o7777 != 0o600
+                || m.nlink() != 1
+            {
+                return Err(FAILED.to_string());
+            }
+            file.write_all(self.metadata.to_string().as_bytes())
+                .map_err(|_| FAILED)?;
+            file.sync_all()
+                .map_err(|_| "journal sync failed; reconcile before any retry")?;
+            if unsafe { libc::renameat(dir, tmp.as_ptr(), dir, self.name.as_ptr()) } != 0 {
+                return Err(FAILED.to_string());
+            }
+            Ok(())
+        })();
+        drop(file);
+        if let Err(error) = written {
+            unsafe { libc::unlinkat(dir, tmp.as_ptr(), 0) };
+            return Err(error);
+        }
+        self.journal
             .sync_all()
             .map_err(|_| "journal sync failed; reconcile before any retry".to_string())
     }
@@ -391,6 +439,59 @@ mod tests {
         assert!(guard
             .checkpoint("unrecognized-stage", &serde_json::json!({}))
             .is_err());
+    }
+
+    #[test]
+    fn journal_updates_replace_the_record_atomically_and_keep_the_duplicate_guard() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let journal = dir.path().join(".baw-rs-operations");
+        let mut guard = OperationGuard::begin(
+            dir.path(),
+            "atomic-1",
+            "market-order.swap",
+            &serde_json::json!({}),
+            "synthetic",
+        )
+        .unwrap();
+        // Keep the original record open: an in-place rewrite would change what it reads.
+        let mut original = std::fs::File::open(journal.join("atomic-1.json")).unwrap();
+        guard
+            .checkpoint("swap_submitting", &serde_json::json!({}))
+            .unwrap();
+        guard
+            .finish(&Ok(serde_json::json!({"txHash":"0xabc"})))
+            .unwrap();
+        // Updates are published by rename; the original file is never truncated in place.
+        let mut before = String::new();
+        std::io::Read::read_to_string(&mut original, &mut before).unwrap();
+        let before: Value = serde_json::from_str(&before).unwrap();
+        assert_eq!(before["state"], "SUBMITTING");
+        let meta = std::fs::metadata(journal.join("atomic-1.json")).unwrap();
+        assert_eq!(meta.mode() & 0o7777, 0o600);
+        assert_eq!(meta.nlink(), 1);
+        let names: Vec<_> = std::fs::read_dir(&journal)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, vec!["atomic-1.json".to_string()]);
+        let record: Value =
+            serde_json::from_str(&std::fs::read_to_string(journal.join("atomic-1.json")).unwrap())
+                .unwrap();
+        assert_eq!(record["state"], "RESPONSE_RECEIVED");
+        assert_eq!(record["progress"]["stage"], "swap_submitting");
+        assert_eq!(record["recovery"]["txHash"], "0xabc");
+        drop(guard);
+        // The record name never disappeared, so the same operation-id is still refused.
+        assert!(OperationGuard::begin(
+            dir.path(),
+            "atomic-1",
+            "market-order.swap",
+            &serde_json::json!({}),
+            "synthetic"
+        )
+        .is_err());
     }
 
     #[test]

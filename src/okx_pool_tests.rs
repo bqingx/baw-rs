@@ -79,16 +79,12 @@ fn local_route_validation_does_not_reload_credentials_or_build_a_transport() {
     let (dir, args, api) = fixture();
     let config = api.route_config(&args.quote, FROM).unwrap();
     let raw = response();
-    let prior = route_action::RouteActionBuilder::new(&config)
-        .unwrap()
-        .validate_response(&raw)
-        .unwrap();
+    let validated = route_action::RouteActionBuilder::validate_only(&config, &raw).unwrap();
     std::fs::remove_file(dir.path().join("credentials.json")).unwrap();
     assert_eq!(
         route_action::RouteActionBuilder::validate_only(&config, &raw).unwrap(),
-        prior
+        validated
     );
-    assert!(route_action::RouteActionBuilder::new(&config).is_err());
     let mut bad = raw;
     bad["data"][0]["tx"]["to"] = json!(INPUT);
     assert!(route_action::RouteActionBuilder::validate_only(&config, &bad).is_err());

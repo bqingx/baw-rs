@@ -432,17 +432,13 @@ impl Okx {
             q.from_token_decimals.ok_or("input decimals missing")?,
             true,
         )?;
-        let now = chrono::Utc::now().timestamp_millis();
         Ok(
             json!({"chain_index":q.binance_chain_id,"binance_chain_id":q.binance_chain_id,
             "from_token_address":token(&q.from_token),"to_token_address":token(&q.to_token),
             "amount":amount.to_string(),"slippage_percent":q.slippage,"user_wallet_address":sender,
             "expected_spender":spender,"allowed_router_addresses":self.profile.allowed_router_addresses,
             "max_value_wei":if is_native(&q.from_token){amount.to_string()}else{"0".into()},
-            "max_gas_limit":self.profile.max_gas_limit,"max_price_impact_percent":self.profile.max_price_impact_percent,
-            "deadline_unix_ms":now+60000,"timeout_ms":15000,"connect_timeout_ms":5000,"max_wait_ms":15000,
-            "min_request_interval_ms":1000,"max_retries":0,"retry_backoff_ms":1000,
-            "credential_file":self.profile.credential_file}),
+            "max_gas_limit":self.profile.max_gas_limit,"max_price_impact_percent":self.profile.max_price_impact_percent}),
         )
     }
 }

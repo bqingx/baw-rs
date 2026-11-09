@@ -1,7 +1,6 @@
 use super::*;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn word(s: &str) -> String {
     format!("{:0>64}", s)
@@ -25,90 +24,8 @@ fn response(minimum: u64) -> Value {
       "tx":{"from":WALLET,"to":ROUTER,"value":"0","gas":"200000","gasPrice":"1000000000",
       "minReceiveAmount":minimum.to_string(),"data":calldata(minimum)}}]})
 }
-async fn server(
-    replies: Vec<(u16, String, String)>,
-) -> (
-    String,
-    tokio::sync::mpsc::UnboundedReceiver<String>,
-    tokio::task::JoinHandle<()>,
-) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let h = tokio::spawn(async move {
-        for (status, extra, body) in replies {
-            let (mut s, _) = listener.accept().await.unwrap();
-            let mut data = Vec::new();
-            loop {
-                let mut b = [0; 1024];
-                let n = s.read(&mut b).await.unwrap();
-                if n == 0 {
-                    break;
-                }
-                data.extend_from_slice(&b[..n]);
-                if data.windows(4).any(|b| b == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            tx.send(String::from_utf8(data).unwrap()).ok();
-            let r=format!("HTTP/1.1 {status} test\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n{body}",body.len());
-            s.write_all(r.as_bytes()).await.ok();
-        }
-    });
-    (format!("http://{addr}"), rx, h)
-}
-
-#[tokio::test]
-async fn build_only_fetches_fresh_swap_and_authenticates_exact_query() {
-    use base64::Engine;
-    let (_f, c) = fixture();
-    let (origin, mut rx, h) = server(vec![
-        (200, String::new(), response(99).to_string()),
-        (200, String::new(), response(98).to_string()),
-    ])
-    .await;
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    assert!(rx.try_recv().is_err());
-    let call = b.build(&json!({"event":"first"})).await.unwrap();
-    assert_eq!(call["input_data"], calldata(99));
-    // The provider's 200k point estimate is widened before it becomes the preview cap: the default
-    // headroom is max(200k * 3, 200k + 500k) = 700k, under the configured 2,000,000 ceiling.
-    assert_eq!(call["gas_limit"], 700000);
-    assert_eq!(call["route_validation"]["gas_quoted"], 200000);
-    assert_eq!(call["route_validation"]["gas_preview_cap"], 700000);
-    assert_opaque_validation(&call);
-    let req = rx.recv().await.unwrap();
-    let first = req.lines().next().unwrap();
-    let target = first.split_whitespace().nth(1).unwrap();
-    assert!(target.starts_with("/api/v6/dex/aggregator/swap?"));
-    let params: std::collections::HashMap<_, _> =
-        url::form_urlencoded::parse(target.split_once('?').unwrap().1.as_bytes())
-            .into_owned()
-            .collect();
-    assert_eq!(params["amount"], "10000000000000000001");
-    assert_eq!(params["userWalletAddress"], WALLET);
-    assert_eq!(params["swapMode"], "exactIn");
-    assert_eq!(params["autoSlippage"], "false");
-    assert_eq!(params["slippagePercent"], "0.5");
-    let headers: std::collections::HashMap<_, _> = req
-        .lines()
-        .skip(1)
-        .filter_map(|l| l.split_once(':'))
-        .map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_string()))
-        .collect();
-    assert_eq!(headers["ok-access-key"], "synthetic-key");
-    assert_eq!(headers["ok-access-passphrase"], "synthetic-pass");
-    let timestamp = &headers["ok-access-timestamp"];
-    assert!(chrono::DateTime::parse_from_rfc3339(timestamp).is_ok());
-    let expected = base64::engine::general_purpose::STANDARD.encode(hmac_sha256(
-        b"synthetic-secret",
-        format!("{timestamp}GET{target}").as_bytes(),
-    ));
-    assert_eq!(headers["ok-access-sign"], expected);
-    let second = b.build(&json!({"event":"second"})).await.unwrap();
-    assert_eq!(second["input_data"], calldata(98));
-    assert_ne!(second["input_data"], call["input_data"]);
-    h.await.unwrap();
+fn validate(c: &Value, r: &Value) -> Result<Value, String> {
+    RouteActionBuilder::validate_only(c, r)
 }
 
 fn assert_opaque_validation(call: &Value) {
@@ -122,8 +39,7 @@ fn assert_opaque_validation(call: &Value) {
 
 #[test]
 fn arbitrary_and_old_known_selectors_are_preserved_without_local_verification() {
-    let (_f, c) = fixture();
-    let builder = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     for data in [
         "0x01".to_string(),
         "0x123456780000".to_string(),
@@ -135,7 +51,7 @@ fn arbitrary_and_old_known_selectors_are_preserved_without_local_verification() 
     ] {
         let mut r = response(99);
         r["data"][0]["tx"]["data"] = json!(data);
-        let call = builder.validate_response(&r).unwrap();
+        let call = validate(&c, &r).unwrap();
         assert_eq!(call["input_data"], data);
         assert_opaque_validation(&call);
     }
@@ -143,8 +59,7 @@ fn arbitrary_and_old_known_selectors_are_preserved_without_local_verification() 
 
 #[test]
 fn old_v2_layout_amount_path_recipient_deadline_and_minimum_are_opaque() {
-    let (_f, c) = fixture();
-    let b = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     for (idx, replacement) in [
         (0, word("1")),
         (1, word("1")),
@@ -162,7 +77,7 @@ fn old_v2_layout_amount_path_recipient_deadline_and_minimum_are_opaque() {
         for selector in ["0x38ed1739", "0x5c11d795"] {
             let altered = data.replacen("0x38ed1739", selector, 1);
             r["data"][0]["tx"]["data"] = json!(altered);
-            let call = b.validate_response(&r).unwrap();
+            let call = validate(&c, &r).unwrap();
             assert_eq!(call["input_data"], altered, "changed word {idx}");
             assert_opaque_validation(&call);
         }
@@ -177,7 +92,7 @@ fn old_v2_layout_amount_path_recipient_deadline_and_minimum_are_opaque() {
         ] {
             let mut r = response(99);
             r["data"][0]["tx"]["data"] = json!(data);
-            let call = b.validate_response(&r).unwrap();
+            let call = validate(&c, &r).unwrap();
             assert_eq!(call["input_data"], data);
             assert_opaque_validation(&call);
         }
@@ -186,22 +101,18 @@ fn old_v2_layout_amount_path_recipient_deadline_and_minimum_are_opaque() {
 
 #[test]
 fn reported_minimum_is_required_independently_of_opaque_calldata() {
-    let (_f, c) = fixture();
-    let b = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     let mut r = response(99);
     r["data"][0]["tx"]
         .as_object_mut()
         .unwrap()
         .remove("minReceiveAmount");
-    assert!(
-        b.validate_response(&r).is_err(),
-        "quote amount is not a minimum"
-    );
-    assert!(b.validate_response(&response(0)).is_err());
+    assert!(validate(&c, &r).is_err(), "quote amount is not a minimum");
+    assert!(validate(&c, &response(0)).is_err());
     for minimum in ["1", "98", "100"] {
         let mut r = response(99);
         r["data"][0]["tx"]["minReceiveAmount"] = json!(minimum);
-        let call = b.validate_response(&r).unwrap();
+        let call = validate(&c, &r).unwrap();
         assert_eq!(call["input_data"], calldata(99));
         assert_eq!(call["route_validation"]["reported_minimum_output"], minimum);
         assert_opaque_validation(&call);
@@ -210,8 +121,7 @@ fn reported_minimum_is_required_independently_of_opaque_calldata() {
 
 #[test]
 fn opaque_payloads_still_require_bounded_nonempty_canonical_hex() {
-    let (_f, c) = fixture();
-    let b = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     for invalid in [
         json!("0x"),
         json!("0x0"),
@@ -222,14 +132,13 @@ fn opaque_payloads_still_require_bounded_nonempty_canonical_hex() {
     ] {
         let mut r = response(99);
         r["data"][0]["tx"]["data"] = invalid;
-        assert!(b.validate_response(&r).is_err());
+        assert!(validate(&c, &r).is_err());
     }
 }
 
 #[test]
 fn response_echoes_and_gas_units_are_fail_closed() {
-    let (_f, c) = fixture();
-    let b = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     let cases = [
         ("/data/0/routerResult/chainIndex", json!("1")),
         ("/data/0/routerResult/fromTokenAmount", json!("1")),
@@ -254,18 +163,17 @@ fn response_echoes_and_gas_units_are_fail_closed() {
             .as_object_mut()
             .unwrap()
             .insert(key.into(), value);
-        assert!(b.validate_response(&r).is_err(), "accepted {pointer}");
+        assert!(validate(&c, &r).is_err(), "accepted {pointer}");
     }
 }
 
 #[test]
 fn opaque_allowlisted_calldata_requires_preview_and_never_claims_verified_recipient_or_minimum() {
-    let (_f, c) = fixture();
+    let c = fixture();
     let mut r = response(99);
     r["data"][0]["tx"]["data"] = json!("0x123456780000");
     r["data"][0]["tx"]["recipient"] = json!(WALLET);
-    let b = RouteActionBuilder::new(&c).unwrap();
-    let call = b.validate_response(&r).unwrap();
+    let call = validate(&c, &r).unwrap();
     assert_eq!(call["route_validation"]["requires_runtime_preview"], true);
     assert_eq!(call["route_validation"]["recipient_verified"], false);
     assert_eq!(call["route_validation"]["calldata_min_out_verified"], false);
@@ -277,218 +185,59 @@ fn opaque_allowlisted_calldata_requires_preview_and_never_claims_verified_recipi
         .as_object_mut()
         .unwrap()
         .remove("minReceiveAmount");
-    assert!(b.validate_response(&r).is_err());
-}
-
-#[tokio::test]
-async fn retries_only_readonly_500_and_429_with_new_auth_each_time() {
-    let (_f, c) = fixture();
-    let (origin, mut rx, h) = server(vec![
-        (500, String::new(), "synthetic-secret".into()),
-        (429, "Retry-After: 0\r\n".into(), "rate limited".into()),
-        (200, String::new(), response(99).to_string()),
-    ])
-    .await;
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    assert!(b.build(&json!({})).await.is_ok());
-    h.await.unwrap();
-    let mut stamps = Vec::new();
-    for _ in 0..3 {
-        let r = rx.recv().await.unwrap();
-        assert!(r.starts_with("GET /api/v6/dex/aggregator/swap?"));
-        stamps.push(
-            r.lines()
-                .find(|l| l.starts_with("ok-access-timestamp:"))
-                .unwrap()
-                .to_string(),
-        );
-    }
-    assert_ne!(stamps[0], stamps[1]);
-    assert_ne!(stamps[1], stamps[2]);
-}
-
-#[tokio::test]
-async fn rejects_redirects_without_forwarding_authentication() {
-    let (_f, c) = fixture();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let dest = format!("http://{}/steal", listener.local_addr().unwrap());
-    let (origin, mut rx, h) =
-        server(vec![(302, format!("Location: {dest}\r\n"), String::new())]).await;
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    assert!(b.build(&json!({})).await.unwrap_err().contains("302"));
-    h.await.unwrap();
-    assert!(rx.recv().await.is_some());
-    assert!(
-        tokio::time::timeout(Duration::from_millis(30), listener.accept())
-            .await
-            .is_err()
-    );
-}
-
-#[tokio::test]
-async fn malformed_json_business_errors_and_4xx_never_retry_or_echo_server_secrets() {
-    let (_f, c) = fixture();
-    for (status, body) in [
-        (200, "synthetic-secret not json".to_string()),
-        (
-            200,
-            json!({"code":"51000","msg":"synthetic-secret","data":[]}).to_string(),
-        ),
-        (200, json!({"code":0,"data":[]}).to_string()),
-        (200, json!({"code":"0","data":[{},{}]}).to_string()),
-        (200, json!({"code":"0","data":[{"tx":null}]}).to_string()),
-        (401, "synthetic-secret".into()),
-    ] {
-        let (origin, mut rx, h) = server(vec![(status, String::new(), body)]).await;
-        let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-        let e = b.build(&json!({})).await.unwrap_err();
-        assert!(!e.contains("synthetic"));
-        assert!(
-            !e.contains("request failed"),
-            "retried invalid response: {e}"
-        );
-        h.await.unwrap();
-        assert!(rx.recv().await.is_some());
-        assert!(rx.try_recv().is_err());
-    }
-}
-
-#[tokio::test]
-async fn retries_are_bounded_and_retry_after_never_shortened() {
-    let (_f, c) = fixture();
-    let (origin, mut rx, h) = server(vec![(500, String::new(), String::new()); 3]).await;
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    assert!(b
-        .build(&json!({}))
-        .await
-        .unwrap_err()
-        .contains("retry budget exhausted"));
-    h.await.unwrap();
-    let mut count = 0;
-    while rx.try_recv().is_ok() {
-        count += 1;
-    }
-    assert_eq!(count, 3);
-    let (origin, mut rx, h) =
-        server(vec![(429, "Retry-After: 100\r\n".into(), String::new())]).await;
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    assert!(b.build(&json!({})).await.unwrap_err().contains("budget"));
-    h.await.unwrap();
-    assert!(rx.recv().await.is_some());
-    assert!(rx.try_recv().is_err());
-}
-
-#[tokio::test]
-async fn absolute_deadline_and_max_wait_cancel_retry_sleep_before_another_request() {
-    let (_f, mut c) = fixture();
-    c["deadline_unix_ms"] = json!(unix_ms().unwrap() - 1);
-    let (origin, mut rx, h) = server(vec![(200, String::new(), response(99).to_string())]).await;
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    assert!(b.build(&json!({})).await.unwrap_err().contains("deadline"));
-    assert!(rx.try_recv().is_err());
-    h.abort();
-    for absolute in [true, false] {
-        c["deadline_unix_ms"] = json!(if absolute {
-            unix_ms().unwrap() + 30
-        } else {
-            u64::MAX
-        });
-        c["max_wait_ms"] = json!(if absolute { 1000 } else { 30 });
-        c["retry_backoff_ms"] = json!(200);
-        let (origin, mut rx, h) = server(vec![
-            (500, String::new(), String::new()),
-            (200, String::new(), response(99).to_string()),
-        ])
-        .await;
-        let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-        let start = tokio::time::Instant::now();
-        assert!(b.build(&json!({})).await.is_err());
-        assert!(start.elapsed() < Duration::from_millis(300));
-        assert!(rx.recv().await.is_some());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(rx.try_recv().is_err());
-        h.abort();
-    }
-}
-
-#[tokio::test]
-async fn request_timeout_and_caller_cancellation_stop_work_without_hidden_background_retries() {
-    let (_f, mut c) = fixture();
-    c["timeout_ms"] = json!(30);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    let b = RouteActionBuilder::new_with_origin(&c, &origin).unwrap();
-    let event = json!({});
-    let work = b.build(&event);
-    let accept = async {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut buffer = [0u8; 8192];
-        let _ = stream.read(&mut buffer).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-    let (result, _) = tokio::join!(work, accept);
-    assert!(result.is_err());
-    let event = json!({});
-    let mut work = Box::pin(b.build(&event));
-    tokio::select! { result=&mut work=>panic!("unexpected early result {result:?}"), accepted=listener.accept()=> { let (_socket,_)=accepted.unwrap(); } }
-    drop(work);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), listener.accept())
-            .await
-            .is_err()
-    );
+    assert!(validate(&c, &r).is_err());
 }
 
 #[test]
-fn duration_bounds_prevent_instant_overflow_and_additional_signing_is_not_silently_dropped() {
-    let (_f, c) = fixture();
-    for key in [
-        "timeout_ms",
-        "connect_timeout_ms",
-        "max_wait_ms",
-        "min_request_interval_ms",
-        "retry_backoff_ms",
+fn malformed_or_ambiguous_business_envelopes_are_refused_without_echoing_provider_text() {
+    let c = fixture();
+    for body in [
+        json!({"code":"51000","msg":"synthetic-secret","data":[]}),
+        json!({"code":0,"data":[]}),
+        json!({"code":"0","data":[]}),
+        json!({"code":"0","data":[{},{}]}),
+        json!({"code":"0","data":[{"tx":null}]}),
+        json!({"code":"0","data":[{"tx":[]}]}),
+        json!({"data":[]}),
     ] {
-        let mut bad = c.clone();
-        bad[key] = json!(u64::MAX);
-        assert!(
-            RouteActionBuilder::new(&bad).is_err(),
-            "accepted unbounded {key}"
-        );
+        let e = validate(&c, &body).err().unwrap();
+        assert!(!e.contains("synthetic"), "provider text leaked: {e}");
     }
-    let b = RouteActionBuilder::new(&c).unwrap();
+}
+
+#[test]
+fn additional_signing_requirements_and_slippage_echo_mismatch_are_refused() {
+    let c = fixture();
     let mut r = response(99);
     r["data"][0]["tx"]["signatureData"] = json!(["0x1234"]);
     assert!(
-        b.validate_response(&r).is_err(),
+        validate(&c, &r).is_err(),
         "additional signing requirements lost"
     );
+    // An empty placeholder means "nothing extra to sign" and stays valid.
+    let mut r = response(99);
+    r["data"][0]["tx"]["signatureData"] = json!([""]);
+    assert!(validate(&c, &r).is_ok());
     let mut r = response(99);
     r["data"][0]["tx"]["slippagePercent"] = json!("50");
-    assert!(b.validate_response(&r).is_err(), "slippage echo mismatch");
+    assert!(validate(&c, &r).is_err(), "slippage echo mismatch accepted");
 }
 
 #[test]
 fn opaque_router_is_pinned_independently_of_the_configured_approval_spender() {
     // Aggregator entry router and allowance target may differ. Neither is inferred from ABI.
     // The signing path separately validates bounded allowance consumption for the pinned spender.
-    let (_f, c) = fixture();
+    let c = fixture();
     let mut r = response(99);
     r["data"][0]["approveContract"] = json!(WALLET);
     assert!(
-        RouteActionBuilder::new(&c)
-            .unwrap()
-            .validate_response(&r)
-            .is_ok(),
+        validate(&c, &r).is_ok(),
         "undocumented approval echo must not fail the swap"
     );
     let mut wrong_spender = c;
     wrong_spender["expected_spender"] = json!(INPUT);
     assert!(
-        RouteActionBuilder::new(&wrong_spender)
-            .unwrap()
-            .validate_response(&response(99))
-            .is_ok(),
+        validate(&wrong_spender, &response(99)).is_ok(),
         "do not infer that router and approval spender must be equal"
     );
 }
@@ -498,18 +247,17 @@ fn zero_minimum_is_refused_but_the_reported_minimum_is_not_re_derived_locally() 
     // `minReceiveAmount` is documented as the minimum received at the slippage limit: the provider's
     // number inside the calldata. Recomputing a floor from the quote only second-guesses its slippage
     // arithmetic, so only "missing/zero" is refused here.
-    let (_f, c) = fixture();
-    let b = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     let mut r = response(99);
     r["data"][0]["tx"]["data"] = json!("0x12345678");
     r["data"][0]["tx"]["minReceiveAmount"] = json!("0");
-    assert!(b.validate_response(&r).is_err(), "zero minimum accepted");
+    assert!(validate(&c, &r).is_err(), "zero minimum accepted");
     let mut r = response(99);
     r["data"][0]["tx"]["data"] = json!("0x12345678");
     r["data"][0]["routerResult"]["toTokenAmount"] = json!("10000");
     r["data"][0]["tx"]["minReceiveAmount"] = json!("1");
     assert!(
-        b.validate_response(&r).is_ok(),
+        validate(&c, &r).is_ok(),
         "a reported minimum is no longer re-derived from the quote"
     );
 }
@@ -519,18 +267,14 @@ fn undocumented_approval_metadata_is_ignored_instead_of_failing_the_swap() {
     // Neither `approveTransaction` nor its encoded form appears in the documented swap schema.
     // Validating it only produced failures, so any value is ignored; the real signal for "this swap
     // expects an approval" is a non-empty `signatureData`, which is still refused.
-    let (_f, c) = fixture();
-    let b = RouteActionBuilder::new(&c).unwrap();
+    let c = fixture();
     for value in [
         json!(json!({"approveContract": WALLET, "approveTxCalldata": "0x"}).to_string()),
         json!("malformed synthetic-secret"),
     ] {
         let mut r = response(99);
         r["data"][0]["approveTransaction"] = value;
-        assert!(
-            b.validate_response(&r).is_ok(),
-            "approval metadata rejected"
-        );
+        assert!(validate(&c, &r).is_ok(), "approval metadata rejected");
     }
 }
 
@@ -556,22 +300,15 @@ const WALLET: &str = "0x1111111111111111111111111111111111111111";
 const ROUTER: &str = "0x2222222222222222222222222222222222222222";
 const INPUT: &str = "0x3333333333333333333333333333333333333333";
 const OUTPUT: &str = "0x4444444444444444444444444444444444444444";
-fn fixture() -> (tempfile::NamedTempFile, Value) {
-    use std::io::Write;
-    let mut f = tempfile::NamedTempFile::new_in(std::env::temp_dir()).unwrap();
-    f.write_all(br#"{"api_key":"synthetic-key","secret_key":"synthetic-secret","passphrase":"synthetic-pass"}"#).unwrap();
-    std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
-    let c = json!({"chain_index":"56","binance_chain_id":"56","from_token_address":INPUT,
+fn fixture() -> Value {
+    json!({"chain_index":"56","binance_chain_id":"56","from_token_address":INPUT,
       "to_token_address":OUTPUT,"amount":"10000000000000000001","slippage_percent":"0.5",
       "user_wallet_address":WALLET,"expected_spender":ROUTER,"allowed_router_addresses":[ROUTER],
-      "max_value_wei":"0","max_gas_limit":2000000,
-      "deadline_unix_ms":u64::MAX,"timeout_ms":300,"connect_timeout_ms":100,"max_wait_ms":1500,
-      "min_request_interval_ms":1,"max_retries":2,"retry_backoff_ms":5,"credential_file":f.path()});
-    (f, c)
+      "max_value_wei":"0","max_gas_limit":2000000})
 }
 #[test]
 fn removed_compatibility_fields_are_unknown_not_ignored() {
-    let (_f, c) = fixture();
+    let c = fixture();
     for (key, value) in [
         ("allowed_selectors", json!([])),
         ("require_runtime_preview", json!(false)),
@@ -581,7 +318,7 @@ fn removed_compatibility_fields_are_unknown_not_ignored() {
         let mut old = c.clone();
         old[key] = value;
         assert!(
-            RouteActionBuilder::new(&old).is_err(),
+            validate(&old, &response(99)).is_err(),
             "still accepted {key}"
         );
     }
@@ -589,8 +326,8 @@ fn removed_compatibility_fields_are_unknown_not_ignored() {
 
 #[test]
 fn strict_config_accepts_exact_integer_rejects_unknown_or_unsafe_fields() {
-    let (_f, c) = fixture();
-    assert!(RouteActionBuilder::new(&c).is_ok());
+    let c = fixture();
+    assert!(validate(&c, &response(99)).is_ok());
     for (key, value) in [
         ("unknown", json!(1)),
         ("amount", json!(1.5)),
@@ -600,11 +337,11 @@ fn strict_config_accepts_exact_integer_rejects_unknown_or_unsafe_fields() {
         ("chain_index", json!("501")),
         ("expected_spender", json!("not-an-address")),
         ("allowed_router_addresses", json!([])),
-        ("max_wait_ms", json!(0)),
+        ("gas_buffer_percent", json!(0)),
     ] {
         let mut bad = c.clone();
         bad[key] = value;
-        assert!(RouteActionBuilder::new(&bad).is_err(), "accepted {key}");
+        assert!(validate(&bad, &response(99)).is_err(), "accepted {key}");
     }
 }
 
@@ -631,53 +368,51 @@ fn gas_buffer_widens_the_cap_without_exceeding_the_configured_ceiling() {
 
 #[test]
 fn credential_file_is_regular_owner_only_and_errors_do_not_echo_secrets() {
-    let (f, c) = fixture();
+    use std::io::Write;
+    let mut f = tempfile::NamedTempFile::new_in(std::env::temp_dir()).unwrap();
+    f.write_all(br#"{"api_key":"synthetic-key","secret_key":"synthetic-secret","passphrase":"synthetic-pass"}"#).unwrap();
+    std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+    let path = f.path().to_str().unwrap().to_owned();
+    assert!(load_credentials(&path).is_ok());
     std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(RouteActionBuilder::new(&c).is_err());
+    assert!(load_credentials(&path).is_err());
     std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
     std::fs::write(f.path(),br#"{"api_key":"synthetic-key","secret_key":"synthetic-secret","passphrase":"synthetic-pass","unexpected":true}"#).unwrap();
-    let e = RouteActionBuilder::new(&c).err().unwrap();
+    let Err(e) = load_credentials(&path) else {
+        panic!("credential schema with unknown fields accepted");
+    };
     assert!(!e.contains("synthetic"));
     let dir = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
     let link = dir.path().join("credentials");
     std::os::unix::fs::symlink(f.path(), &link).unwrap();
-    let mut c = c;
-    c["credential_file"] = json!(link);
-    assert!(RouteActionBuilder::new(&c).is_err());
+    assert!(load_credentials(link.to_str().unwrap()).is_err());
 }
 
 #[test]
 fn price_impact_threshold_is_compared_exactly_and_missing_values_are_tolerated() {
-    let (f, mut c) = fixture();
+    let mut c = fixture();
     c["max_price_impact_percent"] = json!("1.5");
-    let b = RouteActionBuilder::new(&c).unwrap();
     // Within threshold (1.49 < 1.5) passes; the field is advisory and may be absent.
     let mut ok = response(99);
     ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("1.49");
-    assert!(b.validate_response(&ok).is_ok());
+    assert!(validate(&c, &ok).is_ok());
     ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("1.5");
-    assert!(b.validate_response(&ok).is_ok(), "equal is not above");
+    assert!(validate(&c, &ok).is_ok(), "equal is not above");
     // Above threshold is refused before anything is signed.
     // OKX returns a negative impact when the trade is favourable (measured: 1 U → BNB = "-0.08").
     ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("-0.08");
-    assert!(
-        b.validate_response(&ok).is_ok(),
-        "favourable impact refused"
-    );
+    assert!(validate(&c, &ok).is_ok(), "favourable impact refused");
     ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("-99");
-    assert!(
-        b.validate_response(&ok).is_ok(),
-        "large negative impact refused"
-    );
+    assert!(validate(&c, &ok).is_ok(), "large negative impact refused");
     ok.pointer_mut("/data/0/routerResult").unwrap()["priceImpactPercent"] = json!("1.51");
-    let err = b.validate_response(&ok).unwrap_err();
+    let err = validate(&c, &ok).unwrap_err();
     assert!(err.contains("price impact"), "{err}");
     ok.pointer_mut("/data/0/routerResult")
         .unwrap()
         .as_object_mut()
         .unwrap()
         .remove("priceImpactPercent");
-    assert!(b.validate_response(&ok).is_ok());
+    assert!(validate(&c, &ok).is_ok());
     // Exact decimal comparison, no floating point.
     assert_eq!(decimal_greater("0.06", "2"), Some(false));
     assert_eq!(decimal_greater("2.0", "2"), Some(false));
@@ -687,9 +422,8 @@ fn price_impact_threshold_is_compared_exactly_and_missing_values_are_tolerated()
     // A malformed threshold is rejected at load.
     let mut bad = c.clone();
     bad["max_price_impact_percent"] = json!("abc");
-    assert!(RouteActionBuilder::new(&bad).is_err());
+    assert!(validate(&bad, &response(99)).is_err());
     let mut too_big = c;
     too_big["max_price_impact_percent"] = json!("101");
-    assert!(RouteActionBuilder::new(&too_big).is_err());
-    drop(f);
+    assert!(validate(&too_big, &response(99)).is_err());
 }
