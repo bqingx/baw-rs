@@ -1,5 +1,5 @@
 use super::*;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn event() -> Event {
@@ -270,4 +270,24 @@ async fn bounded_queue_never_waits_for_network_capacity() {
     );
     assert_eq!(notifier.status()["droppedQueueEvents"], 32);
     job.abort();
+}
+
+#[test]
+fn outcome_replaces_the_claim_atomically_instead_of_rewriting_it_in_place() {
+    let root = root();
+    let key = event().key();
+    let claimed = claim(root.path(), &key).unwrap().unwrap();
+    let claimed_inode = claimed.metadata().unwrap().ino();
+    drop(claimed);
+    record(root.path(), &key, false).unwrap();
+    let dir = root.path().join(".task-notifications");
+    let marker = dir.join(format!("{key}.json"));
+    // A new file published by rename: no reader can ever observe a truncated record, and the
+    // claim name itself never disappears, so at-most-once still holds.
+    assert_ne!(std::fs::metadata(&marker).unwrap().ino(), claimed_inode);
+    assert_eq!(
+        std::fs::read(&marker).unwrap(),
+        b"{\"state\":\"FAILED_OR_UNKNOWN\"}".to_vec()
+    );
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
 }

@@ -1,4 +1,5 @@
 //! Post-event, read-only OKX V6 swap construction. Never signs or submits a transaction.
+use crate::util::uint::uint256_canonical;
 use num_bigint::BigUint;
 use serde::Deserialize;
 use serde_json::Value;
@@ -182,17 +183,6 @@ pub(crate) fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
-fn uint(s: &str) -> Result<BigUint, String> {
-    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) || (s.len() > 1 && s.starts_with('0'))
-    {
-        return Err("expected canonical decimal uint256 string".into());
-    }
-    let n = BigUint::parse_bytes(s.as_bytes(), 10).ok_or("invalid uint256")?;
-    if n.bits() > 256 {
-        return Err("uint256 overflow".into());
-    }
-    Ok(n)
-}
 fn hex_shape(s: &str, bytes: usize) -> bool {
     s.len() == bytes * 2 + 2 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -310,10 +300,10 @@ impl RouteActionBuilder {
             return Err("OKX transaction wallet/router mismatch".into());
         }
         let value = field(tx, "value")?;
-        if uint(value)? > uint(&c.max_value_wei)? {
+        if uint256_canonical(value)? > uint256_canonical(&c.max_value_wei)? {
             return Err("OKX tx.value exceeds wei cap".into());
         }
-        let gas_number = uint(field(tx, "gas")?)?;
+        let gas_number = uint256_canonical(field(tx, "gas")?)?;
         let gas = gas_number
             .to_str_radix(10)
             .parse::<u64>()
@@ -326,7 +316,7 @@ impl RouteActionBuilder {
         }
         let gas_cap = buffered_gas_limit(gas, c.gas_buffer_percent, c.gas_buffer_absolute, ceiling);
         if let Some(n) = tx.get("gasLimit") {
-            if uint(n.as_str().ok_or("invalid gasLimit units")?)? != gas_number {
+            if uint256_canonical(n.as_str().ok_or("invalid gasLimit units")?)? != gas_number {
                 return Err("conflicting gas/gasLimit units".into());
             }
         }
@@ -345,7 +335,7 @@ impl RouteActionBuilder {
         {
             return Err("malformed calldata".into());
         }
-        let minimum = uint(field(tx, "minReceiveAmount")?)?;
+        let minimum = uint256_canonical(field(tx, "minReceiveAmount")?)?;
         if minimum.bits() == 0 && !c.allow_zero_min_out {
             return Err("zero minimum output forbidden".into());
         }
@@ -368,7 +358,7 @@ impl RouteActionBuilder {
         let c: Config = serde_json::from_value(config.clone())
             .map_err(|_| "invalid route config (strict fields/types)")?;
         if c.chain_index != c.binance_chain_id
-            || uint(&c.chain_index)?.bits() == 0
+            || uint256_canonical(&c.chain_index)?.bits() == 0
             || c.chain_index == "501"
         {
             return Err("explicit matching EVM chain identifiers required".into());
@@ -386,10 +376,10 @@ impl RouteActionBuilder {
         if eq_addr(&c.from_token_address, &c.to_token_address) {
             return Err("identical route tokens".into());
         }
-        if uint(&c.amount)?.bits() == 0 {
+        if uint256_canonical(&c.amount)?.bits() == 0 {
             return Err("amount must be positive".into());
         }
-        uint(&c.max_value_wei)?;
+        uint256_canonical(&c.max_value_wei)?;
         let parts: Vec<_> = c.slippage_percent.split('.').collect();
         if parts.len() > 2
             || parts

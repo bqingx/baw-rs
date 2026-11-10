@@ -3,14 +3,15 @@
 //! Every wallet-scoped command names its wallet with the global `--wallet <NAME>` flag; the
 //! name is resolved here and forwarded to the resident daemon as `Request::Run { name, argv }`.
 //! Management (`wallets add|remove|list|status|serve|stop`) never needs a wallet.
+use crate::util::fsx::{atomic_write, create_private_dir, private_dir, private_file, Step};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
-    fs::{File, OpenOptions},
-    io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+    fs::File,
+    io::Read,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
@@ -176,24 +177,13 @@ pub struct Resolved {
 
 type Registry = BTreeMap<String, Entry>;
 
+// Wallet names use the same 1..=64 ASCII identifier shape as operation ids.
 fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    crate::util::validate::operation_id(name)
 }
 
 fn invalid_name(name: &str) -> String {
     format!("invalid wallet name '{name}': 1..64 ASCII letters, digits, hyphens or underscores")
-}
-
-pub(crate) fn private_dir(path: &Path) -> Result<(), String> {
-    let m = std::fs::symlink_metadata(path).map_err(|_| "cannot inspect private directory")?;
-    if !m.is_dir() || m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o7777 != 0o700 {
-        return Err("directory must be owned, private (0700), and not a symlink".into());
-    }
-    Ok(())
 }
 
 fn registry_dir(path: &Path, create: bool) -> Result<(), String> {
@@ -214,44 +204,6 @@ fn registry_dir(path: &Path, create: bool) -> Result<(), String> {
             )
         }),
     }
-}
-
-/// Create `path` (and any missing ancestors) with 0700, then verify the leaf is private.
-fn create_private_dir(path: &Path) -> Result<(), String> {
-    if std::fs::symlink_metadata(path).is_ok() {
-        return private_dir(path);
-    }
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        if std::fs::symlink_metadata(parent).is_err() {
-            create_private_dir(parent)?;
-        }
-    }
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(path)
-        .map_err(|_| format!("cannot create directory {}", path.display()))?;
-    private_dir(path)
-}
-
-pub(crate) fn private_file(path: &Path, create: bool) -> Result<File, String> {
-    let f = OpenOptions::new()
-        .read(true)
-        .write(create)
-        .create(create)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|_| "cannot open private file")?;
-    let m = f.metadata().map_err(|_| "cannot inspect private file")?;
-    if !m.is_file()
-        || m.uid() != unsafe { libc::geteuid() }
-        || m.mode() & 0o7777 != 0o600
-        || m.nlink() != 1
-    {
-        return Err("file must be owned, private (0600), single-link and regular".into());
-    }
-    Ok(f)
 }
 
 fn lock_registry(path: &Path, exclusive: bool) -> Result<File, String> {
@@ -317,25 +269,14 @@ fn load(path: &Path) -> Result<Registry, String> {
 
 fn save(path: &Path, entries: &Registry) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(entries).map_err(|_| "cannot encode registry")?;
-    let temp = path.join(format!(
-        ".registry-{}-{:x}",
-        std::process::id(),
-        rand::random::<u64>()
-    ));
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp)
-        .map_err(|_| "cannot create registry update")?;
-    f.write_all(&bytes)
-        .and_then(|_| f.sync_all())
-        .map_err(|_| "cannot write registry")?;
-    std::fs::rename(&temp, path.join("registry.json")).map_err(|_| "cannot replace registry")?;
-    File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| "cannot sync registry")?;
-    Ok(())
+    let dir = crate::util::fsx::open_dir(path).map_err(|_| "cannot sync registry")?;
+    let published = atomic_write(&dir, c"registry.json", &bytes).map_err(|step| match step {
+        Step::Open => "cannot create registry update",
+        Step::Inspect | Step::Write | Step::Sync => "cannot write registry",
+        Step::Publish => "cannot replace registry",
+        Step::SyncDir => "cannot sync registry",
+    });
+    published.map_err(str::to_owned)
 }
 
 impl Entry {
@@ -515,17 +456,17 @@ fn add(
     }
     create_private_dir(&root)?;
     create_private_dir(&dir)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(&key)
+    let parent = key.parent().ok_or("cannot create identity file")?;
+    let leaf = key.file_name().ok_or("cannot create identity file")?;
+    let leaf = std::ffi::CString::new(leaf.as_encoded_bytes())
         .map_err(|_| "cannot create identity file")?;
-    file.write_all(random_identity().as_bytes())
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "cannot write identity file")?;
-    drop(file);
+    let parent = crate::util::fsx::open_dir(parent).map_err(|_| "cannot create identity file")?;
+    crate::util::fsx::create_private_once(&parent, &leaf, random_identity().as_bytes())
+        .map_err(|step| match step {
+            Step::Open => "cannot create identity file",
+            _ => "cannot write identity file",
+        })?
+        .ok_or("cannot create identity file")?;
     private_file(&key, false)?;
     register(registry, name, &dir, &key)?;
     Ok(json!({

@@ -118,7 +118,7 @@ pub fn speed_up_payload(args: &SpeedUpArgs) -> Result<Value, String> {
         "level": level,
     });
     if let Some(chain) = &args.binance_chain_id {
-        body["binanceChainId"] = json!(chain_id(chain)?);
+        body["binanceChainId"] = json!(crate::util::validate::chain_id_passthrough(chain)?);
     }
     Ok(body)
 }
@@ -127,7 +127,7 @@ pub fn speed_up_payload(args: &SpeedUpArgs) -> Result<Value, String> {
 pub fn cancel_payload(args: &CancelTxArgs) -> Result<Value, String> {
     let mut body = json!({ "originalTxHash": tx_hash(&args.tx_hash)? });
     if let Some(chain) = &args.binance_chain_id {
-        body["binanceChainId"] = json!(chain_id(chain)?);
+        body["binanceChainId"] = json!(crate::util::validate::chain_id_passthrough(chain)?);
     }
     Ok(body)
 }
@@ -135,7 +135,7 @@ pub fn cancel_payload(args: &CancelTxArgs) -> Result<Value, String> {
 fn resolve_payload(args: &ResolveDomainArgs) -> Result<Value, String> {
     Ok(json!({
         "name": domain(&args.name)?,
-        "binanceChainId": chain_id(&args.binance_chain_id)?,
+        "binanceChainId": crate::util::validate::chain_id_passthrough(&args.binance_chain_id)?,
     }))
 }
 
@@ -157,19 +157,6 @@ fn tx_hash(value: &str) -> Result<&str, String> {
         return Err(
             "invalid txHash format; expected 0x-prefixed hex string (66 characters)".into(),
         );
-    }
-    Ok(value)
-}
-
-/// Both leaves pass `binanceChainId` straight through (auto-detected from the tx hash
-/// when omitted), so only an empty, padded or control-character value is refused here.
-fn chain_id(value: &str) -> Result<&str, String> {
-    if value.is_empty()
-        || value.trim() != value
-        || value.len() > 32
-        || value.chars().any(char::is_control)
-    {
-        return Err("invalid binanceChainId".into());
     }
     Ok(value)
 }

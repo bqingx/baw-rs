@@ -1,4 +1,5 @@
 //! Read-only compatibility with explicit BAW file sessions.
+use crate::util::validate::is_uuid;
 use zeroize::Zeroizing;
 
 pub struct Credentials {
@@ -202,17 +203,6 @@ pub fn load(dir: &std::path::Path, instance: &str) -> Result<Credentials, String
         client_id,
         session_id,
     })
-}
-
-fn is_uuid(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(i, b)| {
-            if matches!(i, 8 | 13 | 18 | 23) {
-                b == b'-'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
 }
 
 #[cfg(test)]

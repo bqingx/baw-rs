@@ -654,10 +654,10 @@ async fn swap(
         crate::exec::execution::check_prepared_task()?;
         let policy = prepared::validate(api, a, client, &proof)?;
         let sender = policy.sender.clone();
-        let mut attempted = false;
+        let mut run = SwapRun::default();
         let mut output = crate::exec::execution::prepared_wallet_scope(
             policy,
-            perform_swap(client, dir, a, api, &sender, journal, &mut attempted),
+            perform_swap(client, dir, a, api, &sender, journal, &mut run),
         )
         .await?;
         output["autoApproval"] = proof["autoApproval"].clone();
@@ -702,8 +702,13 @@ async fn swap(
     ) {
         return prepared::proof(api, a, client, &sender, expires, approval);
     }
-    let mut attempted = false;
-    let result = perform_swap(client, dir, a, api, &sender, journal, &mut attempted).await;
+    let mut run = SwapRun {
+        // The second guard read is only needed when this run really submitted an approval.
+        approved: approval::submitted(&approval),
+        submitted: false,
+    };
+    let result = perform_swap(client, dir, a, api, &sender, journal, &mut run).await;
+    let attempted = run.submitted;
     match result {
         Ok(mut output) => {
             if !approval.is_null() {
@@ -719,6 +724,14 @@ async fn swap(
     }
 }
 
+/// Per-swap bookkeeping: whether an approval was submitted before this call and whether an
+/// execute request may have left the box.
+#[derive(Default)]
+struct SwapRun {
+    approved: bool,
+    submitted: bool,
+}
+
 async fn perform_swap(
     client: &mut Client,
     dir: &Path,
@@ -726,12 +739,14 @@ async fn perform_swap(
     api: &Okx,
     sender: &str,
     mut journal: Option<&mut OperationGuard>,
-    attempted: &mut bool,
+    run: &mut SwapRun,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
     let q = &a.quote;
-    // Standalone commands recheck after approval. Prepared tasks do not read remote state.
-    if crate::exec::execution::prepared_wallet().is_none() {
+    // A submitted approval can move the daily quota, developer mode or the chain write lock,
+    // so only then is the guard read again; without an approval the checks made at the start
+    // of the run still hold and are not repeated. Prepared tasks never read remote state.
+    if run.approved && crate::exec::execution::prepared_wallet().is_none() {
         crate::trade::safeguards(client, &q.binance_chain_id).await?;
     }
     let route = api.route_config(q, sender)?;
@@ -813,7 +828,7 @@ async fn perform_swap(
     if let Some(journal) = journal.as_deref_mut() {
         journal.checkpoint("swap_submitting", &json!({}))?;
     }
-    *attempted = true;
+    run.submitted = true;
     let before_execute_ms = started.elapsed().as_secs_f64() * 1000.0;
     let execute_started = std::time::Instant::now();
     client.last_http = Default::default();

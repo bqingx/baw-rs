@@ -15,7 +15,12 @@ pub fn bootstrap(dir: &Path, instance: &str, command: &AuthCommand) -> Result<Cr
     Store::open(dir, matches!(command, AuthCommand::Signin))?
         .credentials(instance, matches!(command, AuthCommand::Signin))
 }
-const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet/login";
+use crate::core::client::API;
+
+/// The login endpoints are the shared API prefix plus `/login`.
+fn login(suffix: &str) -> String {
+    format!("{API}/login{suffix}")
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Pending {
     client: String,
@@ -71,9 +76,7 @@ pub async fn run(
     match command {
         AuthCommand::Signin => {
             if !stored.session_id.is_empty() {
-                let existing = client
-                    .request(Method::GET, &format!("{API}/query"), None)
-                    .await;
+                let existing = client.request(Method::GET, &login("/query"), None).await;
                 if let Ok(data) = existing {
                     if data["connectionStatus"] == "CONNECTED" {
                         if data["walletCreateStatus"] == "CREATED" {
@@ -97,11 +100,11 @@ pub async fn run(
             use k256::elliptic_curve::sec1::ToEncodedPoint;
             let secret = k256::SecretKey::random(&mut rand::rngs::OsRng);
             let public = secret.public_key().to_encoded_point(true);
-            let stripped = crate::core::auth_store::hex(&public.as_bytes()[1..]);
+            let stripped = crate::util::validate::hex(&public.as_bytes()[1..]);
             drop(secret);
             let started = unix_ms()?;
             let baseline = store.baseline()?;
-            let data=client.request(Method::POST,API,Some(json!({"isFirstLogin":true,"os":if cfg!(target_os="macos"){"macOS"}else if cfg!(target_os="windows"){"Windows"}else{"Linux"},"publicKeyHex":stripped}))).await?;
+            let data=client.request(Method::POST,&login(""),Some(json!({"isFirstLogin":true,"os":if cfg!(target_os="macos"){"macOS"}else if cfg!(target_os="windows"){"Windows"}else{"Linux"},"publicKeyHex":stripped}))).await?;
             let qr = &data["qrInfo"];
             if data["connectionStatus"] != "UNCONNECTED" {
                 return Err("invalid login response".into());
@@ -169,9 +172,7 @@ pub async fn run(
         }
         AuthCommand::Signout => {
             let baseline = store.baseline()?;
-            let remote = client
-                .request(Method::POST, &format!("{API}/logout"), None)
-                .await;
+            let remote = client.request(Method::POST, &login("/logout"), None).await;
             client.invalidate();
             store
                 .save_cas(instance, &stored.client_id, "", &baseline)
@@ -196,7 +197,7 @@ async fn poll_until_created(
             let data = client
                 .request(
                     Method::POST,
-                    &format!("{API}/confirm"),
+                    &login("/confirm"),
                     Some(json!({"qrCodeId":qr_code_id})),
                 )
                 .await?;
@@ -206,9 +207,7 @@ async fn poll_until_created(
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         loop {
-            let data = client
-                .request(Method::GET, &format!("{API}/query"), None)
-                .await?;
+            let data = client.request(Method::GET, &login("/query"), None).await?;
             if data["connectionStatus"] == "CONNECTED" && data["walletCreateStatus"] == "CREATED" {
                 break;
             }
@@ -624,7 +623,7 @@ mod tests {
         assert_eq!(body["os"], "Linux");
         let public = body["publicKeyHex"].as_str().unwrap();
         assert_eq!(public.len(), 64);
-        let compressed = crate::core::auth_store::hex(&[2]) + public;
+        let compressed = crate::util::validate::hex(&[2]) + public;
         let sec1: Vec<u8> = (0..compressed.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&compressed[i..i + 2], 16).unwrap())

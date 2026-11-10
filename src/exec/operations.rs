@@ -7,11 +7,12 @@
 //!
 //! Read-only by construction: it opens the directory and files `O_NOFOLLOW`, requires 0700/0600
 //! ownership, and never creates, truncates or renames anything.
+use crate::util::fsx::{check_private_meta, open_at, open_private_dir, Kind};
+use crate::util::validate::operation_id;
 use clap::Args;
 use serde_json::{json, Value};
 use std::io::Read;
-use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::fd::AsRawFd;
 use std::path::Path;
 
 #[derive(Args, Debug, Clone)]
@@ -56,62 +57,26 @@ fn next_step(state: &str) -> &'static str {
     }
 }
 
-fn open_private_dir(path: &Path) -> Result<std::fs::File, String> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)
-        .map_err(|_| "cannot open wallet directory")?;
-    let meta = file
-        .metadata()
-        .map_err(|_| "cannot inspect wallet directory")?;
-    if !meta.is_dir() || meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o7777 != 0o700 {
-        return Err("wallet directory must be owned and private (0700)".into());
-    }
-    Ok(file)
-}
-
 fn read_record(dir: &Path, id: &str) -> Result<Value, String> {
-    if id.is_empty()
-        || id.len() > 64
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-    {
+    if !operation_id(id) {
         return Err("operation-id must contain 1..64 ASCII letters/digits/-/_".into());
     }
     let wallet = open_private_dir(dir)?;
-    let journal = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(dir.join(".baw-rs-operations"))
+    let journal = crate::util::fsx::open_dir(&dir.join(".baw-rs-operations"))
         .map_err(|_| format!("no operation journal entry for '{id}'"))?;
     let meta = journal
         .metadata()
         .map_err(|_| "cannot inspect operation journal")?;
-    if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o7777 != 0o700 {
+    if !check_private_meta(&meta, Kind::Dir) {
         return Err("operation journal must be owned and private".into());
     }
     let name = std::ffi::CString::new(format!("{id}.json")).map_err(|_| "invalid operation-id")?;
-    let fd = unsafe {
-        libc::openat(
-            journal.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
-        )
-    };
-    if fd < 0 {
-        return Err(format!("no operation journal entry for '{id}'"));
-    }
-    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let file = open_at(journal.as_raw_fd(), &name, libc::O_RDONLY, 0)
+        .map_err(|_| format!("no operation journal entry for '{id}'"))?;
     let m = file
         .metadata()
         .map_err(|_| "cannot inspect operation entry")?;
-    if !m.is_file()
-        || m.uid() != unsafe { libc::geteuid() }
-        || m.mode() & 0o7777 != 0o600
-        || m.nlink() != 1
-    {
+    if !check_private_meta(&m, Kind::File) {
         return Err("operation entry must be owned, private and regular".into());
     }
     let mut bytes = Vec::new();
@@ -149,12 +114,7 @@ fn list_ids(dir: &Path) -> Result<Vec<String>, String> {
         let Some(id) = name.strip_suffix(".json") else {
             continue;
         };
-        if id.len() <= 64
-            && !id.is_empty()
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-        {
+        if operation_id(id) {
             ids.push(id.to_owned());
         }
     }

@@ -39,7 +39,7 @@ fn journal(entry: &Entry, resolved: &std::collections::BTreeSet<String>) -> Valu
     if std::fs::symlink_metadata(&path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
         return json!({"readStatus":"missing","complete":true,"operations":[]});
     }
-    if crate::daemon::wallets::private_dir(&path).is_err() {
+    if crate::util::fsx::private_dir(&path).is_err() {
         return json!({"readStatus":"unavailable","complete":false,"operations":[]});
     }
     let Ok(files) = std::fs::read_dir(path) else {
@@ -60,13 +60,7 @@ fn journal(entry: &Entry, resolved: &std::collections::BTreeSet<String>) -> Valu
         let Some(id) = name
             .to_str()
             .and_then(|s| s.strip_suffix(".json"))
-            .filter(|id| {
-                !id.is_empty()
-                    && id.len() <= 64
-                    && id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            })
+            .filter(|id| crate::util::validate::operation_id(id))
         else {
             complete = false;
             continue;

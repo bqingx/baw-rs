@@ -1,7 +1,11 @@
 //! Private on-disk preview cache: a preview is bound to its digest and may be executed
 //! only within its TTL. Files live under the wallet directory, opened relative to an
 //! owned 0700 directory without following links.
-use super::{sha, value_sha, MAX_CACHE};
+use super::{value_sha, MAX_CACHE};
+use crate::util::{
+    fsx::{create_private_once, open_at as open_private_at},
+    validate::sha256_hex,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::File;
@@ -9,10 +13,7 @@ use std::path::Path;
 use std::{
     ffi::CString,
     io::{Read, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::fs::MetadataExt,
-    },
+    os::{fd::AsRawFd, unix::fs::MetadataExt},
     path::Component,
 };
 
@@ -49,30 +50,15 @@ fn ioerr() -> String {
     "secure preview cache I/O failed".into()
 }
 fn openat(parent: &File, name: &CString, flags: i32, mode: u32) -> Result<File, String> {
-    // SAFETY: valid directory descriptor and NUL-terminated path; returned descriptor is owned.
-    let fd = unsafe {
-        libc::openat(
-            parent.as_raw_fd(),
-            name.as_ptr(),
-            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            mode,
-        )
-    };
-    if fd < 0 {
-        return Err(ioerr());
-    }
-    Ok(unsafe { File::from_raw_fd(fd) })
+    open_private_at(parent.as_raw_fd(), name, flags, mode).map_err(|_| ioerr())
 }
 fn private(meta: &std::fs::Metadata, dir: bool) -> Result<(), String> {
-    // SAFETY: geteuid has no preconditions.
-    if meta.uid() != unsafe { libc::geteuid() }
-        || meta.mode() & 0o7777 != if dir { 0o700 } else { 0o600 }
-        || if dir {
-            !meta.is_dir()
-        } else {
-            !meta.is_file() || meta.nlink() != 1
-        }
-    {
+    let kind = if dir {
+        crate::util::fsx::Kind::Dir
+    } else {
+        crate::util::fsx::Kind::File
+    };
+    if !crate::util::fsx::check_private_meta(meta, kind) {
         return Err("preview cache must be owner-only, regular and not linked".into());
     }
     Ok(())
@@ -115,7 +101,7 @@ impl Cache {
         })
     }
     pub(super) fn name(id: &str) -> CString {
-        CString::new(format!("{}.json", sha(id.as_bytes()))).unwrap()
+        CString::new(format!("{}.json", sha256_hex(id.as_bytes()))).unwrap()
     }
     pub(super) fn read(&self, id: &str) -> Result<Cached, String> {
         let file = openat(
@@ -139,7 +125,7 @@ impl Cache {
         serde_json::from_slice(&bytes).map_err(|_| "preview cache is malformed".into())
     }
     pub(super) fn consumed_name(id: &str) -> CString {
-        CString::new(format!("{}.consumed", sha(id.as_bytes()))).unwrap()
+        CString::new(format!("{}.consumed", sha256_hex(id.as_bytes()))).unwrap()
     }
     pub(super) fn check_unconsumed(&self, id: &str) -> Result<(), String> {
         let name = Self::consumed_name(id);
@@ -161,17 +147,15 @@ impl Cache {
         Ok(())
     }
     pub(super) fn consume(&self, id: &str, digest: &str) -> Result<(), String> {
-        let mut marker = openat(
-            &self.dir,
-            &Self::consumed_name(id),
-            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
-            0o600,
-        )
-        .map_err(|_| "preview already consumed or consumption could not be secured")?;
-        marker.write_all(digest.as_bytes()).map_err(|_| ioerr())?;
-        marker.sync_all().map_err(|_| ioerr())?;
-        self.dir.sync_all().map_err(|_| ioerr())
+        let claimed =
+            create_private_once(&self.dir, &Self::consumed_name(id), digest.as_bytes())
+                .map_err(|_| "preview already consumed or consumption could not be secured")?;
+        if claimed.is_none() {
+            return Err("preview already consumed or consumption could not be secured".into());
+        }
+        Ok(())
     }
+
     pub(super) fn store(&self, cached: &Cached) -> Result<(), String> {
         let bytes = serde_json::to_vec(cached).map_err(|_| "cannot serialize preview cache")?;
         if bytes.len() as u64 > MAX_CACHE {

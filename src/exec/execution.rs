@@ -132,12 +132,7 @@ pub fn require_consent(confirmed: bool, operation_id: Option<&str>) -> Result<&s
         return Err("mutating command requires explicit --confirm and --operation-id; never auto-retry an uncertain submission".into());
     }
     let id = operation_id.ok_or("mutating command requires --operation-id")?;
-    if id.is_empty()
-        || id.len() > 64
-        || !id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-    {
+    if !crate::util::validate::operation_id(id) {
         return Err("operation-id must contain 1..64 ASCII letters/digits/-/_".into());
     }
     Ok(id)
@@ -162,53 +157,20 @@ impl OperationGuard {
         intent: &Value,
         wallet_binding: &str,
     ) -> Result<Self, String> {
-        use sha2::{Digest, Sha256};
-        use std::io::Write;
-        use std::os::fd::{AsRawFd, FromRawFd};
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        if id.is_empty()
-            || id.len() > 64
-            || !id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-        {
+        use std::os::fd::AsRawFd;
+        if !crate::util::validate::operation_id(id) {
             return Err("operation-id must contain 1..64 ASCII letters/digits/-/_".into());
         }
-        let directory = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(dir.components().collect::<std::path::PathBuf>())
-            .map_err(|_| "cannot open wallet directory")?;
-        let meta = directory
-            .metadata()
-            .map_err(|_| "cannot inspect wallet directory")?;
-        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o7777 != 0o700 {
-            return Err("wallet directory must be owned and private (0700)".into());
-        }
+        let directory =
+            crate::util::fsx::open_private_dir(&dir.components().collect::<std::path::PathBuf>())?;
         fn opened_at(dir: i32, name: &std::ffi::CStr, flags: i32) -> Result<std::fs::File, String> {
-            let fd = unsafe {
-                libc::openat(
-                    dir,
-                    name.as_ptr(),
-                    flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
-                    0o600,
-                )
-            };
-            if fd < 0 {
-                return Err("cannot create private operation file; an existing operation-id is never resubmitted".into());
-            }
-            let file = unsafe { std::fs::File::from_raw_fd(fd) };
-            let m = file
-                .metadata()
-                .map_err(|_| "cannot inspect operation file")?;
-            if !m.is_file()
-                || m.uid() != unsafe { libc::geteuid() }
-                || m.mode() & 0o7777 != 0o600
-                || m.nlink() != 1
-            {
-                return Err("operation file must be owned, private and regular".into());
-            }
-            Ok(file)
+            crate::util::fsx::open_private_file_at(dir, name, flags, 0o600).map_err(|error| {
+                match error {
+                    crate::util::fsx::OpenError::Open => "cannot create private operation file; an existing operation-id is never resubmitted",
+                    crate::util::fsx::OpenError::Inspect => "operation file must be owned, private and regular",
+                }
+                .to_owned()
+            })
         }
         let lock = opened_at(
             directory.as_raw_fd(),
@@ -227,49 +189,41 @@ impl OperationGuard {
         if created < 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST) {
             return Err("cannot create operation journal".into());
         }
-        let fd = unsafe {
-            libc::openat(
-                directory.as_raw_fd(),
-                c".baw-rs-operations".as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err("cannot open operation journal".into());
-        }
-        let journal = unsafe { std::fs::File::from_raw_fd(fd) };
+        let journal = crate::util::fsx::open_at(
+            directory.as_raw_fd(),
+            c".baw-rs-operations",
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        )
+        .map_err(|_| "cannot open operation journal")?;
         let m = journal
             .metadata()
             .map_err(|_| "cannot inspect operation journal")?;
-        if m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o7777 != 0o700 {
+        if !crate::util::fsx::check_private_meta(&m, crate::util::fsx::Kind::Dir) {
             return Err("operation journal must be owned and private".into());
         }
         let name =
             std::ffi::CString::new(format!("{id}.json")).map_err(|_| "invalid operation-id")?;
-        let mut record = opened_at(
-            journal.as_raw_fd(),
-            &name,
-            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
-        )?;
         let encoded = serde_json::to_vec(
             &serde_json::json!({"action":action,"intent":intent,"wallet":wallet_binding}),
         )
         .map_err(|_| "cannot fingerprint operation")?;
-        let hash = format!("{:x}", Sha256::digest(encoded));
+        let hash = crate::util::validate::sha256_hex(&encoded);
         let metadata = serde_json::json!({"state":"SUBMITTING","action":action,"intentSha256":hash,"createdAtMs":chrono::Utc::now().timestamp_millis()});
-        record
-            .write_all(metadata.to_string().as_bytes())
-            .map_err(|_| "cannot persist operation intent")?;
-        record
-            .sync_all()
-            .map_err(|_| "cannot sync operation intent")?;
-        journal
-            .sync_all()
-            .map_err(|_| "cannot sync operation journal")?;
+        // The `O_EXCL` creation is the duplicate guard: an existing operation-id is never
+        // resubmitted, and the record body is synced before the wallet directory is.
+        crate::util::fsx::create_private_once(&journal, &name, metadata.to_string().as_bytes())
+            .map_err(|step| match step {
+                crate::util::fsx::Step::Open => "cannot create private operation file; an existing operation-id is never resubmitted",
+                crate::util::fsx::Step::Inspect => "operation file must be owned, private and regular",
+                crate::util::fsx::Step::Write => "cannot persist operation intent",
+                crate::util::fsx::Step::Sync => "cannot sync operation intent",
+                crate::util::fsx::Step::SyncDir | crate::util::fsx::Step::Publish => "cannot sync operation journal",
+            })?
+            .ok_or("cannot create private operation file; an existing operation-id is never resubmitted")?;
         directory
             .sync_all()
             .map_err(|_| "cannot sync wallet directory")?;
-        drop(record);
         Ok(Self {
             journal,
             name,
@@ -315,58 +269,20 @@ impl OperationGuard {
     /// or the new one, never a truncated file, and the record name never disappears, so the
     /// `O_EXCL` duplicate guard keeps holding.
     fn persist(&mut self) -> Result<(), String> {
-        use std::io::Write;
-        use std::os::fd::{AsRawFd, FromRawFd};
-        use std::os::unix::fs::MetadataExt;
+        use crate::util::fsx::Step;
         const FAILED: &str = "journal update failed; reconcile before any retry";
-        let dir = self.journal.as_raw_fd();
-        let mut tmp_name = b".".to_vec();
-        tmp_name.extend_from_slice(self.name.as_bytes());
-        tmp_name.extend_from_slice(b".tmp");
-        let tmp = std::ffi::CString::new(tmp_name).map_err(|_| FAILED)?;
-        let fd = unsafe {
-            libc::openat(
-                dir,
-                tmp.as_ptr(),
-                libc::O_WRONLY
-                    | libc::O_CREAT
-                    | libc::O_TRUNC
-                    | libc::O_NOFOLLOW
-                    | libc::O_CLOEXEC
-                    | libc::O_NONBLOCK,
-                0o600,
-            )
-        };
-        if fd < 0 {
-            return Err(FAILED.into());
-        }
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        let written = (|| {
-            let m = file.metadata().map_err(|_| FAILED)?;
-            if !m.is_file()
-                || m.uid() != unsafe { libc::geteuid() }
-                || m.mode() & 0o7777 != 0o600
-                || m.nlink() != 1
-            {
-                return Err(FAILED.to_string());
+        crate::util::fsx::atomic_write(
+            &self.journal,
+            &self.name,
+            self.metadata.to_string().as_bytes(),
+        )
+        .map_err(|step| {
+            match step {
+                Step::Sync | Step::SyncDir => "journal sync failed; reconcile before any retry",
+                _ => FAILED,
             }
-            file.write_all(self.metadata.to_string().as_bytes())
-                .map_err(|_| FAILED)?;
-            file.sync_all()
-                .map_err(|_| "journal sync failed; reconcile before any retry")?;
-            if unsafe { libc::renameat(dir, tmp.as_ptr(), dir, self.name.as_ptr()) } != 0 {
-                return Err(FAILED.to_string());
-            }
-            Ok(())
-        })();
-        drop(file);
-        if let Err(error) = written {
-            unsafe { libc::unlinkat(dir, tmp.as_ptr(), 0) };
-            return Err(error);
-        }
-        self.journal
-            .sync_all()
-            .map_err(|_| "journal sync failed; reconcile before any retry".to_string())
+            .to_owned()
+        })
     }
 
     pub fn finish(&mut self, result: &Result<Value, String>) -> Result<(), String> {

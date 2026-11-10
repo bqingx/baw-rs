@@ -14,6 +14,14 @@ pub(super) enum Outcome {
     Stop(Value),
 }
 
+/// Whether this run actually submitted an approval transaction. The only place a `Continue`
+/// note can carry `txHash` is after `execute` returned a usable transaction hash, so the swap
+/// re-check after an allowance change is keyed on that and not on the note being non-null:
+/// a sufficient allowance or native input returns a note with no `txHash`.
+pub(super) fn submitted(note: &Value) -> bool {
+    note.get("txHash").and_then(Value::as_str).is_some()
+}
+
 pub(super) fn validate_rpc_url(raw: &str) -> Result<(), String> {
     let url = url::Url::parse(raw).map_err(|_| "invalid private OKX RPC URL")?;
     let local_test = cfg!(test)

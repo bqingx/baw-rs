@@ -147,7 +147,7 @@ async fn fee_level_and_rwa_transfer_handling_are_preserved() {
         assert_eq!(out["status"], "SUBMITTED");
         let requests: Vec<_> = (0..count).map(|_| rx.recv().unwrap()).collect();
         let (header, body) = requests.last().unwrap();
-        assert!(header.starts_with(&format!("POST {A}/transfer ")));
+        assert!(header.starts_with(&format!("POST {API}/transfer ")));
         assert_eq!(body["feeLevel"], "HIGH");
         assert!(body.get("gasLevel").is_none());
         assert_eq!(body["recipientAddress"], a.recipient);

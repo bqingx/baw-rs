@@ -5,8 +5,9 @@ pub(crate) mod intent;
 pub(crate) mod okx;
 pub mod route_action;
 pub mod wallet_ops;
-use crate::core::client::{checksum_address, Client};
+use crate::core::client::{checksum_address, Client, API};
 use crate::query::rwa;
+use crate::util::validate::chain_id_supported_evm;
 use bigdecimal::BigDecimal;
 use clap::{Args, Subcommand, ValueEnum};
 pub(crate) use intent::intent_summary;
@@ -23,8 +24,6 @@ pub fn local_summary(command: &MarketCommand) -> Option<Result<Value, String>> {
     }
 }
 
-const A: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
-
 fn session(c: &Client) -> Result<(), String> {
     if c.credentials().session_id.is_empty() {
         Err("wallet session is missing".into())
@@ -34,10 +33,10 @@ fn session(c: &Client) -> Result<(), String> {
 }
 pub(crate) async fn safeguards(c: &mut Client, chain: &str) -> Result<(), String> {
     let settings = c
-        .request(Method::GET, &format!("{A}/settings/query"), None)
+        .request(Method::GET, &format!("{API}/settings/query"), None)
         .await?;
     let limits = c
-        .request(Method::GET, &format!("{A}/trading-limit/query"), None)
+        .request(Method::GET, &format!("{API}/trading-limit/query"), None)
         .await?;
     let limit = backend_decimal(&settings["dailyLimit"])?;
     let used = backend_decimal(&limits["quotaUsed"])?;
@@ -63,7 +62,7 @@ pub(crate) async fn safeguards(c: &mut Client, chain: &str) -> Result<(), String
     let lock = c
         .request(
             Method::POST,
-            &format!("{A}/order/tx-lock-status"),
+            &format!("{API}/order/tx-lock-status"),
             Some(json!({"binanceChainId":chain})),
         )
         .await?;
@@ -114,7 +113,7 @@ async fn wallet_sell_amount(
     multiplier: &str,
 ) -> Result<String, String> {
     let wallet = c
-        .request(Method::POST, &format!("{A}/mpc-wallet/token/list"), None)
+        .request(Method::POST, &format!("{API}/mpc-wallet/token/list"), None)
         .await?;
     let row = wallet["tokenList"]
         .as_array()
@@ -252,7 +251,7 @@ pub async fn send(c: &mut Client, a: &SendArgs) -> Result<Value, String> {
         body["isMax"] = json!(true);
     }
     match c
-        .request(Method::POST, &format!("{A}/transfer"), Some(body))
+        .request(Method::POST, &format!("{API}/transfer"), Some(body))
         .await
     {
         Err(e) => Ok(
@@ -285,15 +284,8 @@ pub async fn send(c: &mut Client, a: &SendArgs) -> Result<Value, String> {
         }
     }
 }
-fn chain(s: &str) -> Result<(), String> {
-    if matches!(s, "1" | "56" | "8453" | "CT_501" | "4663") {
-        Ok(())
-    } else {
-        Err("unsupported binanceChainId".into())
-    }
-}
 fn address(c: &str, s: &str) -> Result<(), String> {
-    chain(c)?;
+    chain_id_supported_evm(c)?;
     if c == "CT_501" {
         if (32..=44).contains(&s.len())
             && s.bytes()

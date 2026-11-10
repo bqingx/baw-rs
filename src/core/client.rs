@@ -78,12 +78,7 @@ impl Client {
     }
 
     fn build(credentials: Credentials, origin: &str) -> Result<Self, String> {
-        if credentials.session_id.len() > 16_384
-            || !credentials
-                .session_id
-                .bytes()
-                .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
-        {
+        if !crate::util::validate::cookie_value(&credentials.session_id) {
             return Err("invalid session credential".into());
         }
         let mut headers = host_headers()?;
@@ -296,12 +291,8 @@ impl Client {
         &mut self,
         session: zeroize::Zeroizing<String>,
     ) -> Result<(), String> {
-        if session.is_empty()
-            || session.len() > 16_384
-            || !session
-                .bytes()
-                .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
-        {
+        // An explicit session must be non-empty; the shape rule itself is shared.
+        if session.is_empty() || !crate::util::validate::cookie_value(&session) {
             return Err("invalid session credential".into());
         }
         self.credentials.session_id = session;
@@ -613,11 +604,7 @@ impl Client {
             }
             let data = unpack_response(status, &bytes)?;
             if let Some(cookie) = pending_cookie {
-                if cookie.len() <= 16_384
-                    && cookie
-                        .bytes()
-                        .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
-                {
+                if crate::util::validate::cookie_value(&cookie) {
                     if self.credentials.session_id.as_str() != cookie {
                         self.clear_check_caches();
                     }

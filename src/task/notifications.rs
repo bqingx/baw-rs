@@ -1,11 +1,12 @@
 //! Optional best-effort notifications, outside wallet request scopes and critical saves.
 //! Durable pre-send claims give at-most-once attempts, NOT exactly-once delivery.
+use crate::util::fsx::{atomic_write, create_private_once, open_dir, private_dir};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
-    io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    io::Read,
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -125,9 +126,9 @@ impl Config {
         if !path.is_absolute() {
             return Err(());
         }
-        crate::daemon::wallets::private_dir(path.parent().ok_or(())?).map_err(|_| ())?;
+        crate::util::fsx::private_dir(path.parent().ok_or(())?).map_err(|_| ())?;
         let mut bytes = zeroize::Zeroizing::new(Vec::new());
-        crate::daemon::wallets::private_file(path, false)
+        crate::util::fsx::private_file(path, false)
             .map_err(|_| ())?
             .take(8193)
             .read_to_end(&mut bytes)
@@ -226,22 +227,16 @@ impl Notifier {
                         }
                         Message::Event(registry, event) => {
                             let key = event.key();
-                            let claim =
-                                tokio::task::spawn_blocking(move || claim(&registry, &key)).await;
-                            let Ok(Ok(Some(mut record))) = claim else {
+                            let claimed = {
+                                let (registry, key) = (registry.clone(), key.clone());
+                                tokio::task::spawn_blocking(move || claim(&registry, &key)).await
+                            };
+                            let Ok(Ok(Some(_claimed))) = claimed else {
                                 continue;
                             };
                             let accepted = config.send(&event).await;
                             let _ = tokio::task::spawn_blocking(move || {
-                                use std::io::{Seek, SeekFrom};
-                                record.seek(SeekFrom::Start(0))?;
-                                record.set_len(0)?;
-                                record.write_all(if accepted {
-                                    b"{\"state\":\"ACCEPTED\"}"
-                                } else {
-                                    b"{\"state\":\"FAILED_OR_UNKNOWN\"}"
-                                })?;
-                                record.sync_all()
+                                record(&registry, &key, accepted)
                             })
                             .await;
                         }
@@ -281,34 +276,41 @@ impl Notifier {
     }
 }
 fn claim(registry: &Path, key: &str) -> Result<Option<std::fs::File>, ()> {
-    crate::daemon::wallets::private_dir(registry).map_err(|_| ())?;
+    private_dir(registry).map_err(|_| ())?;
     let directory = registry.join(".task-notifications");
     match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return Err(()),
     }
-    crate::daemon::wallets::private_dir(&directory).map_err(|_| ())?;
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(directory.join(format!("{key}.json")))
-    {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
-        Err(_) => return Err(()),
-    };
-    file.write_all(b"{\"state\":\"CLAIMED\"}").map_err(|_| ())?;
-    file.sync_all().map_err(|_| ())?;
-    std::fs::File::open(&directory)
-        .and_then(|d| d.sync_all())
-        .map_err(|_| ())?;
+    private_dir(&directory).map_err(|_| ())?;
+    let name = std::ffi::CString::new(format!("{key}.json")).map_err(|_| ())?;
+    // `O_EXCL` creation is the at-most-once claim; an existing marker is never rewritten.
+    let claimed = create_private_once(
+        &open_dir(&directory).map_err(|_| ())?,
+        &name,
+        b"{\"state\":\"CLAIMED\"}",
+    )
+    .map_err(|_| ())?;
+    // Persist the claim directory entry itself before the claim can authorize a send.
     std::fs::File::open(registry)
         .and_then(|d| d.sync_all())
         .map_err(|_| ())?;
-    Ok(Some(file))
+    Ok(claimed)
+}
+
+/// Replace the claim marker with the recorded outcome. The claim name itself never
+/// disappears, so at-most-once is unaffected, but a reader now sees either the claim or the
+/// outcome, never a truncated file.
+fn record(registry: &Path, key: &str, accepted: bool) -> Result<(), ()> {
+    let directory = open_dir(&registry.join(".task-notifications")).map_err(|_| ())?;
+    let name = std::ffi::CString::new(format!("{key}.json")).map_err(|_| ())?;
+    let body: &[u8] = if accepted {
+        b"{\"state\":\"ACCEPTED\"}"
+    } else {
+        b"{\"state\":\"FAILED_OR_UNKNOWN\"}"
+    };
+    atomic_write(&directory, &name, body).map_err(|_| ())
 }
 #[cfg(test)]
 mod tests;

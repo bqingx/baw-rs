@@ -13,14 +13,13 @@ use crate::task::timing::TriggerObservation;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use std::{
     collections::BTreeMap,
-    io::{Read, Write},
+    io::Read,
     sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::Mutex;
@@ -265,19 +264,14 @@ fn notification_event(state: &Stored) -> Option<crate::task::notifications::Even
     };
     Some(event)
 }
+// Pipeline ids use the same 1..=64 ASCII identifier shape as operation ids.
 pub(crate) fn safe_id(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 64
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    crate::util::validate::operation_id(s)
 }
 pub(crate) fn operation_id(id: &str, step: usize, wallet: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!(
-        "p-{:x}",
-        Sha256::digest(json!([id, step, wallet]).to_string().as_bytes())
-    )[..64]
-        .to_owned()
+    let digest =
+        crate::util::validate::sha256_hex(json!([id, step, wallet]).to_string().as_bytes());
+    format!("p-{}", &digest[..62])
 }
 pub(crate) fn argv(
     config: &Definition,
@@ -405,45 +399,40 @@ pub(crate) fn path(registry: &Path, id: &str) -> Result<PathBuf, String> {
     if !safe_id(id) {
         return Err("invalid pipeline ID".into());
     }
-    crate::daemon::wallets::private_dir(registry)?;
+    crate::util::fsx::private_dir(registry)?;
     Ok(registry.join(format!("pipeline-{id}.json")))
 }
 const MAX_STATE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) fn save(registry: &Path, stored: &Stored) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
     let target = path(registry, &stored.definition.id)?;
     // Never publish a state that `load` would refuse: a task must stay recoverable.
     let encoded = serde_json::to_vec(stored).map_err(|_| "cannot encode pipeline state")?;
     if encoded.len() > MAX_STATE_BYTES {
         return Err("pipeline state too large; not saved".into());
     }
-    let tmp = registry.join(format!(".pipeline-{:016x}.tmp", rand::random::<u64>()));
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&tmp)
-            .map_err(|_| "cannot create pipeline state")?;
-        file.write_all(&encoded)
-            .map_err(|_| "cannot write pipeline state")?;
-        file.flush().map_err(|_| "cannot flush pipeline state")?;
-        file.sync_all().map_err(|_| "cannot sync pipeline state")?;
-        std::fs::rename(&tmp, &target).map_err(|_| "cannot publish pipeline state")?;
-        File::open(registry)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| "cannot sync pipeline directory")?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    let directory =
+        crate::util::fsx::open_dir(registry).map_err(|_| "cannot sync pipeline directory")?;
+    let name = target
+        .file_name()
+        .and_then(|n| std::ffi::CString::new(n.as_encoded_bytes()).ok())
+        .ok_or("invalid pipeline ID")?;
+    crate::util::fsx::atomic_write(&directory, &name, &encoded).map_err(|step| {
+        match step {
+            crate::util::fsx::Step::Open => "cannot create pipeline state",
+            crate::util::fsx::Step::Inspect | crate::util::fsx::Step::Write => {
+                "cannot write pipeline state"
+            }
+            crate::util::fsx::Step::Sync => "cannot sync pipeline state",
+            crate::util::fsx::Step::Publish => "cannot publish pipeline state",
+            crate::util::fsx::Step::SyncDir => "cannot sync pipeline directory",
+        }
+        .to_owned()
+    })
 }
+
 pub(crate) fn load(registry: &Path, id: &str) -> Result<Stored, String> {
     let mut bytes = Vec::new();
-    crate::daemon::wallets::private_file(&path(registry, id)?, false)?
+    crate::util::fsx::private_file(&path(registry, id)?, false)?
         .take(MAX_STATE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "cannot read pipeline state")?;

@@ -104,8 +104,7 @@ impl WalletRequest<'_> {
 impl Wallet {
     pub(crate) fn new(entry: Entry) -> Result<Self, String> {
         entry.check()?;
-        let lease =
-            crate::daemon::wallets::private_file(&entry.dir.join(".baw-rs-resident.lock"), true)?;
+        let lease = crate::util::fsx::private_file(&entry.dir.join(".baw-rs-resident.lock"), true)?;
         fs2::FileExt::try_lock_exclusive(&lease)
             .map_err(|_| "wallet already owned by another resident daemon")?;
         Ok(Self {
@@ -161,17 +160,13 @@ impl Wallet {
     /// Bind task consent to the registered directory, session and identity, without
     /// persisting credentials. Re-authentication requires a new reviewed task.
     pub(crate) fn pipeline_binding(&self) -> Result<String, String> {
-        use sha2::{Digest, Sha256};
         self.entry.check()?;
         let session = session_stamp(&self.entry.dir).ok_or("wallet session missing or unsafe")?;
         let identity =
             file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?;
-        Ok(format!(
-            "{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(self.entry.device, self.entry.inode, session, identity))
-                    .map_err(|_| "cannot bind wallet identity")?
-            )
+        Ok(crate::util::validate::sha256_hex(
+            &serde_json::to_vec(&(self.entry.device, self.entry.inode, session, identity))
+                .map_err(|_| "cannot bind wallet identity")?,
         ))
     }
 
@@ -429,9 +424,9 @@ async fn serve_inner(
     entries: BTreeMap<String, Entry>,
     registry: PathBuf,
 ) -> Result<Value, String> {
-    crate::daemon::wallets::private_dir(path.parent().ok_or("invalid socket path")?)?;
+    crate::util::fsx::private_dir(path.parent().ok_or("invalid socket path")?)?;
     // Serialize bind/stale cleanup, including empty registries.
-    let lease = crate::daemon::wallets::private_file(&path.with_extension("lock"), true)?;
+    let lease = crate::util::fsx::private_file(&path.with_extension("lock"), true)?;
     fs2::FileExt::try_lock_exclusive(&lease).map_err(|_| "daemon already running")?;
     let mut wallets = BTreeMap::new();
     for (name, entry) in entries {
@@ -667,7 +662,7 @@ async fn read_buffered_frame<R: tokio::io::AsyncBufRead + Unpin>(
     }
 }
 pub async fn send(path: &Path, request: Request) -> Result<Value, String> {
-    crate::daemon::wallets::private_dir(path.parent().ok_or("invalid socket path")?)?;
+    crate::util::fsx::private_dir(path.parent().ok_or("invalid socket path")?)?;
     let mut stream = tokio::time::timeout(FRAME_TIMEOUT, UnixStream::connect(path))
         .await
         .map_err(|_| "daemon connection timeout")?

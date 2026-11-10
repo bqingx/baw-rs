@@ -385,7 +385,7 @@ impl<'a> Target<'a> {
         spender: &'a str,
         kind: &'a str,
     ) -> Result<Self, String> {
-        chain_id(chain)?;
+        crate::util::validate::chain_id_approvals(chain)?;
         address_like(token)?;
         address_like(spender)?;
         if !APPROVAL_TYPES.contains(&kind) {
@@ -453,18 +453,6 @@ fn list_limit(value: &str) -> Result<&str, String> {
         return Err("invalid --limit; expected a positive integer".into());
     }
     Ok(value)
-}
-
-fn chain_id(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.len() > 32
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
-        return Err("invalid --binanceChainId".into());
-    }
-    Ok(())
 }
 
 /// Approvals span EVM and Solana spenders, so accept either shape: `0x` + 40 hex

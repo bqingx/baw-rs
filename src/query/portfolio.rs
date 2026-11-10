@@ -1,12 +1,11 @@
 //! Read-only wallet portfolio queries.
 use crate::{
-    core::client::Client,
+    core::client::{Client, API},
     query::rwa::{self, Registry},
 };
 use clap::Args;
 use reqwest::Method;
 use serde_json::{json, Value};
-const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
 const HISTORY: &str = "/bapi/defi/v2/public/wallet-direct/agent";
 #[derive(Args, Clone, Debug, Default)]
 pub struct BalanceArgs {
@@ -276,13 +275,6 @@ mod filter_tests {
     }
 }
 
-fn chain_id(s: &str) -> Result<(), String> {
-    if s.is_empty() || s.len() > 64 || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        Err("invalid binanceChainId".into())
-    } else {
-        Ok(())
-    }
-}
 fn validate_balance(a: &BalanceArgs) -> Result<(), String> {
     if let Some(v) = &a.hide_low_value {
         if v != "true" && v != "false" {
@@ -290,7 +282,7 @@ fn validate_balance(a: &BalanceArgs) -> Result<(), String> {
         }
     }
     if let Some(v) = &a.binance_chain_id {
-        chain_id(v)?
+        crate::util::validate::chain_id_portfolio(v)?
     }
     if let Some(v) = &a.symbol {
         if v.trim() != v || v.is_empty() || v.len() > 128 || v.chars().any(char::is_control) {
@@ -1028,10 +1020,10 @@ fn validate_history(a: &HistoryArgs) -> Result<i64, String> {
     }
     if let Some(chains) = &a.binance_chain_id {
         if a.tx.is_some() {
-            chain_id(chains)?
+            crate::util::validate::chain_id_portfolio(chains)?
         } else {
             for chain in chains.split(',') {
-                chain_id(chain)?
+                crate::util::validate::chain_id_portfolio(chain)?
             }
         }
     }

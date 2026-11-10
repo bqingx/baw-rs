@@ -1,18 +1,16 @@
 //! Directory-descriptor-relative storage. No keyring or default wallet discovery.
 use crate::core::session::{decrypt, derive_key, Credentials};
+use crate::util::{
+    fsx::{atomic_write, check_private_meta, open_at, Kind, Step},
+    validate::{hex, is_uuid, sha256_hex},
+};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, CString},
     fs::File,
-    io::{Read, Write},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::{
-            ffi::OsStrExt,
-            fs::{MetadataExt, OpenOptionsExt},
-        },
-    },
+    io::Read,
+    os::{fd::AsRawFd, unix::ffi::OsStrExt},
     path::{Component, Path},
 };
 use zeroize::Zeroizing;
@@ -44,11 +42,9 @@ impl Store {
         {
             return Err("unsafe wallet directory".into());
         }
-        let mut directory = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(if path.is_absolute() { "/" } else { "." })
-            .map_err(|_| "cannot open wallet parent")?;
+        let mut directory =
+            crate::util::fsx::open_dir(Path::new(if path.is_absolute() { "/" } else { "." }))
+                .map_err(|_| "cannot open wallet parent")?;
         let normal: Vec<_> = parts
             .iter()
             .filter_map(|p| {
@@ -64,29 +60,27 @@ impl Store {
         }
         for (i, part) in normal.iter().enumerate() {
             let name = CString::new(part.as_bytes()).map_err(|_| "unsafe wallet directory")?;
-            let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-            let mut fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
-            if fd < 0
+            let flags = libc::O_RDONLY | libc::O_DIRECTORY;
+            let mut opened = open_at(directory.as_raw_fd(), &name, flags, 0);
+            if opened.is_err()
                 && create
                 && i + 1 == normal.len()
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)
+                && opened.as_ref().err().and_then(std::io::Error::raw_os_error)
+                    == Some(libc::ENOENT)
             {
                 if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0
                     && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST)
                 {
                     return Err("cannot create wallet directory".into());
                 }
-                fd = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
+                opened = open_at(directory.as_raw_fd(), &name, flags, 0);
             }
-            if fd < 0 {
-                return Err("cannot open wallet directory (symlinks forbidden)".into());
-            }
-            directory = unsafe { File::from_raw_fd(fd) };
+            directory = opened.map_err(|_| "cannot open wallet directory (symlinks forbidden)")?;
         }
         let m = directory
             .metadata()
             .map_err(|_| "cannot inspect wallet directory")?;
-        if m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o7777 != 0o700 {
+        if !check_private_meta(&m, Kind::Dir) {
             return Err("wallet directory must be owned and private (0700)".into());
         }
         fs2::FileExt::try_lock_exclusive(&directory)
@@ -94,28 +88,13 @@ impl Store {
         Ok(Self { directory })
     }
     pub(crate) fn read(&self, name: &CStr) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
-        let fd = unsafe {
-            libc::openat(
-                self.directory.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
-            )
+        let mut file = match open_at(self.directory.as_raw_fd(), name, libc::O_RDONLY, 0) {
+            Ok(file) => file,
+            Err(error) if error.raw_os_error() == Some(libc::ENOENT) => return Ok(None),
+            Err(_) => return Err("cannot open auth file (symlinks forbidden)".into()),
         };
-        if fd < 0 {
-            return if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
-                Ok(None)
-            } else {
-                Err("cannot open auth file (symlinks forbidden)".into())
-            };
-        }
-        let mut file = unsafe { File::from_raw_fd(fd) };
         let m = file.metadata().map_err(|_| "cannot inspect auth file")?;
-        if !m.is_file()
-            || m.uid() != unsafe { libc::geteuid() }
-            || m.mode() & 0o7777 != 0o600
-            || m.nlink() != 1
-            || m.len() > 1024 * 1024
-        {
+        if !check_private_meta(&m, Kind::File) || m.len() > 1024 * 1024 {
             return Err("auth file must be regular, owned, single-link and private (0600)".into());
         }
         let mut bytes = Zeroizing::new(Vec::new());
@@ -131,47 +110,16 @@ impl Store {
     pub(crate) fn write(&self, name: &CStr, bytes: &[u8]) -> Result<(), String> {
         // Check any existing target even though rename never follows it.
         self.read(name)?;
-        let mut random = [0u8; 16];
-        OsRng
-            .try_fill_bytes(&mut random)
-            .map_err(|_| "secure random generator unavailable")?;
-        let temp = CString::new(format!(".auth-{}", hex(&random))).unwrap();
-        let fd = unsafe {
-            libc::openat(
-                self.directory.as_raw_fd(),
-                temp.as_ptr(),
-                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                0o600,
-            )
-        };
-        if fd < 0 {
-            return Err("cannot create private auth file".into());
-        }
-        let mut file = unsafe { File::from_raw_fd(fd) };
-        let result = (|| {
-            file.write_all(bytes)
-                .map_err(|_| "cannot write auth file")?;
-            file.sync_all().map_err(|_| "cannot sync auth file")?;
-            if unsafe {
-                libc::renameat(
-                    self.directory.as_raw_fd(),
-                    temp.as_ptr(),
-                    self.directory.as_raw_fd(),
-                    name.as_ptr(),
-                )
-            } != 0
-            {
-                return Err("cannot atomically replace auth file".into());
+        atomic_write(&self.directory, name, bytes).map_err(|step| {
+            match step {
+                Step::Open => "cannot create private auth file",
+                Step::Inspect | Step::Write => "cannot write auth file",
+                Step::Sync => "cannot sync auth file",
+                Step::Publish => "cannot atomically replace auth file",
+                Step::SyncDir => "cannot sync wallet directory",
             }
-            self.directory
-                .sync_all()
-                .map_err(|_| "cannot sync wallet directory")?;
-            Ok(())
-        })();
-        if result.is_err() {
-            unsafe { libc::unlinkat(self.directory.as_raw_fd(), temp.as_ptr(), 0) };
-        }
-        result
+            .to_owned()
+        })
     }
     pub(crate) fn credentials(&self, instance: &str, create: bool) -> Result<Credentials, String> {
         if instance.is_empty() {
@@ -240,11 +188,10 @@ impl Store {
             .map_err(|_| "cannot sync wallet directory".into())
     }
     pub(crate) fn baseline(&self) -> Result<String, String> {
-        use sha2::{Digest, Sha256};
         let bytes = self
             .read(c"session.json")?
             .ok_or("wallet client identity is missing")?;
-        Ok(hex(&Sha256::digest(&*bytes)))
+        Ok(sha256_hex(&bytes))
     }
     pub(crate) fn save_cas(
         &self,
@@ -271,29 +218,13 @@ impl Store {
         self.write(c"session.json", &bytes)
     }
 }
-fn is_uuid(s: &str) -> bool {
-    s.len() == 36
-        && s.bytes().enumerate().all(|(i, b)| {
-            if matches!(i, 8 | 13 | 18 | 23) {
-                b == b'-'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
-}
+/// The session cookie rule; an empty value is allowed here (a wallet may be signed out).
 pub(crate) fn validate_cookie(s: &str) -> Result<(), String> {
-    if s.len() > 16384
-        || !s
-            .bytes()
-            .all(|b| b.is_ascii_graphic() && !matches!(b, b';' | b','))
-    {
-        Err("invalid session credential".into())
-    } else {
+    if crate::util::validate::cookie_value(s) {
         Ok(())
+    } else {
+        Err("invalid session credential".into())
     }
-}
-pub(crate) fn hex(b: &[u8]) -> String {
-    b.iter().map(|b| format!("{b:02x}")).collect()
 }
 pub(crate) fn encrypt(text: &str, key: &[u8; 32]) -> Result<String, String> {
     use aes_gcm::{
@@ -317,7 +248,7 @@ pub(crate) fn encrypt(text: &str, key: &[u8; 32]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     #[test]
     fn persistence_replaces_inode_atomically_and_keeps_credentials_encrypted() {
         let root = tempfile::tempdir().unwrap();

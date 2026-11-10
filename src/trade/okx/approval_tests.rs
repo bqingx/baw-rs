@@ -667,3 +667,42 @@ fn rpc_configuration_refuses_credentials_in_userinfo_and_nonsecure_urls() {
     }
     assert!(validate_rpc_url("https://rpc.example/v2/private-api-key").is_ok());
 }
+
+/// The three reads `trade::safeguards` performs; nothing else in a swap touches these paths,
+/// so the count is the number of safeguard checks a run made.
+fn safeguard_reads(backend: &Server) -> (usize, usize) {
+    let seen = backend.seen.lock().unwrap();
+    let count = |needle: &str| {
+        seen.iter()
+            .filter(|r| r.lines().next().unwrap().contains(needle))
+            .count()
+    };
+    (count("trading-limit/query"), count("tx-lock-status"))
+}
+
+#[tokio::test]
+async fn standalone_swap_reads_safeguards_once_without_and_twice_after_an_approval() {
+    // Sufficient allowance: no approval transaction is submitted, so the checks made when
+    // the run started still describe the account and are not requested a second time.
+    let (d, a, api, _w, _rpc, _okx, backend, mut client) = setup(AMOUNT + 100, "success");
+    let mut without_approval = guard(d.path(), &a);
+    let out = swap(&mut client, d.path(), &a, &api, Some(&mut without_approval))
+        .await
+        .unwrap();
+    assert_eq!(out["autoApproval"]["needed"], false);
+    assert!(!approval::submitted(&out["autoApproval"]));
+    assert_eq!(safeguard_reads(&backend), (1, 1));
+    without_approval.finish(&Ok(out)).unwrap();
+    drop(without_approval);
+
+    // A submitted approval can change the quota, developer mode or chain lock, so the run
+    // re-reads them once before the swap.
+    let (d, a, api, _w, _rpc, _okx, backend, mut client) = setup(0, "success");
+    let mut with_approval = guard(d.path(), &a);
+    let out = swap(&mut client, d.path(), &a, &api, Some(&mut with_approval))
+        .await
+        .unwrap();
+    assert!(approval::submitted(&out["autoApproval"]));
+    assert_eq!(safeguard_reads(&backend), (2, 2));
+    with_approval.finish(&Ok(out)).unwrap();
+}

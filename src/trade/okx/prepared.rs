@@ -7,8 +7,7 @@ use crate::trade::SwapArgs;
 use serde_json::{json, Value};
 
 pub(super) fn digest(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
+    crate::util::validate::sha256_hex(bytes)
 }
 fn binding(api: &Okx, args: &SwapArgs, policy: &PreparedWalletPolicy) -> Result<String, String> {
     let bytes =

@@ -181,14 +181,12 @@ pub enum SignCommand {
     },
     History(MessageHistory),
 }
-use crate::core::client::Client;
+use crate::core::client::{Client, API};
 use reqwest::Method;
-use sha2::{Digest, Sha256};
 use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
-const API: &str = "/bapi/defi/v1/public/wallet-direct/agent-wallet";
 const MAX_CACHE: u64 = 4 * 1024 * 1024;
 const PREVIEW_TTL: u64 = 300;
 fn now() -> Result<u64, String> {
@@ -198,10 +196,7 @@ fn now() -> Result<u64, String> {
         .map_err(|_| "invalid local clock".into())
 }
 fn sha(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::util::validate::sha256_hex(bytes)
 }
 fn value_sha(v: &Value) -> Result<String, String> {
     Ok(sha(

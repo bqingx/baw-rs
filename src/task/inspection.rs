@@ -133,7 +133,7 @@ impl Scheduler {
         }
         let registry = registry.to_owned();
         let (archives, complete) = tokio::task::spawn_blocking(move || {
-            crate::daemon::wallets::private_dir(&registry)?;
+            crate::util::fsx::private_dir(&registry)?;
             let mut files = Vec::new();
             let mut complete = true;
             for row in std::fs::read_dir(&registry).map_err(|_| "cannot inspect task directory")? {
