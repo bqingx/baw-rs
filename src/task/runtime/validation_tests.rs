@@ -224,7 +224,10 @@ async fn describe_definition_does_not_connect_to_configured_rpc_or_grant_deadlin
 
 #[test]
 fn terminal_archives_remain_readable_without_reintroducing_retired_cli_parsing() {
+    use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
+    // The registry must be 0700; do not depend on the caller's umask (CI runs with 022).
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     for status in ["COMPLETED", "CANCELLED", "LOADED"] {
         let mut definition = config();
         let mut pipeline = validate(&definition).unwrap();

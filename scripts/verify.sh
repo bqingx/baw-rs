@@ -3,6 +3,8 @@
 # Usage: CARGO_TARGET_DIR=/path/to/target sh scripts/verify.sh
 # Requires: cargo, rustfmt, clippy (rustup component add rustfmt clippy)
 set -eu
+# Match CI runners (umask 022): tests must not rely on a private umask.
+umask 022
 cd "$(dirname "$0")/.."
 T="${CARGO_TARGET_DIR:-target}"
 export CARGO_TARGET_DIR="$T"
