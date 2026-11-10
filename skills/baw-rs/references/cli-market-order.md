@@ -2,7 +2,7 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
 
 ## `market-order`
 
@@ -17,7 +17,7 @@ Commands:
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -30,8 +30,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -47,41 +45,39 @@ Options:
       --provider <PROVIDER>
           OKX is the only trade provider. No fallback [default: okx] [possible values: okx]
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --okx-config <OKX_CONFIG>
           Private OKX profile (0600)
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --fromTokenDecimals <FROM_TOKEN_DECIMALS>
 
-      --binanceChainId <BINANCE_CHAIN_ID>
-
-      --fromToken <FROM_TOKEN>
-
       --json
 
-      --toToken <TO_TOKEN>
-
-      --fromTokenQty <FROM_TOKEN_QTY>
+      --binanceChainId <BINANCE_CHAIN_ID>
 
       --timing
 
       --confirm
 
+      --fromToken <FROM_TOKEN>
+
+      --operation-id <OPERATION_ID>
+
+      --toToken <TO_TOKEN>
+
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+
+      --fromTokenQty <FROM_TOKEN_QTY>
+
+      --skip-prechecks
+          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
       --slippage <SLIPPAGE>
           Explicit slippage percentage; auto is not supported. Never increased for token tax
       --max-from-tax-percent <MAX_FROM_TAX_PERCENT>
           Explicit input transfer-tax metadata cap in percent. Zero keeps tax tokens disabled [default: 0]
-      --operation-id <OPERATION_ID>
-
-      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-
       --max-to-tax-percent <MAX_TO_TAX_PERCENT>
           Explicit output transfer-tax metadata cap in percent. Net wallet minimum still applies [default: 0]
-      --warm
-          Route this command through the resident warm server when it is running
-      --skip-prechecks
-          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
           Print help
 ```
@@ -95,45 +91,43 @@ Options:
       --provider <PROVIDER>
           OKX is the only trade provider. No fallback [default: okx] [possible values: okx]
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --okx-config <OKX_CONFIG>
           Private OKX profile (0600)
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --fromTokenDecimals <FROM_TOKEN_DECIMALS>
 
-      --binanceChainId <BINANCE_CHAIN_ID>
-
-      --fromToken <FROM_TOKEN>
-
       --json
 
-      --toToken <TO_TOKEN>
-
-      --fromTokenQty <FROM_TOKEN_QTY>
+      --binanceChainId <BINANCE_CHAIN_ID>
 
       --timing
 
       --confirm
 
+      --fromToken <FROM_TOKEN>
+
+      --operation-id <OPERATION_ID>
+
+      --toToken <TO_TOKEN>
+
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+
+      --fromTokenQty <FROM_TOKEN_QTY>
+
+      --skip-prechecks
+          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
       --slippage <SLIPPAGE>
           Explicit slippage percentage; auto is not supported. Never increased for token tax
       --max-from-tax-percent <MAX_FROM_TAX_PERCENT>
           Explicit input transfer-tax metadata cap in percent. Zero keeps tax tokens disabled [default: 0]
-      --operation-id <OPERATION_ID>
-
-      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-
       --max-to-tax-percent <MAX_TO_TAX_PERCENT>
           Explicit output transfer-tax metadata cap in percent. Net wallet minimum still applies [default: 0]
       --mev <MEV>
           Must be explicit. Protected submission is not yet supported by the signing backend
-      --warm
-          Route this command through the resident warm server when it is running
       --gasLevel <GAS_LEVEL>
           [default: MEDIUM]
-      --skip-prechecks
-          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
       --acknowledge-token-risk
 
       --okx-min-output-units <OKX_MIN_OUTPUT_UNITS>
@@ -155,45 +149,43 @@ Options:
       --provider <PROVIDER>
           OKX is the only trade provider. No fallback [default: okx] [possible values: okx]
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --okx-config <OKX_CONFIG>
           Private OKX profile (0600)
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --fromTokenDecimals <FROM_TOKEN_DECIMALS>
 
-      --binanceChainId <BINANCE_CHAIN_ID>
-
-      --fromToken <FROM_TOKEN>
-
       --json
 
-      --toToken <TO_TOKEN>
-
-      --fromTokenQty <FROM_TOKEN_QTY>
+      --binanceChainId <BINANCE_CHAIN_ID>
 
       --timing
 
       --confirm
 
+      --fromToken <FROM_TOKEN>
+
+      --operation-id <OPERATION_ID>
+
+      --toToken <TO_TOKEN>
+
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+
+      --fromTokenQty <FROM_TOKEN_QTY>
+
+      --skip-prechecks
+          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
       --slippage <SLIPPAGE>
           Explicit slippage percentage; auto is not supported. Never increased for token tax
       --max-from-tax-percent <MAX_FROM_TAX_PERCENT>
           Explicit input transfer-tax metadata cap in percent. Zero keeps tax tokens disabled [default: 0]
-      --operation-id <OPERATION_ID>
-
-      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
-
       --max-to-tax-percent <MAX_TO_TAX_PERCENT>
           Explicit output transfer-tax metadata cap in percent. Net wallet minimum still applies [default: 0]
       --mev <MEV>
           Must be explicit. Protected submission is not yet supported by the signing backend
-      --warm
-          Route this command through the resident warm server when it is running
       --gasLevel <GAS_LEVEL>
           [default: MEDIUM]
-      --skip-prechecks
-          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
       --acknowledge-token-risk
 
       --okx-min-output-units <OKX_MIN_OUTPUT_UNITS>

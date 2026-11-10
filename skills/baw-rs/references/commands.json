@@ -1,7 +1,7 @@
 {
   "version": "baw-rs 0.3.0",
   "source": "actual --help; no wallet/backend calls",
-  "binarySha256": "8f1d72180b69770a43f46621dd4630bf4320397ff015ce6bd67936f04fa7cec5",
+  "binarySha256": "5af5f6f3dab934751d6e76bdde63a0e7c0009805896e51f14876c124b8522899",
   "leafCount": 51,
   "leaves": [
     "approvals approve",
@@ -27,7 +27,6 @@
     "pipeline reconcile",
     "pipeline resume",
     "pipeline status",
-    "serve",
     "sign-message execute",
     "sign-message history",
     "sign-message preview",
@@ -49,6 +48,7 @@
     "wallet tx-history",
     "wallet tx-lock",
     "wallets add",
+    "wallets journal",
     "wallets list",
     "wallets overview",
     "wallets remove",
@@ -64,7 +64,6 @@
     "market-order",
     "openfour",
     "pipeline",
-    "serve",
     "sign-message",
     "skill-check",
     "wallet",

@@ -60,7 +60,7 @@ $B --wallet w1 wallet address --json
 每个钱包分别登录。registry 选择顺序为 `--registry`、`BAW_RS_REGISTRY`、`$HOME/wallets/registry`。
 钱包名写错、未注册、未登录直接报错，不回退到其他钱包。新增钱包可在首次使用时由 daemon 重新读取 registry。
 
-已有目录通过 `wallets add NAME --wallet-dir ... --instance-id-file ...` 显式接入，保留原身份/会话；旧 register/run 和无效参数已删除，见 [清理范围](docs/COMPAT-CLEANUP.md)。普通单钱包目录/`serve --warm` 访问仍保留，不包含旧任务引擎。详见 [多钱包](docs/MULTIWALLET.md)、[登录](docs/AUTH.md)。
+已有目录通过 `wallets add NAME --wallet-dir ... --instance-id-file ...` 显式接入，保留原身份/会话；旧 register/run 和无效参数已删除，见 [清理范围](docs/COMPAT-CLEANUP.md)。顶层单钱包入口（`--wallet-dir`/`--instance-id`/`--instance-id-file`、warm 开关、顶层 `serve`）已退役：业务命令一律走 `--wallet NAME` 加 `wallets serve`，本地日志用 `wallets journal NAME --list`。详见 [多钱包](docs/MULTIWALLET.md)、[登录](docs/AUTH.md)。
 
 ## OKX 报价与兑换
 

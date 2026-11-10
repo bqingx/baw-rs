@@ -2,6 +2,7 @@
 use super::*;
 #[tokio::test]
 async fn old_wallet_task_and_typed_frames_are_rejected_without_wallet_work() {
+    let root = tempfile::tempdir().unwrap();
     for frame in [
         json!({"op":"native","id":"old","name":"alice","command":{"action":"arm","task_id":"t","confirm":true}}),
         json!({"op":"prepare","id":"old","name":"alice","operation_id":"t","deadline_ms":u64::MAX,"call":{}}),
@@ -13,7 +14,7 @@ async fn old_wallet_task_and_typed_frames_are_rejected_without_wallet_work() {
             server,
             Arc::new(Daemon {
                 wallets: Arc::new(RwLock::new(BTreeMap::new())),
-                registry: None,
+                registry: root.path().to_path_buf(),
                 scheduler: Arc::new(super::super::task_runtime::Scheduler::default()),
             }),
             Arc::new(Notify::new()),

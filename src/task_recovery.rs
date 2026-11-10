@@ -113,7 +113,7 @@ fn resumable(state: &Stored) -> Result<(), String> {
 }
 impl Scheduler {
     pub(super) async fn reconcile(&self, daemon: &Arc<Daemon>, id: &str) -> Result<Value, String> {
-        let registry = daemon.registry.as_deref().ok_or("registry missing")?;
+        let registry = daemon.registry.as_path();
         let run = self.get(registry, id).await?;
         let mut state = run.state.lock().await;
         if run.active.load(Ordering::SeqCst) || state.status == "RUNNING" {
@@ -138,8 +138,7 @@ impl Scheduler {
                 continue;
             }
             let key = format!("{index}:{}", action.wallet);
-            let wallet =
-                wallet_for(&daemon.wallets, &action.wallet, daemon.registry.as_ref()).await?;
+            let wallet = wallet_for(&daemon.wallets, &action.wallet, &daemon.registry).await?;
             if let Some(recovery) = &state.recovery {
                 let expected = recovery
                     .bindings
@@ -226,7 +225,7 @@ impl Scheduler {
             return Err("instance is stopping".into());
         }
         let inspection = self.admit_execution()?;
-        let registry = daemon.registry.as_deref().ok_or("registry missing")?;
+        let registry = daemon.registry.as_path();
         let run = self.get(registry, id).await?;
         {
             let mut state = run.state.lock().await;
@@ -236,7 +235,7 @@ impl Scheduler {
             resumable(&state)?;
             let recovery = state.recovery.as_ref().ok_or("recovery state missing")?;
             for (name, expected) in &recovery.bindings {
-                let wallet = wallet_for(&daemon.wallets, name, daemon.registry.as_ref()).await?;
+                let wallet = wallet_for(&daemon.wallets, name, &daemon.registry).await?;
                 if wallet.pipeline_binding()? != *expected {
                     return Err("wallet identity/session changed; resume refused".into());
                 }

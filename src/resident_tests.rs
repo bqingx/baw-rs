@@ -149,7 +149,7 @@ async fn start(
     let task = tokio::spawn(serve_listener(
         listener,
         Arc::new(RwLock::new(wallets)),
-        None,
+        root.to_path_buf(),
     ));
     (path, task)
 }
@@ -539,6 +539,7 @@ async fn named_signin_verify_polling_and_auth_refresh() {
 }
 #[tokio::test]
 async fn ipc_frames_are_bounded_and_idle_connections_time_out() {
+    let registry = tempfile::tempdir().unwrap();
     for (len, valid) in [(MAX_FRAME, true), (MAX_FRAME + 1, false)] {
         let (mut reader, mut writer) = UnixStream::pair().unwrap();
         assert!(peer(&reader).is_ok());
@@ -556,7 +557,7 @@ async fn ipc_frames_are_bounded_and_idle_connections_time_out() {
         server,
         Arc::new(super::Daemon {
             wallets: Arc::new(RwLock::new(BTreeMap::new())),
-            registry: None,
+            registry: registry.path().to_path_buf(),
             scheduler: Arc::new(super::task_runtime::Scheduler::default()),
         }),
         Arc::new(Notify::new()),
@@ -582,7 +583,7 @@ async fn daemon_never_replaces_regular_file_at_socket_path() {
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let path = root.path().join("daemon.sock");
     std::fs::write(&path, b"synthetic-sentinel").unwrap();
-    assert!(serve(&path, BTreeMap::new(), None)
+    assert!(serve(&path, BTreeMap::new(), root.path().to_path_buf())
         .await
         .unwrap_err()
         .contains("non-socket"));
@@ -624,7 +625,7 @@ async fn wallet_added_after_start_is_usable_without_restarting_the_daemon() {
     let server = tokio::spawn(serve_listener(
         listener,
         Arc::new(RwLock::new(BTreeMap::new())),
-        Some(registry.clone()),
+        registry.clone(),
     ));
 
     // Unknown name before registration: no fallback, no silent success.

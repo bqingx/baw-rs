@@ -1,7 +1,16 @@
-//! Executable safety checks use no credentials and must never reach HTTP.
-use std::process::Command;
+//! Consent gates run inside the resident daemon before any wallet work: a signed-out
+//! wallet still gets "requires ..." instead of a session error, and nothing is sent.
+mod common;
+use common::{add_wallet, body, cli, scratch, serve, sign_out};
+
 #[test]
 fn unauthorized_writes_fail_before_wallet_access() {
+    let root = scratch();
+    let registry = root.path().join("registry");
+    let dir = add_wallet(&registry, &root.path().join("wallets"), "alice");
+    sign_out(&dir);
+    let daemon = serve(&registry);
+    let reg = registry.to_str().unwrap();
     let cases = [
         vec!["auth", "signin"],
         vec!["auth", "verify", "--qrCodeId", "synthetic"],
@@ -64,21 +73,12 @@ fn unauthorized_writes_fail_before_wallet_access() {
     ];
     for case in cases {
         for consent in [vec![], vec!["--confirm"], vec!["--operation-id", "only-id"]] {
-            let out = Command::new(env!("CARGO_BIN_EXE_baw-rs"))
-                .env_remove("BINANCE_BAW_DIR")
-                .env_remove("BINANCE_INSTANCE_ID")
-                .args([
-                    "--wallet-dir",
-                    "/synthetic-missing-consent-test",
-                    "--instance-id",
-                    "synthetic",
-                ])
-                .args(&consent)
-                .args(&case)
-                .output()
-                .unwrap();
-            assert!(!out.status.success());
-            let row: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            let mut args = vec!["--registry", reg, "--wallet", "alice"];
+            args.extend(consent);
+            args.extend(case.clone());
+            let out = cli(&args);
+            assert!(!out.status.success(), "{case:?} unexpectedly succeeded");
+            let row = body(&out);
             assert!(
                 row["error"]["message"]
                     .as_str()
@@ -89,9 +89,18 @@ fn unauthorized_writes_fail_before_wallet_access() {
             assert!(out.stderr.is_empty());
         }
     }
+    daemon.stop(&registry);
+    // No journal entry may exist: the gate rejected the command before the guard opened.
+    assert!(!dir.join(".baw-rs-operations").exists());
 }
 #[test]
 fn unreviewed_signing_fails_before_session_access() {
+    let root = scratch();
+    let registry = root.path().join("registry");
+    let dir = add_wallet(&registry, &root.path().join("wallets"), "alice");
+    sign_out(&dir);
+    let daemon = serve(&registry);
+    let reg = registry.to_str().unwrap();
     for (args, expected) in [
         (
             vec![
@@ -118,23 +127,15 @@ fn unreviewed_signing_fails_before_session_access() {
             "requires --accept-preview-sha256",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_baw-rs"))
-            .env_remove("BINANCE_BAW_DIR")
-            .env_remove("BINANCE_INSTANCE_ID")
-            .args([
-                "--wallet-dir",
-                "/synthetic-inaccessible-wallet",
-                "--instance-id",
-                "synthetic",
-            ])
-            .args(args)
-            .output()
-            .unwrap();
+        let mut full = vec!["--registry", reg, "--wallet", "alice"];
+        full.extend(args);
+        let output = cli(&full);
         assert!(!output.status.success());
-        let row: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let row = body(&output);
         assert!(
             row["error"]["message"].as_str().unwrap().contains(expected),
             "{row}"
         );
     }
+    daemon.stop(&registry);
 }

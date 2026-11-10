@@ -2,7 +2,7 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
 
 ## `approvals`
 
@@ -20,7 +20,7 @@ Commands:
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -33,8 +33,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -50,17 +48,17 @@ Options:
       --spender <address>
           Filter by spender address
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --filterTypes <types>
           Filter by risk type (high_risk, medium_risk, non_interactive, others)
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
+      --json
+
       --limit <number>
           Number of results to return (default: 20) [default: 20]
       --offset <cursor>
           Pagination cursor from previous query
-      --json
-
       --timing
 
       --confirm
@@ -69,8 +67,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -86,27 +82,25 @@ Options:
       --binanceChainId <binanceChainId>
           Binance chain ID
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --tokenContract <address>
           Token contract address
-      --spender <address>
-          Spender contract address
-      --type <type>
-          Approval type (approve | permit2)
       --json
 
+      --spender <address>
+          Spender contract address
       --timing
 
+      --type <type>
+          Approval type (approve | permit2)
       --confirm
 
       --operation-id <OPERATION_ID>
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -122,27 +116,25 @@ Options:
       --binanceChainId <binanceChainId>
           Binance chain ID
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --tokenContract <address>
           Token contract address
-      --spender <address>
-          Spender contract address
-      --type <type>
-          Approval type (approve | permit2)
       --json
 
+      --spender <address>
+          Spender contract address
       --timing
 
+      --type <type>
+          Approval type (approve | permit2)
       --confirm
 
       --operation-id <OPERATION_ID>
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -163,7 +155,7 @@ Options:
           Binance chain ID
 
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
 
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
@@ -171,23 +163,14 @@ Options:
       --tokenContract <address>
           Token contract address
 
+      --json
+
+
       --spender <address>
           Spender contract address (OKX `dexContractAddress`)
 
       --amount <amount>
           Raw amount in the token's smallest unit, or `max` for uint256::MAX (needs --unlimited)
-
-      --unlimited
-          Permit uint256::MAX, i.e. an approval that stays valid for the whole balance forever. `--amount max` is refused without this flag so an unlimited grant has to be asked for
-
-      --json
-
-
-      --policy <POLICY>
-          Optional policy file. Pins token contract, value, selector, calldata digest and gas cap; anything that does not match is refused before the preview is requested
-
-      --from <address>
-          Sender wallet address on the target chain
 
       --timing
 
@@ -195,17 +178,23 @@ Options:
       --confirm
 
 
-      --gasLimit <n>
-          Optional gas limit for the approve call
+      --unlimited
+          Permit uint256::MAX, i.e. an approval that stays valid for the whole balance forever. `--amount max` is refused without this flag so an unlimited grant has to be asked for
 
       --operation-id <OPERATION_ID>
 
 
+      --policy <POLICY>
+          Optional policy file. Pins token contract, value, selector, calldata digest and gas cap; anything that does not match is refused before the preview is requested
+
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
 
-      --warm
-          Route this command through the resident warm server when it is running
+      --from <address>
+          Sender wallet address on the target chain
+
+      --gasLimit <n>
+          Optional gas limit for the approve call
 
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode

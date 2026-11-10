@@ -16,8 +16,7 @@ pub(super) async fn compile_plans(
     let mut plans = BTreeMap::new();
     for (index, task) in config.steps.iter().enumerate() {
         for action in &task.actions {
-            let wallet =
-                wallet_for(&daemon.wallets, &action.wallet, daemon.registry.as_ref()).await?;
+            let wallet = wallet_for(&daemon.wallets, &action.wallet, &daemon.registry).await?;
             let binding = bindings
                 .get(&action.wallet)
                 .cloned()
@@ -83,7 +82,7 @@ pub(super) async fn prepare_step(
     index: usize,
     triggered: bool,
 ) -> Result<(), String> {
-    let registry = daemon.registry.as_deref().ok_or("registry missing")?;
+    let registry = daemon.registry.as_path();
     let task = &config.steps[index];
     let mut work = Vec::new();
     for (member, action) in task.actions.iter().enumerate() {

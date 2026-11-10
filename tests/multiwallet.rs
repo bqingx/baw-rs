@@ -5,8 +5,6 @@ use std::{os::unix::fs::PermissionsExt, path::Path, process::Command};
 fn cli_env(args: &[&str], envs: &[(&str, &str)]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_baw-rs"));
     command
-        .env_remove("BINANCE_BAW_DIR")
-        .env_remove("BINANCE_INSTANCE_ID")
         .env_remove("BAW_RS_REGISTRY")
         .env_remove("BAW_RS_NOTIFY_CONFIG");
     for (key, value) in envs {
@@ -161,8 +159,9 @@ fn empty_session_with(dir: &std::path::Path, instance: &str) {
     .unwrap();
 }
 
+/// Existence of a (wrong-identity) session file is enough for the paths that only check it.
 fn empty_session(dir: &std::path::Path) {
-    empty_session_with(dir, "legacy-synthetic");
+    empty_session_with(dir, "synthetic-signed-out");
 }
 
 /// A `wallets add` identity lives next to the wallet directory.
@@ -263,44 +262,6 @@ fn online_add_hot_loads_without_allowing_removal_rebinding_or_cross_registry_use
     for (path, bytes) in snapshots {
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
-}
-
-#[test]
-fn legacy_single_wallet_cold_and_warm_signed_out_compatibility() {
-    let root = tempfile::tempdir().unwrap();
-    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-    empty_session(root.path());
-    let dir = root.path().to_str().unwrap();
-    let args = ["--wallet-dir", dir, "--instance-id", "legacy-synthetic"];
-    let mut cold = args.to_vec();
-    cold.extend(["wallet", "status"]);
-    let out = cli(&cold);
-    assert!(out.status.success());
-    assert_eq!(body(&out)["data"]["status"], "UNCONNECTED");
-    let mut child = Daemon(
-        Command::new(env!("CARGO_BIN_EXE_baw-rs"))
-            .env_remove("BAW_RS_NOTIFY_CONFIG")
-            .args(args)
-            .arg("serve")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
-    let start = std::time::Instant::now();
-    while !root.path().join(".baw-rs.sock").exists() {
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
-        assert!(
-            child.0.try_wait().unwrap().is_none(),
-            "legacy warm rejected signed-out wallet"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    let mut warm = args.to_vec();
-    warm.extend(["--warm", "wallet", "status"]);
-    let out = cli(&warm);
-    assert!(out.status.success());
-    assert_eq!(body(&out)["data"]["status"], "UNCONNECTED");
 }
 
 #[test]
@@ -564,7 +525,7 @@ fn task_alias_routes_instance_control_and_rejects_wallet_selection() {
     assert!(message(&rejected).contains("instance-scoped"));
 }
 
-/// No wallet and no legacy pair is an error that names the missing option.
+/// No wallet at all is an error that names the missing option.
 #[test]
 fn missing_wallet_flag_names_the_option() {
     for args in [
@@ -797,7 +758,7 @@ fn management_namespace_never_requires_a_wallet() {
     );
 }
 
-/// Defaults: $BAW_RS_REGISTRY, else $HOME/wallets/registry. Never the legacy selectors.
+/// Defaults: $BAW_RS_REGISTRY, else $HOME/wallets/registry. Never a guessed wallet.
 #[test]
 fn registry_defaults_to_env_then_home() {
     let root = tempfile::tempdir().unwrap();

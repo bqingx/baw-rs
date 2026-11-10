@@ -61,7 +61,7 @@ def generate(binary, output):
                    if key == family or key.startswith(family + " ")]
         chunks = [f"# {family}：实际 CLI 参数\n\n由 `scripts/build_skill_reference.py` 从 `{version}` 的 `--help` 生成。\n"
                   "这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。\n"
-                  "普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。\n"]
+                  "普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。\n"]
         for key, text in entries:
             chunks.append(f"\n## `{key}`\n\n```text\n{text.rstrip()}\n```\n")
         (ref / f"cli-{family}.md").write_text("".join(chunks))

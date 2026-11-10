@@ -8,9 +8,9 @@
 | `"$B" wallets <add/remove/list/status/overview/serve/stop>` | 注册表与 daemon 管理（`vaults` 是隐藏别名） | 不能带 |
 | `"$B" pipeline/task ...` | 实例级任务 | 不能带 |
 | `"$B" openfour ...` | 链上只读/离线编码，不需要钱包 | 不能带 |
-| `"$B" --wallet-dir D --instance-id-file K <command>` | 兼容旧单钱包目录（冷执行；可配 `serve` + `--warm` 走该钱包私有 socket） | 不能混用 |
+| `"$B" wallets journal NAME (--operation-id ID \| --list)` | 本地操作日志；不连 daemon、不读 session、未登录也能用 | 不能带 |
 
-`--wallet` 模式下不允许再带 `--wallet-dir` / `--instance-id` / `--instance-id-file` / `--warm`。名字不存在、未登录、daemon 未运行都直接报错，不会回退到别的钱包或冷执行。
+旧的单钱包入口（顶层 `--wallet-dir` / `--instance-id` / `--instance-id-file`、warm 模式开关、顶层 `serve`）已移除：这些参数现在直接报"未知参数"，没有冷执行回退。名字不存在、未登录、daemon 未运行都直接报错，不会回退到别的钱包。
 
 ## 命名 daemon
 
@@ -38,6 +38,7 @@ nohup "$B" wallets serve >/dev/null 2>&1 &   # 仅在未运行时启动
 - identity 是解密 session 的密钥，不绑定设备；只备份 session 而丢了 identity 无法恢复。
 - 官方 `baw` 与 baw-rs 的会话各自管理；格式同源，可用官方登录后的目录 + 显式 instance id 文件接入，但不要自动导入/覆盖。
 - `wallets overview` 默认只读本地快照；`--refresh` 才查登录/设置（每钱包最多 6 秒，与 arm/resume 互斥，报忙时不要自动重试）。
+- `wallets journal NAME --list` / `--operation-id ID` 只读该钱包目录下的 `.baw-rs-operations/`，daemon 未运行也能对账。
 
 ## 文件要求
 

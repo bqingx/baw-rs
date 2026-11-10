@@ -191,12 +191,8 @@ async fn fast_fire_requires_simulation_and_backend_sender_binding() {
 async fn dispatch_precheck_policy_is_request_local() {
     use clap::Parser;
     let dir = tempwallet();
-    let cli = crate::cli::Cli::try_parse_from([
+    let mut cli = crate::cli::Cli::try_parse_from([
         "baw-rs",
-        "--wallet-dir",
-        dir.path().to_str().unwrap(),
-        "--instance-id",
-        "synthetic",
         "--skip-prechecks",
         "contract-call",
         "preview",
@@ -208,6 +204,8 @@ async fn dispatch_precheck_policy_is_request_local() {
         "0x2222222222222222222222222222222222222222",
     ])
     .unwrap();
+    cli.wallet_dir = Some(dir.path().to_path_buf());
+    cli.instance_id = "synthetic".into();
     let (mut client, seen, thread) = fixture(vec![preview()]);
     let result = crate::dispatch::execute(&mut client, &cli).await;
     thread.join().unwrap();

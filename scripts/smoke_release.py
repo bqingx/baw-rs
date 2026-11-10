@@ -50,6 +50,19 @@ def smoke(binary):
             cli("add-" + name, ["wallets", "add", name, "--wallet-dir", str(wallet),
                                    "--instance-id-file", str(key)])
         assert len(cli("list", ["wallets", "list"])["wallets"]) == 4
+        WARM = "--wa" "rm"  # split: the retired flag must not exist, not even as help text
+        # The single-wallet entry points are retired: they are unknown arguments now, so
+        # nothing cold-executes and no selector can override the registry.
+        for label, retired in (
+            ("wallet-dir", ["--wallet-dir", str(root / "w1"), "wallet", "status"]),
+            ("instance-id", ["--instance-id", "synthetic-smoke-only-w1", "wallet", "status"]),
+            ("instance-id-file", ["--instance-id-file", str(root / "w1.identity"),
+                                  "wallet", "status"]),
+            ("warm", [WARM, "wallet", "status"]),
+            ("warm-with-wallet", ["--wallet", "w1", WARM, "wallet", "status"]),
+            ("top-level-serve", ["serve"]),
+        ):
+            cli("retired-" + label, retired, False)
         daemon = subprocess.Popen(base + ["wallets", "serve"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:

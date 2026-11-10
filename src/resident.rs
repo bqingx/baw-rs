@@ -85,7 +85,6 @@ pub(crate) struct Wallet {
     state: Mutex<State>,
     _lease: File,
     consumed: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    inline_identity: Option<zeroize::Zeroizing<String>>,
     #[cfg(test)]
     origin: Option<String>,
 }
@@ -123,7 +122,6 @@ impl Wallet {
             }),
             _lease: lease,
             consumed: Default::default(),
-            inline_identity: None,
             #[cfg(test)]
             origin: None,
         })
@@ -169,11 +167,8 @@ impl Wallet {
         use sha2::{Digest, Sha256};
         self.entry.check()?;
         let session = session_stamp(&self.entry.dir).ok_or("wallet session missing or unsafe")?;
-        let identity = if self.inline_identity.is_some() {
-            None
-        } else {
-            Some(file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?)
-        };
+        let identity =
+            file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?;
         Ok(format!(
             "{:x}",
             Sha256::digest(
@@ -188,25 +183,18 @@ impl Wallet {
         self.entry.check()?;
         let mut state = self.state.lock().await;
         let stamp = session_stamp(&self.entry.dir).ok_or("wallet session missing or unsafe")?;
-        let identity_stamp = if self.inline_identity.is_some() {
-            None
-        } else {
-            Some(file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?)
-        };
+        let identity_stamp =
+            file_stamp(&self.entry.instance_file).ok_or("wallet identity missing or unsafe")?;
         if state.client.is_some()
             && state.stamp == Some(stamp)
-            && state.identity_stamp == identity_stamp
+            && state.identity_stamp == Some(identity_stamp)
         {
             return Ok(());
         }
         let entry = self.entry.clone();
-        let inline = self.inline_identity.clone();
         let (instance, credentials) = tokio::task::spawn_blocking(move || {
             entry.check()?;
-            let instance = match inline {
-                Some(value) => value.to_string(),
-                None => session::resolve_instance(String::new(), Some(&entry.instance_file))?,
-            };
+            let instance = session::resolve_instance(String::new(), Some(&entry.instance_file))?;
             let credentials = session::load(&entry.dir, &instance)?;
             Ok::<_, String>((instance, credentials))
         })
@@ -216,8 +204,7 @@ impl Wallet {
             return Err("wallet session missing".into());
         }
         if session_stamp(&self.entry.dir) != Some(stamp)
-            || (self.inline_identity.is_none()
-                && file_stamp(&self.entry.instance_file) != identity_stamp)
+            || file_stamp(&self.entry.instance_file) != Some(identity_stamp)
         {
             return Err("wallet identity/session changed during preparation".into());
         }
@@ -230,24 +217,20 @@ impl Wallet {
         state.persisted = Some(credentials);
         state.instance = Some(instance);
         state.stamp = Some(stamp);
-        state.identity_stamp = identity_stamp;
+        state.identity_stamp = Some(identity_stamp);
         Ok(())
     }
 
+    /// Parse one forwarded argv as if it were a local command, then bind the wallet
+    /// directory and the identity placeholder the daemon owns. Neither selector exists on
+    /// the command line any more, so a client can never override them.
     fn compile(&self, argv: Vec<String>) -> Result<Cli, String> {
         validate_argv(&argv)?;
-        let mut full = vec![
-            "baw-rs".to_owned(),
-            "--wallet-dir".into(),
-            self.entry.dir.to_string_lossy().into_owned(),
-            "--instance-id".into(),
-            "daemon-placeholder".into(),
-        ];
+        let mut full = vec!["baw-rs".to_owned()];
         full.extend(argv);
-        let cli = Cli::try_parse_from(full).map_err(|_| "invalid daemon command")?;
-        if matches!(cli.command, Command::Serve) {
-            return Err("control commands are not allowed over daemon IPC".into());
-        }
+        let mut cli = Cli::try_parse_from(full).map_err(|_| "invalid daemon command")?;
+        cli.wallet_dir = Some(self.entry.dir.clone());
+        cli.instance_id = "daemon-placeholder".into();
         crate::dispatch::preflight(&cli)?;
         Ok(cli)
     }
@@ -280,7 +263,6 @@ impl Wallet {
             .map_err(|_| "selected wallet busy; request not executed")?;
         crate::task_timing::wallet_lock_acquired();
         let entry = self.entry.clone();
-        let inline = self.inline_identity.clone();
         let auth_command = match &request.cli().command {
             Command::Auth { command } => Some(command.clone()),
             _ => None,
@@ -295,11 +277,7 @@ impl Wallet {
         // instead of paying PBKDF2 (100k rounds) plus AES on every command. Any change to
         // the file — including a swap with a same-sized replacement — changes the inode or
         // mtime and forces the full load below. Auth commands always take the slow path.
-        let identity_stamp = if self.inline_identity.is_some() {
-            None
-        } else {
-            file_stamp(&entry.instance_file)
-        };
+        let identity_stamp = file_stamp(&entry.instance_file);
         if !auth
             && state.client.is_some()
             && stamp.is_some()
@@ -331,10 +309,7 @@ impl Wallet {
         // Session preloading/PBKDF2 runs off-runtime, never under a global wallet lock.
         let loaded = tokio::task::spawn_blocking(move || {
             entry.check()?;
-            let instance = match inline {
-                Some(s) => s.to_string(),
-                None => session::resolve_instance(String::new(), Some(&entry.instance_file))?,
-            };
+            let instance = session::resolve_instance(String::new(), Some(&entry.instance_file))?;
             let credentials = if let Some(command) = auth_command {
                 crate::auth::bootstrap(&entry.dir, &instance, &command)?
             } else {
@@ -384,6 +359,9 @@ impl Wallet {
         result.map_err(|_|"command timed out; mutation outcome uncertain; inspect operation journal before retry".to_owned())?
     }
 }
+/// Defense in depth for daemon ingress. `--wallet` and `--registry` are selectors the caller
+/// already used, and `--wallet-dir`/`--instance-id*` are retired flags: clap would reject them
+/// as unknown, but a forwarded frame must never look like it could rebind the wallet either.
 fn validate_argv(argv: &[String]) -> Result<(), String> {
     if argv.is_empty() || argv.len() > 128 {
         return Err("argv must contain 1..128 strings".into());
@@ -395,7 +373,6 @@ fn validate_argv(argv: &[String]) -> Result<(), String> {
                 | "--instance-id"
                 | "--instance-id-file"
                 | "--wallet"
-                | "--warm"
                 | "--registry"
                 | "--wallet-name"
         )
@@ -446,37 +423,14 @@ impl Drop for SocketGuard {
 pub(crate) async fn serve(
     path: &Path,
     entries: BTreeMap<String, Entry>,
-    registry: Option<std::path::PathBuf>,
+    registry: PathBuf,
 ) -> Result<Value, String> {
-    serve_inner(path, entries, None, registry).await
-}
-pub(crate) async fn serve_legacy(cli: &Cli) -> Result<Value, String> {
-    use std::os::unix::fs::MetadataExt;
-    let dir = cli
-        .wallet_dir_path()?
-        .canonicalize()
-        .map_err(|_| "wallet directory must exist")?;
-    crate::wallets::private_dir(&dir)?;
-    let meta = std::fs::metadata(&dir).map_err(|_| "cannot inspect wallet")?;
-    let entry = Entry {
-        instance_file: dir.join(".unused-instance"),
-        dir: dir.clone(),
-        device: meta.dev(),
-        inode: meta.ino(),
-    };
-    serve_inner(
-        &crate::warm::socket_path(&dir),
-        BTreeMap::from([("single".into(), entry)]),
-        Some(cli.instance_id.clone()),
-        None,
-    )
-    .await
+    serve_inner(path, entries, registry).await
 }
 async fn serve_inner(
     path: &Path,
     entries: BTreeMap<String, Entry>,
-    inline: Option<String>,
-    registry: Option<std::path::PathBuf>,
+    registry: PathBuf,
 ) -> Result<Value, String> {
     crate::wallets::private_dir(path.parent().ok_or("invalid socket path")?)?;
     // Serialize bind/stale cleanup, including empty registries.
@@ -484,9 +438,7 @@ async fn serve_inner(
     fs2::FileExt::try_lock_exclusive(&lease).map_err(|_| "daemon already running")?;
     let mut wallets = BTreeMap::new();
     for (name, entry) in entries {
-        let mut wallet = Wallet::new(entry)?;
-        wallet.inline_identity = inline.as_ref().map(|s| zeroize::Zeroizing::new(s.clone()));
-        wallets.insert(name, Arc::new(wallet));
+        wallets.insert(name, Arc::new(Wallet::new(entry)?));
     }
     if let Ok(meta) = std::fs::symlink_metadata(path) {
         if !meta.file_type().is_socket() {
@@ -522,12 +474,11 @@ async fn serve_inner(
 pub(super) async fn wallet_for(
     wallets: &RwLock<BTreeMap<String, Arc<Wallet>>>,
     name: &str,
-    registry: Option<&std::path::PathBuf>,
+    registry: &Path,
 ) -> Result<Arc<Wallet>, String> {
     if let Some(wallet) = wallets.read().await.get(name) {
         return Ok(wallet.clone());
     }
-    let registry = registry.ok_or("unknown wallet name; no fallback")?;
     let entries = crate::wallets::reload_entries(registry)?;
     let mut loaded = wallets.write().await;
     if let Some(entry) = entries.get(name) {
@@ -543,14 +494,14 @@ pub(super) async fn wallet_for(
 /// Everything a connection needs, so the handler signature stays readable.
 pub(super) struct Daemon {
     pub(super) wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
-    pub(super) registry: Option<std::path::PathBuf>,
+    pub(super) registry: PathBuf,
     scheduler: Arc<task_runtime::Scheduler>,
 }
 
 async fn serve_listener(
     listener: UnixListener,
     wallets: Arc<RwLock<BTreeMap<String, Arc<Wallet>>>>,
-    registry: Option<std::path::PathBuf>,
+    registry: PathBuf,
 ) -> Result<Value, String> {
     let daemon = Arc::new(Daemon {
         // Cloned, not moved: shutdown still walks the wallet set directly.
@@ -652,7 +603,7 @@ async fn handle(
             Err(e) => Err(e),
             Ok(Request::Status) => Ok({
                 let names = wallets.read().await.keys().cloned().collect::<Vec<_>>();
-                json!({"status":"running","wallets":names,"registry":registry,"hotReload":registry.is_some(),"pid":std::process::id(),"notifications":daemon.scheduler.notification_status()})
+                json!({"status":"running","wallets":names,"registry":registry,"hotReload":true,"pid":std::process::id(),"notifications":daemon.scheduler.notification_status()})
             }),
             Ok(Request::Overview { refresh }) => overview::run(&daemon, refresh).await,
             Ok(Request::Stop) => {
@@ -661,18 +612,13 @@ async fn handle(
                 stopping = true;
                 Ok(json!({"status":"stopping"}))
             }
-            Ok(Request::Run { name, argv }) => {
-                match wallet_for(&wallets, &name, registry.as_ref()).await {
-                    Ok(wallet) => {
-                        crate::execution::rpc_scope(
-                            daemon.scheduler.rpc.clone(),
-                            wallet.execute(argv),
-                        )
+            Ok(Request::Run { name, argv }) => match wallet_for(&wallets, &name, &registry).await {
+                Ok(wallet) => {
+                    crate::execution::rpc_scope(daemon.scheduler.rpc.clone(), wallet.execute(argv))
                         .await
-                    }
-                    Err(error) => Err(error),
                 }
-            }
+                Err(error) => Err(error),
+            },
         };
         let mut response = envelope(result);
         if persistent {

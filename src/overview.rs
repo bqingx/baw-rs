@@ -218,10 +218,7 @@ async fn refresh(daemon: Arc<Daemon>, name: String, entry: Entry) -> Value {
     row
 }
 pub(super) async fn run(daemon: &Arc<Daemon>, request_refresh: bool) -> Result<Value, String> {
-    let registry = daemon
-        .registry
-        .as_deref()
-        .ok_or("overview requires a named registry")?;
+    let registry = daemon.registry.as_path();
     let entries = crate::wallets::reload_entries(registry)?;
     let _inspection_reservation = if request_refresh {
         daemon.scheduler.admit_inspection()

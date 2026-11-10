@@ -14,12 +14,8 @@ pub struct Credentials {
 /// a single trailing newline is ignored so an editor-written file behaves like the CLI.
 pub fn resolve_instance(inline: String, file: Option<&std::path::Path>) -> Result<String, String> {
     match (file, inline.is_empty()) {
-        (Some(_), false) => Err(
-            "provide only one of --instance-id, BINANCE_INSTANCE_ID or --instance-id-file".into(),
-        ),
-        (None, true) => {
-            Err("explicit instance identity required (--instance-id or --instance-id-file)".into())
-        }
+        (Some(_), false) => Err("provide only one instance identity source".into()),
+        (None, true) => Err("instance identity required (wallet identity file unreadable)".into()),
         (None, false) => validate_instance(inline),
         (Some(path), true) => validate_instance(read_instance_file(path)?),
     }
@@ -520,7 +516,7 @@ mod tests {
             .contains("provide only one"));
         assert!(resolve_instance(String::new(), None)
             .unwrap_err()
-            .contains("explicit instance identity required"));
+            .contains("instance identity required"));
         assert!(resolve_instance("with\u{0}nul".into(), None)
             .unwrap_err()
             .contains("control characters"));

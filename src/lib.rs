@@ -26,4 +26,3 @@ pub mod transport;
 mod uint;
 pub mod wallet_ops;
 pub mod wallets;
-pub mod warm;

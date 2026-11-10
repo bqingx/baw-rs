@@ -23,7 +23,7 @@ async fn setup() -> (tempfile::TempDir, Arc<Daemon>, Arc<Wallet>, Mock) {
     );
     let daemon = Arc::new(Daemon {
         wallets: Arc::new(RwLock::new(BTreeMap::from([("w1".into(), wallet.clone())]))),
-        registry: Some(root.path().into()),
+        registry: root.path().into(),
         scheduler: Arc::new(Scheduler::default()),
     });
     (root, daemon, wallet, backend)

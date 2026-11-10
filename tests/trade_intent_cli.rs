@@ -5,20 +5,14 @@ use std::process::Command;
 fn intent_runs_before_wallet_session_registry_and_private_config_access() {
     let root = tempfile::tempdir().unwrap();
     let missing = root.path().join("must-not-be-created");
+    // Both with and without a named wallet: intent is answered locally, so the missing
+    // registry and private profile are never opened.
     for named in [false, true] {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_baw-rs"));
-        cmd.env_remove("BINANCE_BAW_DIR")
-            .env_remove("BINANCE_INSTANCE_ID")
-            .env_remove("BAW_RS_SKIP_PRECHECKS");
+        cmd.env_remove("BAW_RS_SKIP_PRECHECKS");
         if named {
             cmd.args(["--wallet", "not-registered", "--registry"])
-                .arg(&missing)
-                .arg("--warm");
-        } else {
-            cmd.arg("--wallet-dir")
-                .arg(&missing)
-                .arg("--instance-id-file")
-                .arg(missing.join("identity"));
+                .arg(&missing);
         }
         let output = cmd
             .args([
@@ -84,8 +78,7 @@ fn intent_needs_no_wallet_and_does_not_weaken_swap_gate() {
         "false",
     ];
     let output = Command::new(env!("CARGO_BIN_EXE_baw-rs"))
-        .env_remove("BINANCE_BAW_DIR")
-        .env_remove("BINANCE_INSTANCE_ID")
+        .env_remove("BAW_RS_REGISTRY")
         .args(args)
         .output()
         .unwrap();
@@ -93,8 +86,7 @@ fn intent_needs_no_wallet_and_does_not_weaken_swap_gate() {
     let mut swap = args;
     swap[1] = "swap";
     let output = Command::new(env!("CARGO_BIN_EXE_baw-rs"))
-        .env_remove("BINANCE_BAW_DIR")
-        .env_remove("BINANCE_INSTANCE_ID")
+        .env_remove("BAW_RS_REGISTRY")
         .args(swap)
         .output()
         .unwrap();

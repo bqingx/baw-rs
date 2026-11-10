@@ -4,13 +4,6 @@ use clap::Parser;
 
 #[test]
 fn recognizes_previously_missing_command_families() {
-    let prefix = [
-        "baw-rs",
-        "--wallet-dir",
-        "/synthetic",
-        "--instance-id",
-        "synthetic",
-    ];
     let cases: Vec<Vec<&str>> = vec![
         vec!["auth", "signin"],
         vec!["auth", "verify", "--qrCodeId", "synthetic-qr"],
@@ -97,7 +90,7 @@ fn recognizes_previously_missing_command_families() {
         vec!["sign-message", "history"],
     ];
     for case in cases {
-        let args = prefix.into_iter().chain(case.iter().copied());
+        let args = std::iter::once("baw-rs").chain(case.iter().copied());
         assert!(
             Cli::try_parse_from(args).is_ok(),
             "missing command family {}",

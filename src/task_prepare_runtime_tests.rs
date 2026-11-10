@@ -245,7 +245,7 @@ async fn run_test_with_notification(case: Case, notify: bool) {
     );
     let daemon = Arc::new(Daemon {
         wallets: Arc::new(RwLock::new(BTreeMap::from([("w1".into(), entry)]))),
-        registry: Some(root.path().into()),
+        registry: root.path().into(),
         scheduler: Arc::new(Scheduler::with_notifications(notifications)),
     });
     daemon

@@ -52,8 +52,6 @@ fn spawn_child(root: &std::path::Path, origin: &str, mode: &str) -> FixtureChild
             .env(MODE, mode)
             .env(ROOT, root)
             .env(ORIGIN, origin)
-            .env_remove("BINANCE_BAW_DIR")
-            .env_remove("BINANCE_INSTANCE_ID")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -91,7 +89,7 @@ fn subprocess_fixture_entry() {
         let dir=root.join("w1");let metadata=std::fs::metadata(&dir).unwrap();
         let mut wallet=Wallet::new(Entry {dir,instance_file:root.join("w1.key"),device:metadata.dev(),inode:metadata.ino()}).unwrap();
         wallet.origin=Some(origin);let wallet=Arc::new(wallet);
-        let daemon=Arc::new(Daemon {wallets:Arc::new(RwLock::new(BTreeMap::from([("w1".into(),wallet)]))),registry:Some(root.clone()),scheduler:Arc::new(Scheduler::default())});
+        let daemon=Arc::new(Daemon {wallets:Arc::new(RwLock::new(BTreeMap::from([("w1".into(),wallet)]))),registry:root.clone(),scheduler:Arc::new(Scheduler::default())});
         if mode=="execute" {
             let definition:Definition=serde_json::from_value(read_json(&root.join("definition.json"))).unwrap();
             daemon.scheduler.control(daemon.clone(),Control::Load {config:definition}).await.unwrap();

@@ -98,7 +98,7 @@ async fn reconcile_then_resume_never_resubmits_the_confirmed_wallet_or_renews_de
     ]})).unwrap();
     let daemon = Arc::new(Daemon {
         wallets: wallets.clone(),
-        registry: Some(root.path().into()),
+        registry: root.path().into(),
         scheduler: Arc::new(Scheduler::default()),
     });
     daemon
@@ -117,7 +117,7 @@ async fn reconcile_then_resume_never_resubmits_the_confirmed_wallet_or_renews_de
     std::fs::write(&file, serde_json::to_vec(&stored).unwrap()).unwrap();
     let daemon = Arc::new(Daemon {
         wallets,
-        registry: Some(root.path().into()),
+        registry: root.path().into(),
         scheduler: Arc::new(Scheduler::default()),
     });
     assert!(daemon

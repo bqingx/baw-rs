@@ -483,18 +483,14 @@ impl Scheduler {
         daemon: Arc<Daemon>,
         control: Control,
     ) -> Result<Value, String> {
-        let registry = daemon
-            .registry
-            .as_deref()
-            .ok_or("instance pipelines require the named-wallet daemon")?;
+        let registry = daemon.registry.as_path();
         match control {
             Control::Load { config } => {
                 let pipeline = validate(&config)?;
                 // Resolve every member before publishing a runnable definition.
                 for task in &config.steps {
                     for action in &task.actions {
-                        wallet_for(&daemon.wallets, &action.wallet, daemon.registry.as_ref())
-                            .await?;
+                        wallet_for(&daemon.wallets, &action.wallet, &daemon.registry).await?;
                     }
                 }
                 let mut runs = self.runs.lock().await;
@@ -578,8 +574,7 @@ impl Scheduler {
                         .collect::<std::collections::BTreeSet<_>>();
                     let mut preparation = tokio::task::JoinSet::new();
                     for name in names {
-                        let wallet =
-                            wallet_for(&daemon.wallets, &name, daemon.registry.as_ref()).await?;
+                        let wallet = wallet_for(&daemon.wallets, &name, &daemon.registry).await?;
                         preparation.spawn(async move {
                             tokio::time::timeout(Duration::from_secs(30), wallet.preload())
                                 .await
@@ -639,12 +634,10 @@ impl Scheduler {
                     .results
                     .insert("runtime".into(), json!({"error":error}));
             }
-            if let Some(registry) = &daemon.registry {
-                if save(registry, &state).is_err() {
-                    state.status = "PERSISTENCE_ERROR".into();
-                } else {
-                    scheduler.notify_state(registry, &state);
-                }
+            if save(&daemon.registry, &state).is_err() {
+                state.status = "PERSISTENCE_ERROR".into();
+            } else {
+                scheduler.notify_state(&daemon.registry, &state);
             }
             run.active.store(false, Ordering::SeqCst);
         });
@@ -680,7 +673,7 @@ impl Scheduler {
     }
     async fn execute(&self, daemon: Arc<Daemon>, run: Arc<Run>) -> Result<(), String> {
         let config = run.state.lock().await.definition.clone();
-        let registry = daemon.registry.as_deref().ok_or("registry missing")?;
+        let registry = daemon.registry.as_path();
         for (index, task) in config.steps.iter().enumerate() {
             if run.cancel.load(Ordering::SeqCst) {
                 return Err("pipeline cancelled before next task".into());

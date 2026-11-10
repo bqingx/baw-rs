@@ -7,10 +7,6 @@ use clap::Parser;
 fn okx_swap() -> Vec<&'static str> {
     vec![
         "baw-rs",
-        "--wallet-dir",
-        "/synthetic",
-        "--instance-id",
-        "synthetic",
         "market-order",
         "swap",
         "--provider",

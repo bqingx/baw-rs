@@ -8,26 +8,6 @@ use crate::{
 };
 use serde_json::{json, Value};
 
-/// The wallet dimension is mandatory. `--wallet` is resolved and forwarded before dispatch,
-/// so reaching dispatch means either the legacy `--wallet-dir` pair was given or the
-/// invocation is wrong.
-pub fn require_wallet_scope(cli: &Cli) -> Result<(), String> {
-    if cli.wallet_dir.is_some() {
-        return Ok(());
-    }
-    Err(match &cli.command {
-        Command::Serve => {
-            "serve requires --wallet-dir with --instance-id or --instance-id-file (legacy single wallet); use `baw-rs wallets serve` for the named registry".into()
-        }
-        Command::Wallets(_) => {
-            "`wallets` is handled before wallet resolution and needs no --wallet".into()
-        }
-        _ => {
-            "wallet-scoped command requires --wallet <NAME> (for example `baw-rs --wallet alice wallet status`); legacy single-wallet callers may pass --wallet-dir with --instance-id or --instance-id-file".into()
-        }
-    })
-}
-
 fn mutation(cli: &Cli) -> Result<Option<(&'static str, Value)>, String> {
     Ok(match &cli.command {
         Command::Auth { command } => Some((
@@ -131,7 +111,6 @@ pub async fn execute(client: &mut Client, cli: &Cli) -> Result<Value, String> {
 
 async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> {
     preflight(cli)?;
-    require_wallet_scope(cli)?;
     let wallet_dir = cli.wallet_dir_path()?.to_path_buf();
     if client.credentials().session_id.is_empty()
         && !matches!(
@@ -208,7 +187,6 @@ async fn execute_inner(client: &mut Client, cli: &Cli) -> Result<Value, String> 
         Command::Pipeline { .. } | Command::Wallets(_) => {
             Err("pipeline and wallets control are handled before dispatch".into())
         }
-        Command::Serve => Err("serve runs before dispatch".into()),
     };
     if let Some(guard) = &mut guard {
         guard.finish(&result)?;
@@ -228,18 +206,17 @@ mod tests {
     #[tokio::test]
     async fn signed_out_signing_queries_are_rejected_before_network() {
         let dir = tempfile::tempdir().unwrap();
-        let cli = Cli::try_parse_from([
+        // Only the resident daemon binds the wallet directory; tests do it directly.
+        let mut cli = Cli::try_parse_from([
             "baw-rs",
-            "--wallet-dir",
-            dir.path().to_str().unwrap(),
-            "--instance-id",
-            "synthetic",
             "sign-message",
             "result",
             "--order-id",
             "synthetic-order",
         ])
         .unwrap();
+        cli.wallet_dir = Some(dir.path().to_path_buf());
+        cli.instance_id = "synthetic".into();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut client = Client::test_client(
             crate::session::Credentials {
@@ -267,12 +244,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let amount = "0.000000000000000001000000000000000001";
-        let cli = Cli::try_parse_from([
+        let mut cli = Cli::try_parse_from([
             "baw-rs",
-            "--wallet-dir",
-            dir.path().to_str().unwrap(),
-            "--instance-id",
-            "synthetic",
             "--confirm",
             "--operation-id",
             "send-precision",
@@ -288,6 +261,8 @@ mod tests {
             amount,
         ])
         .unwrap();
+        cli.wallet_dir = Some(dir.path().to_path_buf());
+        cli.instance_id = "synthetic".into();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let journal = dir.path().join(".baw-rs-operations/send-precision.json");

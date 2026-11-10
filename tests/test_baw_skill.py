@@ -100,7 +100,7 @@ class SkillTests(unittest.TestCase):
             self.assertEqual(list(Path(home).rglob("session.json")), [])
 
     def test_generator_suppresses_sensitive_environment_defaults(self):
-        keys = ("BINANCE_INSTANCE_ID", "BINANCE_BAW_DIR")
+        keys = ("BAW_RS_SKIP_PRECHECKS", "BAW_RS_REGISTRY", "BAW_RS_NOTIFY_CONFIG")
         old = {key: os.environ.get(key) for key in keys}
         try:
             for key in keys:
@@ -140,8 +140,14 @@ class SkillTests(unittest.TestCase):
                       "vaults", "openfour encode-buy", "--json", "BROADCASTED", "--acknowledge-token-risk"):
             self.assertIn(token, text)
         modes = (SKILL / "references/wallet-modes.md").read_text()
-        self.assertIn("--warm", modes)
+        # The retired single-wallet entry points must not come back as documented knobs.
+        warm = "--wa" "rm"  # split so the retired flag is not a literal that grep finds
+        self.assertNotIn(warm, modes)
+        self.assertNotIn('"$B" --wallet-dir', modes)
+        self.assertIn("wallets journal", modes)
+        self.assertIn("已移除", modes)
         self.assertNotIn("fast serve", modes)
+        self.assertNotIn(warm, text)
 
 
 if __name__ == "__main__":

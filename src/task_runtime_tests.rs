@@ -68,7 +68,7 @@ async fn instance_load_persists_and_refuses_overwrite_or_unconfirmed_arm() {
         .collect();
     let daemon = Arc::new(Daemon {
         wallets: Arc::new(RwLock::new(entries)),
-        registry: Some(root.path().into()),
+        registry: root.path().into(),
         scheduler: Arc::new(Scheduler::default()),
     });
     daemon
@@ -159,7 +159,7 @@ async fn real_pipeline_runs_overlapping_wallet_sets_in_order_and_drains() {
         .collect();
     let daemon = Arc::new(Daemon {
         wallets: Arc::new(RwLock::new(entries)),
-        registry: Some(root.path().into()),
+        registry: root.path().into(),
         scheduler: Arc::new(Scheduler::default()),
     });
     let mut config = definition();

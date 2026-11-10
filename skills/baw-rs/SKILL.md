@@ -63,7 +63,6 @@ metadata:
 
 - `--operation-id`：1–64 位字母数字/`-`/`_`，**每个意图一个、永不复用**；它是本地持久防重的键。
 - `pipeline`/`task`（同一命令的别名）属于实例，**不带 `--wallet`**。`wallets` 管生命周期，也不带 `--wallet`（`vaults` 是其隐藏别名）。
-- 兼容的旧单钱包形式 `--wallet-dir D --instance-id-file K`（可配 `serve`/`--warm`）仍可用，但不要与 `--wallet` 混用；日常一律 `--wallet`。
 
 ## Procedure
 

@@ -3,8 +3,6 @@ use serde_json::{json, Value};
 use std::{os::unix::fs::PermissionsExt, path::Path, process::Command};
 fn command(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_baw-rs"))
-        .env_remove("BINANCE_BAW_DIR")
-        .env_remove("BINANCE_INSTANCE_ID")
         .env_remove("BAW_RS_REGISTRY")
         .env_remove("BAW_RS_NOTIFY_CONFIG")
         .env_remove("BAW_RS_SKIP_PRECHECKS")

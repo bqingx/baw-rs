@@ -19,6 +19,7 @@
 ```sh
 "$B" --wallet "$NAME" wallet operation --operation-id "$OP" --json   # 本地日志，不联网、未登录也能查
 "$B" --wallet "$NAME" wallet operation --list --json
+"$B" wallets journal "$NAME" --list                     # daemon 未运行时也能读本地日志
 "$B" --wallet "$NAME" wallet tx-history --json
 "$B" --wallet "$NAME" wallet tx-lock --json
 ```

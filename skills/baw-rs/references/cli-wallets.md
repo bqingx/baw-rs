@@ -2,7 +2,7 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带 `--wallet <NAME>`（或传统 `--wallet-dir` 组合）；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
 
 ## `wallets`
 
@@ -19,11 +19,12 @@ Commands:
   overview  On-demand sanitized wallet/task/journal snapshot; no background polling
   serve     Run the resident daemon in the foreground for every registered wallet
   stop      Stop accepting work, drain admitted requests, then exit
+  journal   Local operation journal of one wallet. Never contacts the daemon, so it also works while the daemon is stopped or the caller is signed out
   help      Print this message or the help of the given subcommand(s)
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -36,8 +37,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -56,7 +55,7 @@ Arguments:
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --wallet-root <PATH>
           Directory holding per-wallet subdirectories. Defaults to $HOME/wallets
       --registry <PATH>
@@ -75,8 +74,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -97,7 +94,7 @@ Options:
       --keep-data
           Explicitly keep the wallet directory and identity file (the default)
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --delete-data
           Delete session, identity and the wallet directory after unregistering (needs --confirm)
       --registry <PATH>
@@ -112,8 +109,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -129,7 +124,7 @@ Usage: baw-rs wallets list [OPTIONS]
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -142,8 +137,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -159,7 +152,7 @@ Usage: baw-rs wallets status [OPTIONS]
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -172,8 +165,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -191,7 +182,7 @@ Options:
       --refresh
           Explicitly read login/settings (max two GETs per eligible wallet); skips active tasks/busy wallets
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -204,8 +195,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -221,7 +210,7 @@ Usage: baw-rs wallets serve [OPTIONS]
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -234,8 +223,6 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help
@@ -251,7 +238,7 @@ Usage: baw-rs wallets stop [OPTIONS]
 
 Options:
       --wallet <NAME>
-          Name of a registered wallet. Required for every wallet-scoped command unless the legacy --wallet-dir pair is given
+          Name of a registered wallet. Required for every wallet-scoped command
       --registry <PATH>
           Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
       --json
@@ -264,8 +251,39 @@ Options:
 
       --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
 
-      --warm
-          Route this command through the resident warm server when it is running
+      --skip-prechecks
+          Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
+  -h, --help
+          Print help
+```
+
+## `wallets journal`
+
+```text
+Local operation journal of one wallet. Never contacts the daemon, so it also works while the daemon is stopped or the caller is signed out
+
+Usage: baw-rs wallets journal [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+
+Options:
+      --list
+          List recorded operation ids instead of one record
+      --wallet <NAME>
+          Name of a registered wallet. Required for every wallet-scoped command
+      --registry <PATH>
+          Registry directory. Defaults to $BAW_RS_REGISTRY, else $HOME/wallets/registry
+      --json
+
+      --timing
+
+      --confirm
+
+      --operation-id <OPERATION_ID>
+
+      --accept-preview-sha256 <ACCEPT_PREVIEW_SHA256>
+
       --skip-prechecks
           Skip the two pre-write reads (developer-mode settings, wallet addresses) and trust `--from` as the sender. Removes the local guard against sending from a wallet other than the one named; the backend still enforces developer mode [env: BAW_RS_SKIP_PRECHECKS=]
   -h, --help

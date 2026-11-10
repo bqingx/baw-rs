@@ -65,6 +65,14 @@ pub enum Action {
     Serve,
     /// Stop accepting work, drain admitted requests, then exit.
     Stop,
+    /// Local operation journal of one wallet. Never contacts the daemon, so it also works
+    /// while the daemon is stopped or the caller is signed out.
+    Journal {
+        name: String,
+        /// List recorded operation ids instead of one record.
+        #[arg(long)]
+        list: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -530,14 +538,15 @@ fn add(
 }
 
 /// Files a wallet directory may contain. Anything else blocks `--delete-data`.
-fn known_wallet_entries() -> [&'static str; 6] {
+/// `.baw-rs.sock` is a leftover of the retired single-wallet daemon: it is still tolerated
+/// and removed here so an old file cannot block deleting a wallet that has no owner.
+fn known_wallet_entries() -> [&'static str; 5] {
     [
         "session.json",
         "auth-pending",
         ".baw-rs-operations",
         ".baw-rs-resident.lock",
         ".baw-rs.sock",
-        ".unused-instance",
     ]
 }
 
@@ -676,7 +685,12 @@ fn daemon_hint(message: String, registry: &Path) -> String {
     }
 }
 
-pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
+/// `operation_id` is the global `--operation-id`; only `wallets journal` reads it.
+pub async fn run(
+    action: Action,
+    registry: PathBuf,
+    operation_id: Option<&str>,
+) -> Result<Value, String> {
     match action {
         Action::Add {
             name,
@@ -715,7 +729,7 @@ pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
                 let _lock = lock_registry(&registry, false)?;
                 load(&registry)?
             };
-            crate::resident::serve(&socket_path(&registry), entries, Some(registry.clone())).await
+            crate::resident::serve(&socket_path(&registry), entries, registry.clone()).await
         }
         Action::Overview { refresh } => {
             crate::resident::send(
@@ -733,6 +747,18 @@ pub async fn run(action: Action, registry: PathBuf) -> Result<Value, String> {
             crate::resident::send(&socket_path(&registry), crate::resident::Request::Stop)
                 .await
                 .map_err(|message| daemon_hint(message, &registry))
+        }
+        Action::Journal { name, list } => {
+            // Registry resolution plus `Entry::check` is the whole gate: the journal is a
+            // local file tree, so no daemon, session, identity or network is consulted.
+            let entry = resolve(&registry, &name)?;
+            crate::operations::run(
+                &entry.dir,
+                &crate::operations::OperationArgs {
+                    id: operation_id.map(str::to_owned),
+                    list,
+                },
+            )
         }
     }
 }
