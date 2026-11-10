@@ -61,7 +61,7 @@
 
 ### 状态怎么读
 
-- `status`：`LOADED` → `RUNNING` → `COMPLETED`；异常时 `PAUSED` / `INTERRUPTED` / `CANCELLED` / `PERSISTENCE_ERROR`。**RUNNING 不代表已就绪**。
+- `status`：`LOADED` → `RUNNING` → `COMPLETED`；异常时 `PAUSED` / `INTERRUPTED` / `CANCELLED` / `PERSISTENCE_ERROR`；`reconcile` 后可能为 `RECONCILED`（可 resume）。**RUNNING 不代表已就绪**。
 - `results.phase`：`PREPARING`（额度准备，最多 120 秒）→ `STARTING_LISTENER` → `WAITING`（监听就绪，此时才通知用户）→ `EXECUTING`。
 - 每个成员的结果含 txHash、`walletExecuteMs`、`hotPathTiming`、`stateReadStats`；这些是本地分段计时，不是事件到上链延迟。
 
