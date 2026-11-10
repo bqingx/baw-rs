@@ -2,7 +2,7 @@
 
 由 `scripts/build_skill_reference.py` 从 `baw-rs 0.3.0` 的 `--help` 生成。
 这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。
-普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。
+普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets` 管理注册表与 daemon，也不带钱包。
 
 ## `wallets`
 

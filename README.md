@@ -31,11 +31,12 @@ Rust 原生的多钱包执行客户端：**OKX 构造交易，币安钱包签名
 Linux，Rust stable。仓库不携带预编译产物或钱包凭据。
 
 ```sh
-cargo build --locked --release --bin baw-rs
+cargo build --locked --release --bin baw-rs --bin openfour
 ./target/release/baw-rs --version
 sha256sum target/release/baw-rs
 ```
 
+`openfour`（four.meme 曲线只读报价与离线编码）是同仓库的独立程序，不需要钱包，不经 baw-rs。
 Release 使用优化、Thin LTO 和 strip；Debug 产物含调试信息，不能据其文件大小判断发行版大小或运行内存。
 版本号相同不代表构建相同，请同时核对哈希和命令帮助。
 

@@ -1,8 +1,8 @@
 # 完整命令索引
 
-包含根帮助之外的 `openfour`；`task` 是 `pipeline` 的别名，`vaults` 是 `wallets` 的隐藏别名，不重复计数。
+`task` 是 `pipeline` 的别名，`vaults` 是 `wallets` 的隐藏别名，不重复计数。
 
-快照版本 `baw-rs 0.3.0`；叶子命令 **51** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。
+快照版本 `baw-rs 0.3.0`；叶子命令 **49** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。
 
 - `approvals approve` → [参数](cli-approvals.md)
 - `approvals detail` → [参数](cli-approvals.md)
@@ -18,8 +18,6 @@
 - `market-order intent` → [参数](cli-market-order.md)
 - `market-order quote` → [参数](cli-market-order.md)
 - `market-order swap` → [参数](cli-market-order.md)
-- `openfour encode-buy` → [参数](cli-openfour.md)
-- `openfour quote-buy` → [参数](cli-openfour.md)
 - `pipeline arm` → [参数](cli-pipeline.md)
 - `pipeline cancel` → [参数](cli-pipeline.md)
 - `pipeline describe` → [参数](cli-pipeline.md)

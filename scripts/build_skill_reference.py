@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 
-EXTRA_ROOTS = ("openfour",)
+EXTRA_ROOTS = ()
 
 
 def collect(binary, extra_roots=EXTRA_ROOTS):
@@ -22,10 +22,7 @@ def collect(binary, extra_roots=EXTRA_ROOTS):
         output = subprocess.run([str(binary), *path, "--help"], env=env,
                                 capture_output=True, text=True, check=False, timeout=10)
         text = "\n".join(line.rstrip() for line in output.stdout.splitlines()) + "\n"
-        # This snapshot prints valid openfour help but exits 1 (separate parser bug).
-        help_exit_quirk = bool(path and path[0] == "openfour" and output.returncode == 1
-                               and "Usage:" in text and "error:" not in text.lower())
-        if output.returncode and not help_exit_quirk:
+        if output.returncode:
             raise ValueError(f"help failed: {path}, exit {output.returncode}")
         if not text.strip() or "Usage:" not in text:
             raise ValueError(f"missing help: {path}")
@@ -61,7 +58,7 @@ def generate(binary, output):
                    if key == family or key.startswith(family + " ")]
         chunks = [f"# {family}：实际 CLI 参数\n\n由 `scripts/build_skill_reference.py` 从 `{version}` 的 `--help` 生成。\n"
                   "这不是运行授权；命令含义、资金确认及对账流程以主 skill 和工作流参考为准。\n"
-                  "普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets/openfour` 各有独立参数入口。\n"]
+                  "普通业务命令须带 `--wallet <NAME>`；`pipeline` 属于实例，不带钱包；`wallets` 管理注册表与 daemon，也不带钱包。\n"]
         for key, text in entries:
             chunks.append(f"\n## `{key}`\n\n```text\n{text.rstrip()}\n```\n")
         (ref / f"cli-{family}.md").write_text("".join(chunks))
@@ -72,9 +69,16 @@ def generate(binary, output):
                 "families": sorted({c.split()[0] for c in leaves})}
     (ref / "commands.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     (ref / "command-index.md").write_text(
-        "# 完整命令索引\n\n包含根帮助之外的 `openfour`；`task` 是 `pipeline` 的别名，`vaults` 是 `wallets` 的隐藏别名，不重复计数。\n\n"
+        "# 完整命令索引\n\n`task` 是 `pipeline` 的别名，`vaults` 是 `wallets` 的隐藏别名，不重复计数。\n\n"
         + f"快照版本 `{version}`；叶子命令 **{len(leaves)}** 条。版本号相同不代表功能相同，须核对命令帮助或二进制哈希。\n\n"
         + "\n".join(f"- `{cmd}` → [参数](cli-{cmd.split()[0]}.md)" for cmd in leaves) + "\n")
+    comparison_path = ref / "official-comparison.json"
+    comparison = json.loads(comparison_path.read_text())
+    official = set(comparison["official"])
+    comparison.update({"ours": len(leaves),
+                       "missing": sorted(official - set(leaves)),
+                       "extras": sorted(set(leaves) - official)})
+    comparison_path.write_text(json.dumps(comparison, ensure_ascii=False, indent=2) + "\n")
     return manifest
 
 

@@ -53,7 +53,7 @@ metadata:
 | 消息签名 | `sign-message preview` → `sign-message execute`；`result` / `history` 查询 |
 | 授权 | `approvals list` · `approvals detail` · `approvals approve` · `approvals revoke` |
 | 实例任务 | `"$B" pipeline describe --config F` · `load --config F` · `arm ID --confirm` · `status ID` · `cancel ID` · `reconcile ID` · `resume ID --confirm` |
-| four.meme 曲线（无钱包） | `"$B" openfour quote-buy ...` · `"$B" openfour encode-buy ...`（离线编码） |
+| four.meme 曲线（独立程序，无钱包） | `openfour quote-buy ...` · `openfour encode-buy ...`（与 `$B` 同目录的 `openfour`；离线编码） |
 
 写操作的通用形式：
 

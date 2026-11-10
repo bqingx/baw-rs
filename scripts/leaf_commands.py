@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory actual CLI leaves, including the separate openfour parser, from help only."""
+"""Inventory actual CLI leaves from help only."""
 import os
 from pathlib import Path
 import sys

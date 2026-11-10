@@ -1,6 +1,6 @@
 //! Strict uint256 parsing shared by typed resident calls and native event tasks.
 /// Accept a raw decimal or 0x-prefixed hex string only; reject signs, padding and overflow.
-pub(crate) fn uint256(s: &str) -> Result<num_bigint::BigUint, String> {
+pub fn uint256(s: &str) -> Result<num_bigint::BigUint, String> {
     let (digits, radix, max) = match s.strip_prefix("0x") {
         Some(h) => (h, 16, 64),
         None => (s, 10, 78),

@@ -18,7 +18,7 @@ echo "[3/6] test"
 cargo test --locked --all-targets -- --test-threads=1 >verification/cargo-test.log 2>&1 && echo "exit=0" >>verification/cargo-test.log || { echo "exit=$?" >>verification/cargo-test.log; exit 1; }
 
 echo "[4/6] build --release"
-cargo build --locked --release --bin baw-rs >verification/release-build.log 2>&1 && echo "exit=0" >>verification/release-build.log || { echo "exit=$?" >>verification/release-build.log; exit 1; }
+cargo build --locked --release --bin baw-rs --bin openfour >verification/release-build.log 2>&1 && echo "exit=0" >>verification/release-build.log || { echo "exit=$?" >>verification/release-build.log; exit 1; }
 
 echo "[5/6] source manifest + release identity"
 python3 scripts/source_manifest.py

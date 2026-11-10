@@ -28,7 +28,7 @@ fn nonempty(s: &str) -> Result<(), String> {
 pub(crate) fn is_solana(chain: &str) -> bool {
     chain == "CT_501"
 }
-pub(crate) fn address(chain: &str, s: &str) -> Result<(), String> {
+pub fn address(chain: &str, s: &str) -> Result<(), String> {
     if is_solana(chain) {
         if (32..=44).contains(&s.len())
             && s.bytes()

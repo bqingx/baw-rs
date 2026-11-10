@@ -1,8 +1,8 @@
 {
   "version": "baw-rs 0.3.0",
   "source": "actual --help; no wallet/backend calls",
-  "binarySha256": "5af5f6f3dab934751d6e76bdde63a0e7c0009805896e51f14876c124b8522899",
-  "leafCount": 51,
+  "binarySha256": "abbbb0736922a00b4caa111f6ed03b56bebc264a2d1de8f5d43afb353a209e46",
+  "leafCount": 49,
   "leaves": [
     "approvals approve",
     "approvals detail",
@@ -18,8 +18,6 @@
     "market-order intent",
     "market-order quote",
     "market-order swap",
-    "openfour encode-buy",
-    "openfour quote-buy",
     "pipeline arm",
     "pipeline cancel",
     "pipeline describe",
@@ -62,7 +60,6 @@
     "cli-check",
     "contract-call",
     "market-order",
-    "openfour",
     "pipeline",
     "sign-message",
     "skill-check",

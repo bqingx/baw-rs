@@ -9,7 +9,7 @@
 | `wallet send --amount` | 人类可读数量（以帮助为准） | `0.05` |
 | `contract-call --value` | 原生币最小单位整数（wei） | 0.01 BNB = `10000000000000000` |
 | `contract-call --gasLimit` | Gas 用量上限，不是 Gas 价格 | 仅用户指定时传 |
-| `openfour quote-buy --amount` | 人类可读 BNB | `0.1` |
+| `openfour quote-buy --amount`（独立程序） | 人类可读 BNB | `0.1` |
 | `openfour encode-buy --amount-wei` / `--min-out-raw` | 最小单位整数 | |
 
 ## 地址

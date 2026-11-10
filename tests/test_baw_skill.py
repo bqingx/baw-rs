@@ -62,15 +62,19 @@ class SkillTests(unittest.TestCase):
         self.assertEqual(len(leaves), manifest["leafCount"])
         self.assertEqual(version, manifest["version"])
         self.assertEqual(hashlib.sha256(BINARY.read_bytes()).hexdigest(), manifest["binarySha256"])
-        for family in ("wallets", "pipeline", "openfour", "approvals", "sign-message"):
+        for family in ("wallets", "pipeline", "approvals", "sign-message"):
             self.assertIn(family, manifest["families"])
         # `vaults` is a hidden alias of `wallets`, so it is not a family in help.
         self.assertNotIn("vaults", manifest["families"])
         self.assertNotIn("task", manifest["families"])  # instance alias, not a second engine
+        self.assertNotIn("openfour", manifest["families"])  # separate `openfour` binary
         for family in ("fast", "prediction", "defi", "tracker", "signal", "leaderboard"):
             self.assertNotIn(family, manifest["families"])
         comparison = json.loads((SKILL / "references/official-comparison.json").read_text())
         self.assertEqual(len(leaves), comparison["ours"])
+        self.assertEqual(len(comparison["official"]), comparison["officialCount"])
+        self.assertEqual(sorted(set(leaves) - set(comparison["official"])), comparison["extras"])
+        self.assertEqual(sorted(set(comparison["official"]) - set(leaves)), comparison["missing"])
         self.assertEqual(
             comparison["officialCount"] + len(comparison["extras"]),
             len(leaves) + len(comparison["missing"]),
@@ -122,7 +126,8 @@ class SkillTests(unittest.TestCase):
         env = {key: os.environ[key] for key in ("PATH", "TMPDIR", "LANG") if key in os.environ}
         with tempfile.TemporaryDirectory() as home:
             env["HOME"] = home
-            out = subprocess.run([str(BINARY), "openfour", "encode-buy", "--core", intent["core"],
+            openfour = BINARY.with_name("openfour")  # separate binary built next to baw-rs
+            out = subprocess.run([str(openfour), "encode-buy", "--core", intent["core"],
                                   "--token", intent["token"], "--wallet", intent["from"],
                                   "--amount-wei", intent["budget"], "--min-out-raw",
                                   intent["minAmountOut"]],
@@ -136,7 +141,7 @@ class SkillTests(unittest.TestCase):
 
     def test_skill_explains_rust_specific_safety_and_modes(self):
         text = (SKILL / "SKILL.md").read_text()
-        for token in ("--instance-id-file", "--operation-id", "--accept-preview-sha256", "serve",
+        for token in ("--operation-id", "--accept-preview-sha256", "serve",
                       "vaults", "openfour encode-buy", "--json", "BROADCASTED", "--acknowledge-token-risk"):
             self.assertIn(token, text)
         modes = (SKILL / "references/wallet-modes.md").read_text()

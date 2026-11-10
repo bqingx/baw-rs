@@ -7,7 +7,7 @@
 | `"$B" --wallet NAME <command>` | 日常业务；经命名 daemon 执行 | 必须 |
 | `"$B" wallets <add/remove/list/status/overview/serve/stop>` | 注册表与 daemon 管理（`vaults` 是隐藏别名） | 不能带 |
 | `"$B" pipeline/task ...` | 实例级任务 | 不能带 |
-| `"$B" openfour ...` | 链上只读/离线编码，不需要钱包 | 不能带 |
+| `openfour ...`（同目录的独立程序） | four.meme 曲线只读报价/离线编码，不碰钱包、注册表或 daemon | 无此参数 |
 | `"$B" wallets journal NAME (--operation-id ID \| --list)` | 本地操作日志；不连 daemon、不读 session、未登录也能用 | 不能带 |
 
 旧的单钱包入口（顶层 `--wallet-dir` / `--instance-id` / `--instance-id-file`、warm 模式开关、顶层 `serve`）已移除：这些参数现在直接报"未知参数"，没有冷执行回退。名字不存在、未登录、daemon 未运行都直接报错，不会回退到别的钱包。

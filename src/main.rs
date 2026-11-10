@@ -41,22 +41,6 @@ async fn run() -> io::Result<bool> {
     let named_flag = raw
         .iter()
         .any(|a| a == "--wallet" || a.starts_with("--wallet="));
-    // `openfour` is a chain-only read: it must work without a wallet directory, an
-    // instance identity or a session, so it is parsed and run before the wallet CLI.
-    if raw
-        .first()
-        .is_some_and(|s| baw_rs::openfour::NAMES.contains(&s.as_str()))
-    {
-        let parsed = match baw_rs::openfour::Args::try_parse_from(raw.iter()) {
-            Ok(args) => args,
-            Err(error) => {
-                let _ = error.print();
-                return Ok(false);
-            }
-        };
-        let result = baw_rs::openfour::run(&parsed.command).await;
-        return emit(result);
-    }
     let cli = match Cli::try_parse() {
         Ok(cli) => {
             baw_rs::signing::set_skip_prechecks_default(cli.skip_prechecks);
@@ -77,12 +61,6 @@ async fn run() -> io::Result<bool> {
                 .any(|arg| matches!(arg.as_str(), "pipeline" | "task"));
             let message = if instance_task {
                 "invalid instance task command; use `baw-rs pipeline --help` (status/arm/cancel/reconcile/resume require a pipeline ID; no --wallet)"
-            } else if named_flag
-                && raw
-                    .iter()
-                    .any(|a| baw_rs::openfour::NAMES.contains(&a.as_str()))
-            {
-                "openfour commands are chain-only reads and do not take --wallet"
             } else if named_flag {
                 "invalid command after --wallet <NAME>; pass a wallet-scoped subcommand such as `wallet status`, or use `baw-rs wallets --help` for management"
             } else {
