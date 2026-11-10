@@ -37,10 +37,10 @@ fn okx_swap() -> Vec<&'static str> {
 fn okx_swap_requires_consent_and_binds_provider_and_floor_in_journal_intent() {
     let mut args = okx_swap();
     let cli = Cli::try_parse_from(&args).unwrap();
-    assert!(baw_rs::dispatch::preflight(&cli).is_err());
+    assert!(baw_rs::exec::dispatch::preflight(&cli).is_err());
     args.extend(["--confirm", "--operation-id", "okx-intent-1"]);
     let cli = Cli::try_parse_from(args).unwrap();
-    baw_rs::dispatch::preflight(&cli).unwrap();
+    baw_rs::exec::dispatch::preflight(&cli).unwrap();
     let Command::MarketOrder { command } = cli.command else {
         panic!()
     };
@@ -70,7 +70,7 @@ fn optional_fixed_floor_is_not_defaulted_and_remains_distinct_in_durable_intent(
         }
         args.extend(["--confirm", "--operation-id", "optional-floor"]);
         let cli = Cli::try_parse_from(args).unwrap();
-        baw_rs::dispatch::preflight(&cli).unwrap();
+        baw_rs::exec::dispatch::preflight(&cli).unwrap();
         let Command::MarketOrder {
             command: MarketCommand::Swap(a),
         } = cli.command
@@ -108,7 +108,7 @@ fn explicit_fixed_floor_must_remain_a_positive_integer() {
         args.extend(["--confirm", "--operation-id", "invalid-floor"]);
         if let Ok(cli) = Cli::try_parse_from(args) {
             assert!(
-                baw_rs::dispatch::preflight(&cli).is_err(),
+                baw_rs::exec::dispatch::preflight(&cli).is_err(),
                 "accepted {value:?}"
             );
         }
@@ -128,7 +128,7 @@ fn tax_caps_are_generic_explicit_and_part_of_the_durable_intent() {
         "tax-intent",
     ]);
     let cli = Cli::try_parse_from(args).unwrap();
-    baw_rs::dispatch::preflight(&cli).unwrap();
+    baw_rs::exec::dispatch::preflight(&cli).unwrap();
     let Command::MarketOrder { command } = cli.command else {
         panic!()
     };
@@ -149,7 +149,7 @@ fn malformed_tax_caps_fail_before_wallet_access_or_submission() {
         ]);
         if let Ok(cli) = Cli::try_parse_from(args) {
             assert!(
-                baw_rs::dispatch::preflight(&cli).is_err(),
+                baw_rs::exec::dispatch::preflight(&cli).is_err(),
                 "accepted {value}"
             );
         }
@@ -166,7 +166,7 @@ fn auto_approval_is_explicit_and_is_part_of_the_durable_intent() {
         "okx-auto-1",
     ]);
     let cli = Cli::try_parse_from(args).unwrap();
-    baw_rs::dispatch::preflight(&cli).unwrap();
+    baw_rs::exec::dispatch::preflight(&cli).unwrap();
     let Command::MarketOrder {
         command: MarketCommand::Swap(mut a),
     } = cli.command
@@ -193,7 +193,7 @@ fn okx_does_not_accept_skip_prechecks() {
         "--skip-prechecks",
     ]);
     let cli = Cli::try_parse_from(args).unwrap();
-    assert!(baw_rs::dispatch::preflight(&cli)
+    assert!(baw_rs::exec::dispatch::preflight(&cli)
         .unwrap_err()
         .contains("skip-prechecks"));
 }

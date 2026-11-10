@@ -1,6 +1,6 @@
 //! Explicit, read-only WSS diagnostics. Never loads a wallet or signs a transaction.
 //! `backfill` deliberately probes a 21-block range; `shared-backfill` pages it safely.
-use baw_rs::chain_rpc::SharedRpc;
+use baw_rs::chain::rpc::SharedRpc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{os::unix::fs::MetadataExt, path::Path, sync::Arc, time::Duration};

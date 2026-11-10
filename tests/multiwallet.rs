@@ -142,7 +142,7 @@ fn empty_session_with(dir: &std::path::Path, instance: &str) {
         AesGcm, Nonce,
     };
     use base64::Engine;
-    let key = baw_rs::session::derive_key(instance);
+    let key = baw_rs::core::session::derive_key(instance);
     let cipher = AesGcm::<aes::Aes256, U16>::new_from_slice(&*key).unwrap();
     let iv = [17u8; 16];
     let mut bytes = iv.to_vec();

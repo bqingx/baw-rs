@@ -1,5 +1,5 @@
 use baw_rs::cli::{emit_json, envelope, forward_argv, Cli, Command};
-use baw_rs::wallets;
+use baw_rs::daemon::wallets;
 use clap::{error::ErrorKind, Parser};
 use serde_json::Value;
 use std::io::{self, Write};
@@ -43,7 +43,7 @@ async fn run() -> io::Result<bool> {
         .any(|a| a == "--wallet" || a.starts_with("--wallet="));
     let cli = match Cli::try_parse() {
         Ok(cli) => {
-            baw_rs::signing::set_skip_prechecks_default(cli.skip_prechecks);
+            baw_rs::exec::signing::set_skip_prechecks_default(cli.skip_prechecks);
             cli
         }
         Err(error)

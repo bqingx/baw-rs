@@ -1,6 +1,10 @@
 //! Explicit read-only same-client connection diagnostic. Never arms a task or signs a wallet action.
 //! Arguments: /private/wallet/session-directory /private/identity-file /private/okx-profile idle-seconds
-use baw_rs::{cli::Cli, client::Client, dispatch, session};
+use baw_rs::{
+    cli::Cli,
+    core::{client::Client, session},
+    exec::dispatch,
+};
 use clap::Parser;
 use serde_json::json;
 use std::{path::Path, time::Duration};

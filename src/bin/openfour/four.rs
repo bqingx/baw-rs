@@ -90,13 +90,13 @@ pub struct Buy {
 /// Encode the exact `Core.buyByBudget` call for a fixed BNB/WBNB budget.
 pub fn build(a: &Buy) -> Result<Value, String> {
     for address in [&a.core, &a.token, &a.from] {
-        baw_rs::signing::address("56", address)?;
+        baw_rs::exec::signing::address("56", address)?;
         if address[2..].bytes().all(|b| b == b'0') {
             return Err("zero address is forbidden".into());
         }
     }
-    let budget = baw_rs::uint::uint256(&a.budget)?;
-    let min = baw_rs::uint::uint256(&a.min_amount_out)?;
+    let budget = baw_rs::util::uint::uint256(&a.budget)?;
+    let min = baw_rs::util::uint::uint256(&a.min_amount_out)?;
     if min.bits() == 0 && !a.allow_zero_min_out {
         return Err("zero minAmountOut requires explicit allowZeroMinOut=true".into());
     }
@@ -309,7 +309,7 @@ pub(crate) fn encode_budget(
     budget: &num_bigint::BigUint,
     minimum: &num_bigint::BigUint,
 ) -> Result<String, String> {
-    baw_rs::signing::address(CHAIN_ID, token)?;
+    baw_rs::exec::signing::address(CHAIN_ID, token)?;
     if budget.bits() > 256 || minimum.bits() > 256 {
         return Err("uint256 overflow".into());
     }

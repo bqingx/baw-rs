@@ -1,7 +1,7 @@
 {
   "version": "baw-rs 0.3.0",
   "source": "actual --help; no wallet/backend calls",
-  "binarySha256": "abbbb0736922a00b4caa111f6ed03b56bebc264a2d1de8f5d43afb353a209e46",
+  "binarySha256": "bfe2f1cccd318882b811eae9902b2b6e4f443a088858b6b7cdc08276dbea2b9e",
   "leafCount": 49,
   "leaves": [
     "approvals approve",
