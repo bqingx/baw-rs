@@ -4,6 +4,7 @@ use crate::task::pipeline::Outcome;
 use crate::task::runtime::{
     argv, load, operation_id, safe_id, validate, Definition, Scheduler, Stored, Trigger,
 };
+use crate::task::state::{Phase, TaskStatus};
 use clap::Parser;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -29,22 +30,17 @@ fn summary(state: &Stored, active: bool) -> Value {
         };
         *counts.entry(label).or_insert(0usize) += 1;
     }
-    let status = match state.status.as_str() {
-        "LOADED" | "RUNNING" | "PAUSED" | "INTERRUPTED" | "COMPLETED" | "CANCELLED"
-        | "RECONCILED" | "PERSISTENCE_ERROR" => state.status.as_str(),
-        _ => "UNKNOWN",
+    let status = match &state.status {
+        TaskStatus::Unrecognized(_) => "UNKNOWN",
+        known => known.as_str(),
     };
     let phase = state
         .results
         .get("phase")
         .and_then(|v| v.get("status"))
         .and_then(Value::as_str)
-        .filter(|s| {
-            matches!(
-                *s,
-                "PREPARING" | "STARTING_LISTENER" | "WAITING" | "EXECUTING"
-            )
-        });
+        .and_then(Phase::parse)
+        .map(|phase| phase.as_str());
     let wallets = state
         .definition
         .steps
@@ -56,7 +52,7 @@ fn summary(state: &Stored, active: bool) -> Value {
         .as_ref()
         .map(|r| r.deadlines.clone())
         .unwrap_or_default();
-    json!({"id":state.definition.id,"status":status,"active":active,"phase":phase,"wallets":wallets,"counts":counts,"deadlinesUnixMs":deadlines,"needsReview":matches!(status,"PAUSED"|"INTERRUPTED"|"PERSISTENCE_ERROR"|"UNKNOWN"),"retryAuthorized":false})
+    json!({"id":state.definition.id,"status":status,"active":active,"phase":phase,"wallets":wallets,"counts":counts,"deadlinesUnixMs":deadlines,"needsReview":state.status.needs_review(),"retryAuthorized":false})
 }
 fn resolved(state: &Stored, output: &mut BTreeMap<String, std::collections::BTreeSet<String>>) {
     for (step, row) in state.snapshot.outcomes.iter().enumerate() {
@@ -84,9 +80,10 @@ impl Scheduler {
         self.runs.try_lock().is_ok_and(|runs| {
             runs.values().all(|run| {
                 !run.active.load(Ordering::SeqCst)
-                    && run.state.try_lock().is_ok_and(|state| {
-                        matches!(state.status.as_str(), "LOADED" | "COMPLETED" | "CANCELLED")
-                    })
+                    && run
+                        .state
+                        .try_lock()
+                        .is_ok_and(|state| state.status.is_quiet())
             })
         })
     }
@@ -110,11 +107,7 @@ impl Scheduler {
                     let active = run.active.load(Ordering::SeqCst);
                     match run.state.try_lock() {
                         Ok(state) => {
-                            output.quiet &= !active
-                                && matches!(
-                                    state.status.as_str(),
-                                    "LOADED" | "COMPLETED" | "CANCELLED"
-                                );
+                            output.quiet &= !active && state.status.is_quiet();
                             resolved(&state, &mut output.resolved_operations);
                             output.tasks.push(summary(&state, active));
                         }
@@ -170,7 +163,7 @@ impl Scheduler {
         for (id, state) in archives {
             match state {
                 Ok(state) => {
-                    if !matches!(state.status.as_str(), "LOADED" | "COMPLETED" | "CANCELLED") {
+                    if !state.status.is_quiet() {
                         output.quiet = false;
                     }
                     resolved(&state, &mut output.resolved_operations);

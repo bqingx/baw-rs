@@ -5,4 +5,5 @@ pub mod pipeline;
 pub(crate) mod prepare;
 pub(crate) mod recovery;
 pub(crate) mod runtime;
+pub(crate) mod state;
 pub(crate) mod timing;

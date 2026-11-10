@@ -94,7 +94,7 @@ async fn block_and_log_triggers_use_subscription_notifications_not_repeated_head
             state: Mutex::new(Stored {
                 definition: c,
                 snapshot: pipeline.snapshot(),
-                status: "RUNNING".into(),
+                status: TaskStatus::Running,
                 results: BTreeMap::new(),
                 recovery: None,
             }),
@@ -139,7 +139,7 @@ fn notifications_classify_evidence_without_copying_private_results() {
     let mut state = Stored {
         definition,
         snapshot,
-        status: "PAUSED".into(),
+        status: TaskStatus::Paused,
         results: BTreeMap::from([(
             "runtime".into(),
             json!({"error":"secret https://private.example?apiKey=do-not-copy","calldata":"0xdeadbeef"}),
@@ -162,18 +162,18 @@ fn notifications_classify_evidence_without_copying_private_results() {
         json!({"execution":{"status":"PENDING_CONFIRMATION"}}),
     );
     assert_eq!(notification_event(&state).unwrap().kind, "awaiting_app");
-    state.status = "CANCELLED".into();
+    state.status = TaskStatus::Cancelled;
     assert_eq!(notification_event(&state).unwrap().kind, "cancelled");
-    state.status = "COMPLETED".into();
+    state.status = TaskStatus::Completed;
     state.snapshot.outcomes[0][0] = Outcome::Submitted;
     let completed = notification_event(&state).unwrap();
     assert_eq!(completed.kind, "completed");
     assert_eq!(completed.completion, "submitted");
     state.snapshot.outcomes[0][0] = Outcome::Confirmed;
     assert_eq!(notification_event(&state).unwrap().completion, "confirmed");
-    state.status = "RUNNING".into();
+    state.status = TaskStatus::Running;
     assert!(notification_event(&state).is_none());
-    state.status = "PERSISTENCE_ERROR".into();
+    state.status = TaskStatus::PersistenceError;
     assert!(notification_event(&state).is_none());
 }
 
@@ -188,7 +188,7 @@ fn mixed_wallet_notification_does_not_hide_unknown_or_failed_members_behind_app_
     let mut state = Stored {
         definition,
         snapshot,
-        status: "PAUSED".into(),
+        status: TaskStatus::Paused,
         results: BTreeMap::from([
             ("0:w1".into(), json!({"status":"PENDING_CONFIRMATION"})),
             ("0:w2".into(), json!({"status":"UNCERTAIN"})),
@@ -242,7 +242,7 @@ fn terminal_archives_remain_readable_without_reintroducing_retired_cli_parsing()
         let state = Stored {
             definition,
             snapshot: pipeline.snapshot(),
-            status: status.into(),
+            status: TaskStatus::parse(status),
             results: BTreeMap::new(),
             recovery: None,
         };
@@ -251,7 +251,7 @@ fn terminal_archives_remain_readable_without_reintroducing_retired_cli_parsing()
         if status == "LOADED" {
             assert!(archived.is_err());
         } else {
-            assert_eq!(archived.unwrap().status, status);
+            assert_eq!(archived.unwrap().status, TaskStatus::parse(status));
         }
     }
 }
@@ -326,14 +326,14 @@ fn persisted_running_state_is_interrupted_and_cannot_be_replayed() {
         &Stored {
             definition: config,
             snapshot: pipeline.snapshot(),
-            status: "RUNNING".into(),
+            status: TaskStatus::Running,
             results: BTreeMap::new(),
             recovery: None,
         },
     )
     .unwrap();
     let loaded = load(root.path(), "p").unwrap();
-    assert_eq!(loaded.status, "INTERRUPTED");
+    assert_eq!(loaded.status, TaskStatus::Interrupted);
     assert_eq!(loaded.snapshot.outcomes[0][0], Outcome::Uncertain);
 }
 #[tokio::test]
@@ -344,7 +344,7 @@ async fn immediate_time_expiry_and_cancel_are_local_only() {
         state: Mutex::new(Stored {
             definition: c,
             snapshot: pipeline.snapshot(),
-            status: "RUNNING".into(),
+            status: TaskStatus::Running,
             results: BTreeMap::new(),
             recovery: None,
         }),

@@ -8,6 +8,7 @@ use crate::daemon::resident::{validate_argv, wallet_for, Daemon};
 use crate::task::pipeline::{Completion, Outcome, Pipeline, Snapshot, Step};
 use crate::task::prepare as preparation;
 use crate::task::recovery;
+use crate::task::state::{Phase, TaskStatus};
 use crate::task::timing as task_timing;
 use crate::task::timing::TriggerObservation;
 use clap::Parser;
@@ -89,7 +90,7 @@ pub struct Action {
 pub(crate) struct Stored {
     pub(crate) definition: Definition,
     pub(crate) snapshot: Snapshot,
-    pub(crate) status: String,
+    pub(crate) status: TaskStatus,
     pub(crate) results: BTreeMap<String, Value>,
     #[serde(default)]
     pub(crate) recovery: Option<Recovery>,
@@ -109,6 +110,20 @@ pub(crate) struct Recovery {
     #[serde(skip)]
     pub(crate) plans: BTreeMap<String, Arc<preparation::Plan>>,
 }
+/// Durable phase checkpoint; the only writer of `results["phase"]`.
+pub(crate) fn set_phase(state: &mut Stored, index: usize, phase: Phase) {
+    state.results.insert(
+        "phase".into(),
+        json!({"task":index,"status":phase.as_str()}),
+    );
+}
+/// Advance an existing phase checkpoint. Never invents one: the listener is marked only
+/// after an earlier phase write.
+pub(crate) fn update_phase(state: &mut Stored, phase: Phase) {
+    if let Some(entry) = state.results.get_mut("phase") {
+        entry["status"] = json!(phase.as_str());
+    }
+}
 pub(crate) struct Run {
     pub(crate) state: Mutex<Stored>,
     pub(crate) cancel: Arc<AtomicBool>,
@@ -126,10 +141,7 @@ pub(crate) fn now() -> u64 {
     chrono::Utc::now().timestamp_millis().max(0) as u64
 }
 fn notification_event(state: &Stored) -> Option<crate::task::notifications::Event> {
-    if !matches!(
-        state.status.as_str(),
-        "COMPLETED" | "CANCELLED" | "PAUSED" | "RECONCILED" | "INTERRUPTED"
-    ) {
+    if !state.status.publishes_notification() {
         return None;
     }
     let mut event = crate::task::notifications::Event {
@@ -239,8 +251,8 @@ fn notification_event(state: &Stored) -> Option<crate::task::notifications::Even
     });
     let awaiting_receipt =
         active.is_some_and(|index| state.snapshot.outcomes[index].contains(&Outcome::Submitted));
-    event.kind = match state.status.as_str() {
-        "COMPLETED" => {
+    event.kind = match &state.status {
+        TaskStatus::Completed => {
             event.completion = if event.submitted == 0 {
                 "confirmed"
             } else {
@@ -248,7 +260,7 @@ fn notification_event(state: &Stored) -> Option<crate::task::notifications::Even
             };
             "completed"
         }
-        "CANCELLED" => "cancelled",
+        TaskStatus::Cancelled => "cancelled",
         _ if (event.awaiting_app > 0
             && (other_unknown || event.failed > 0 || awaiting_receipt))
             || (event.failed > 0 && (other_unknown || awaiting_receipt)) =>
@@ -443,7 +455,7 @@ pub(crate) fn load(registry: &Path, id: &str) -> Result<Stored, String> {
     if state.definition.id != id {
         return Err("pipeline state ID mismatch".into());
     }
-    let expected = if matches!(state.status.as_str(), "COMPLETED" | "CANCELLED") {
+    let expected = if state.status.is_archived() {
         validate_definition(&state.definition, false)?
     } else {
         validate(&state.definition)?
@@ -453,8 +465,8 @@ pub(crate) fn load(registry: &Path, id: &str) -> Result<Stored, String> {
         return Err("pipeline definition/state mismatch".into());
     }
     state.snapshot = Pipeline::restore(state.snapshot)?.snapshot();
-    if state.status == "RUNNING" {
-        state.status = "INTERRUPTED".into();
+    if state.status == TaskStatus::Running {
+        state.status = TaskStatus::Interrupted;
     }
     Ok(state)
 }
@@ -501,7 +513,7 @@ impl Scheduler {
                 let state = Stored {
                     definition: config,
                     snapshot: pipeline.snapshot(),
-                    status: "LOADED".into(),
+                    status: TaskStatus::Loaded,
                     results: BTreeMap::new(),
                     recovery: None,
                 };
@@ -514,7 +526,7 @@ impl Scheduler {
                         active: AtomicBool::new(false),
                     }),
                 );
-                Ok(json!({"id":id,"status":"LOADED"}))
+                Ok(json!({"id":id,"status":TaskStatus::Loaded}))
             }
             Control::Status { id } => {
                 let run = self.get(registry, &id).await?;
@@ -529,8 +541,8 @@ impl Scheduler {
                 let mut state = run.state.lock().await;
                 // A concurrent resume may have reset the flag while we waited.
                 run.cancel.store(true, Ordering::SeqCst);
-                if state.status != "COMPLETED" {
-                    state.status = "CANCELLED".into();
+                if state.status != TaskStatus::Completed {
+                    state.status = TaskStatus::Cancelled;
                     save(registry, &state)?;
                     if !run.active.load(Ordering::SeqCst) {
                         self.notify_state(registry, &state);
@@ -551,7 +563,7 @@ impl Scheduler {
                 let run = self.get(registry, &id).await?;
                 {
                     let mut state = run.state.lock().await;
-                    if state.status != "LOADED" || run.active.load(Ordering::SeqCst) {
+                    if state.status != TaskStatus::Loaded || run.active.load(Ordering::SeqCst) {
                         return Err(
                             "pipeline already used or interrupted; reconcile, do not rearm".into(),
                         );
@@ -591,12 +603,12 @@ impl Scheduler {
                         );
                     }
                     state.recovery = Some(recovery);
-                    state.status = "RUNNING".into();
+                    state.status = TaskStatus::Running;
                     save(registry, &state)?;
                     run.active.store(true, Ordering::SeqCst);
                 }
                 self.launch(daemon, run, inspection);
-                Ok(json!({"id":id,"status":"RUNNING"}))
+                Ok(json!({"id":id,"status":TaskStatus::Running}))
             }
             Control::Reconcile { id } => self.reconcile(&daemon, &id).await,
             Control::Resume { id, confirm } => self.resume(daemon, &id, confirm).await,
@@ -621,8 +633,8 @@ impl Scheduler {
             let _inspection = inspection;
             let result = scheduler.execute(daemon.clone(), run.clone()).await;
             let mut state = run.state.lock().await;
-            if result.is_err() && state.status == "RUNNING" {
-                state.status = "PAUSED".into();
+            if result.is_err() && state.status == TaskStatus::Running {
+                state.status = TaskStatus::Paused;
             }
             if let Err(error) = result {
                 state
@@ -630,7 +642,7 @@ impl Scheduler {
                     .insert("runtime".into(), json!({"error":error}));
             }
             if save(&daemon.registry, &state).is_err() {
-                state.status = "PERSISTENCE_ERROR".into();
+                state.status = TaskStatus::PersistenceError;
             } else {
                 scheduler.notify_state(&daemon.registry, &state);
             }
@@ -715,7 +727,15 @@ impl Scheduler {
                         .checked_add(task.valid_for_ms)
                         .ok_or("task deadline overflow")?,
                 );
-                state.results.insert("phase".into(),json!({"task":index,"status":if already_triggered {"EXECUTING"} else {"STARTING_LISTENER"}}));
+                set_phase(
+                    &mut state,
+                    index,
+                    if already_triggered {
+                        Phase::Executing
+                    } else {
+                        Phase::StartingListener
+                    },
+                );
                 save(registry, &state)?;
                 deadline
             };
@@ -784,9 +804,7 @@ impl Scheduler {
                     pipeline.claim(index, name)?;
                 }
                 state.snapshot = pipeline.snapshot();
-                state
-                    .results
-                    .insert("phase".into(), json!({"task":index,"status":"EXECUTING"}));
+                set_phase(&mut state, index, Phase::Executing);
                 state.results.insert(
                     format!("triggerTiming:{index}"),
                     trigger_timing.step_json(None, None),
@@ -984,7 +1002,7 @@ impl Scheduler {
         if run.cancel.load(Ordering::SeqCst) {
             return Err("pipeline cancelled".into());
         }
-        state.status = "COMPLETED".into();
+        state.status = TaskStatus::Completed;
         save(registry, &state)
     }
 }
@@ -1202,10 +1220,8 @@ async fn wait_trigger(
         }
         if !ready_marked && (!matches!(trigger, Trigger::Event { .. }) || backfilled) {
             let mut state = run.state.lock().await;
-            if state.status == "RUNNING" && !run.cancel.load(Ordering::SeqCst) {
-                if let Some(phase) = state.results.get_mut("phase") {
-                    phase["status"] = json!("WAITING");
-                }
+            if state.status == TaskStatus::Running && !run.cancel.load(Ordering::SeqCst) {
+                update_phase(&mut state, Phase::Waiting);
             }
             ready_marked = true;
         }

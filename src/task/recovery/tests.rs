@@ -11,7 +11,7 @@ fn state() -> Stored {
     Stored {
         definition: config,
         snapshot,
-        status: "RECONCILED".into(),
+        status: TaskStatus::Reconciled,
         results: BTreeMap::new(),
         recovery: Some(Recovery {
             deadlines: BTreeMap::from([(0, now() + 60000)]),
@@ -87,7 +87,7 @@ fn continuation_never_resets_deadlines_or_replays_unknown_failed_or_cancelled_wo
     s.recovery = None;
     assert!(resumable(&s).is_err());
     let mut s = state();
-    s.status = "CANCELLED".into();
+    s.status = TaskStatus::Cancelled;
     assert!(resumable(&s).is_err());
     for outcome in [Outcome::Uncertain, Outcome::Failed, Outcome::InFlight] {
         let mut s = state();

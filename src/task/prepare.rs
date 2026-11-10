@@ -2,7 +2,8 @@
 use crate::cli::{Cli, Command};
 use crate::daemon::resident::{wallet_for, Daemon, Wallet};
 use crate::task::pipeline::Outcome;
-use crate::task::runtime::{argv, now, save, Definition, Run, Scheduler, Stored};
+use crate::task::runtime::{argv, now, save, set_phase, Definition, Run, Scheduler, Stored};
+use crate::task::state::Phase;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -150,9 +151,7 @@ pub(super) async fn prepare_step(
         for (key, _) in &work {
             metadata.preparation_started.insert(key.clone());
         }
-        state
-            .results
-            .insert("phase".into(), json!({"task":index,"status":"PREPARING"}));
+        set_phase(&mut state, index, Phase::Preparing);
         save(registry, &state)?;
         deadline
     };

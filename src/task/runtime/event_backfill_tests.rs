@@ -31,7 +31,7 @@ async fn exercise(case: Case) {
         state: Mutex::new(Stored {
             definition,
             snapshot,
-            status: "RUNNING".into(),
+            status: TaskStatus::Running,
             results: BTreeMap::new(),
             recovery: None,
         }),

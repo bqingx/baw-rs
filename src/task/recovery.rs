@@ -5,6 +5,7 @@ use crate::task::prepare as preparation;
 use crate::task::runtime::{
     check_chain, hex_hash, now, operation_id, quantity, save, transaction_hash, Scheduler, Stored,
 };
+use crate::task::state::TaskStatus;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -63,10 +64,7 @@ pub(super) async fn receipt_status(
 }
 
 fn resumable(state: &Stored) -> Result<(), String> {
-    if !matches!(
-        state.status.as_str(),
-        "PAUSED" | "INTERRUPTED" | "RECONCILED"
-    ) {
+    if !state.status.is_resumable() {
         return Err("only paused/interrupted/reconciled pipelines may resume; cancelled tasks stay cancelled".into());
     }
     let recovery = state
@@ -124,7 +122,7 @@ impl Scheduler {
         let registry = daemon.registry.as_path();
         let run = self.get(registry, id).await?;
         let mut state = run.state.lock().await;
-        if run.active.load(Ordering::SeqCst) || state.status == "RUNNING" {
+        if run.active.load(Ordering::SeqCst) || state.status == TaskStatus::Running {
             return Err("pipeline still draining; reconcile after it stops".into());
         }
         let mut pipeline = Pipeline::from_live(state.snapshot.clone())?;
@@ -201,15 +199,14 @@ impl Scheduler {
                 None => observations.push(json!({"wallet":action.wallet,"status":"UNRESOLVED","reason":"receipt absent or confirmations insufficient"})),
             }
         }
-        if state.status != "CANCELLED" {
+        if state.status != TaskStatus::Cancelled {
             state.status = if pipeline.active_step().is_none() {
-                "COMPLETED"
+                TaskStatus::Completed
             } else if pipeline.paused() {
-                "PAUSED"
+                TaskStatus::Paused
             } else {
-                "RECONCILED"
-            }
-            .into();
+                TaskStatus::Reconciled
+            };
         }
         save(registry, &state)?;
         self.notify_state(registry, &state);
@@ -268,12 +265,12 @@ impl Scheduler {
                 .as_mut()
                 .ok_or("recovery state missing")?
                 .plans = plans;
-            state.status = "RUNNING".into();
+            state.status = TaskStatus::Running;
             save(registry, &state)?;
             run.cancel.store(false, Ordering::SeqCst);
             run.active.store(true, Ordering::SeqCst);
         }
         self.launch(daemon, run, inspection);
-        Ok(json!({"id":id,"status":"RUNNING","replay":false,"deadlineRenewed":false}))
+        Ok(json!({"id":id,"status":TaskStatus::Running,"replay":false,"deadlineRenewed":false}))
     }
 }
